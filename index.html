@@ -445,7 +445,7 @@ function blankItem(){
   return { id: crypto.randomUUID(), productId:null, code:"", desc:"", delivery:"", qty:1, listPrice:"", buyDiscount:"", discount:"", unitPrice:"", useCalc:false };
 }
 function emptyCompany(){
-  return { name:"Godo Endüstriyel Otomasyon", legalName:"", address:"", phone:"", email:"", website:"godo.tr", taxOffice:"", taxNo:"", iban:"", tagline:"GLOBAL OPTIMIZATION | DIGITAL OPERATION" };
+  return { name:"Godo Endüstriyel Otomasyon", legalName:"", contactName:"", address:"", phone:"", email:"", website:"godo.tr", taxOffice:"", taxNo:"", iban:"", tagline:"GLOBAL OPTIMIZATION | DIGITAL OPERATION" };
 }
 function emptyCustomer(){
   return { id:null, name:"", address:"", taxOffice:"", taxNo:"", website:"", contacts:[], notes:[], tags:[],
@@ -1664,7 +1664,7 @@ function renderProposalPreview(){
         <div>
           <div class="doc-info-block-h">Firma Bilgileri</div>
           <div class="doc-info-h">Firma</div><div class="doc-info-v">${escapeHtml(company.name||'—')}</div>
-          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(proposal.preparedBy||'—')}</div>
+          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(company.contactName||proposal.preparedBy||'—')}</div>
           <div class="doc-info-h">Adres</div><div class="doc-info-v">${escapeHtml(company.address||'—')}</div>
           <div class="doc-info-h">Telefon</div><div class="doc-info-v">${escapeHtml(company.phone||'—')}</div>
           <div class="doc-info-h">E-posta</div><div class="doc-info-v">${escapeHtml(company.email||'—')}</div>
@@ -2715,7 +2715,7 @@ function attachHandlers(){
   }
 
   if(activeTab==='proposalsList'){
-    document.getElementById('btnNewProposal').onclick = ()=>{ proposal = emptyProposal(); proposal.proposalNo = nextProposalNo(); activeTab='pInfo'; render(); };
+    document.getElementById('btnNewProposal').onclick = ()=>{ proposal = emptyProposal(); proposal.proposalNo = nextProposalNo(); proposal.preparedBy = company.contactName||''; activeTab='pInfo'; render(); };
     document.querySelectorAll('[data-open-proposal]').forEach(row=>{
       row.onclick = async ()=>{ await openProposal(row.dataset.openProposal); };
     });
@@ -2962,7 +2962,7 @@ function attachHandlers(){
     document.getElementById('c-save').onclick = ()=>{
       const val = id => document.getElementById(id).value;
       company = {
-        name: val('c-name'), legalName: val('c-legalName'), tagline: val('c-tagline'), address: val('c-address'),
+        name: val('c-name'), legalName: val('c-legalName'), contactName: val('c-contactName'), tagline: val('c-tagline'), address: val('c-address'),
         taxOffice: val('c-taxOffice'), taxNo: val('c-taxNo'), phone: val('c-phone'),
         email: val('c-email'), website: val('c-website'), iban: val('c-iban')
       };
@@ -3304,6 +3304,8 @@ function renderSettingsCompany(){
     <p class="hint">Bu bilgiler teklif PDF'inin üst bölümünde görünür.</p>
     <div class="field"><label>Marka Adı</label><input id="c-name" value="${escapeAttr(company.name)}"></div>
     <div class="field"><label>Ticari Unvan</label><input id="c-legalName" value="${escapeAttr(company.legalName)}" placeholder="Godo Endüstriyel Otomasyon San. ve Tic. Ltd. Şti."></div>
+    <div class="field"><label>Yetkili | Unvan</label><input id="c-contactName" value="${escapeAttr(company.contactName||'')}" placeholder="Furkan Özbent | Kurucu"></div>
+    <p class="hint" style="margin-top:-8px;">Proje teklifi dokümanlarında "Hazırlayan / Yetkili" olarak otomatik doldurulur.</p>
     <div class="field"><label>Slogan</label><input id="c-tagline" value="${escapeAttr(company.tagline||'')}" placeholder="ör. GLOBAL OPTIMIZATION | DIGITAL OPERATION"></div>
     <p class="hint" style="margin-top:-8px;">Girersen, teklif PDF'inde logonun hemen altında görünür.</p>
     <div class="field"><label>Adres</label><textarea id="c-address" rows="2">${escapeHtml(company.address)}</textarea></div>
