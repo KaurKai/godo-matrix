@@ -283,7 +283,7 @@
     .preview-wrap,.preview-wrap *{visibility:visible;}
     .preview-wrap{background:#fff;padding:0;position:absolute;top:0;left:0;width:100%;}
     #printArea{box-shadow:none;max-width:100%;padding:0;margin:0;}
-    .preview-toolbar, .screen-only-note{display:none;}
+    .preview-toolbar, .screen-only-note{display:none!important;}
     table.doc-items tr{ page-break-inside:avoid; }
     .doc-terms{ page-break-inside:avoid; }
     .doc-terms .blk{ page-break-inside:avoid; }
@@ -441,8 +441,7 @@ function emptyQuote(){
     template: "classic",
     irsaliyeNo: "",
     irsaliyeDate: "",
-    irsaliyeNote: "",
-    irsaliyeInvoiceNo: ""
+    irsaliyeNote: ""
   };
 }
 function blankItem(){
@@ -2668,7 +2667,6 @@ function renderIrsaliyePrint(){
         <div class="qn">${escapeHtml(quote.irsaliyeNo)}</div>
         <div>Tarih: ${formatDate(quote.irsaliyeDate)}</div>
         <div>İlişkili Teklif: ${escapeHtml(quote.quoteNo)}</div>
-        ${quote.irsaliyeInvoiceNo ? `<div>Fatura No: ${escapeHtml(quote.irsaliyeInvoiceNo)}</div>` : ''}
       </div>
     </div>
     <div class="doc-title">Sevk İrsaliyesi</div>
@@ -2706,15 +2704,9 @@ function renderIrsaliyePrint(){
       <button class="btn btn-ghost" id="btnBackOrdersFromIrsaliye">← Siparişlere Dön</button>
       <button class="btn btn-primary" id="btnPrintIrsaliye">PDF Olarak Kaydet / Yazdır</button>
     </div>
-    <div class="screen-only-note" style="max-width:900px;margin:0 auto 14px;display:flex;gap:14px;">
-      <div style="flex:1;">
-        <label style="display:block;font-size:11px;font-weight:700;color:var(--gray-500);margin-bottom:4px;">e-Arşiv Fatura Numarası (elle gir — opsiyonel)</label>
-        <input id="irsaliyeInvoiceInput" value="${escapeAttr(quote.irsaliyeInvoiceNo||'')}" placeholder="ör. GİB2026000012345" style="width:100%;padding:9px 11px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:13px;">
-      </div>
-      <div style="flex:2;">
-        <label style="display:block;font-size:11px;font-weight:700;color:var(--gray-500);margin-bottom:4px;">Sevkiyat Notu (araç plaka, şoför adı vb. — opsiyonel)</label>
-        <input id="irsaliyeNoteInput" value="${escapeAttr(quote.irsaliyeNote||'')}" placeholder="ör. Araç Plaka: 35 ABC 123, Şoför: Ahmet Yılmaz" style="width:100%;padding:9px 11px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:13px;">
-      </div>
+    <div class="screen-only-note" style="max-width:900px;margin:0 auto 12px;display:flex;align-items:center;gap:8px;">
+      <label style="font-size:11px;font-weight:700;color:var(--gray-500);white-space:nowrap;">Not (fatura no, araç plaka, şoför vb. — opsiyonel):</label>
+      <input id="irsaliyeNoteInput" value="${escapeAttr(quote.irsaliyeNote||'')}" placeholder="ör. Fatura No: GİB2026000012345 · Araç: 35 ABC 123 · Şoför: Ahmet Yılmaz" style="flex:1;padding:6px 9px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:12px;">
     </div>
     <div id="printArea">${printHTML}</div>
   </div>`;
@@ -2960,13 +2952,6 @@ function attachHandlers(){
       const pos = noteInp.selectionStart;
       render();
       const fresh = document.getElementById('irsaliyeNoteInput');
-      if(fresh){ fresh.focus(); fresh.selectionStart = fresh.selectionEnd = pos; }
-    };
-    const invInp = document.getElementById('irsaliyeInvoiceInput');
-    if(invInp) invInp.oninput = ()=>{ quote.irsaliyeInvoiceNo = invInp.value; scheduleSave();
-      const pos = invInp.selectionStart;
-      render();
-      const fresh = document.getElementById('irsaliyeInvoiceInput');
       if(fresh){ fresh.focus(); fresh.selectionStart = fresh.selectionEnd = pos; }
     };
   }
