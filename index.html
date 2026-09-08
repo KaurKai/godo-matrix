@@ -6,6 +6,7 @@
 <title>Godo Matrix</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --ink:#0E0E0E;
@@ -239,6 +240,42 @@
   .doc-terms .blk .t{font-size:11.5px;line-height:1.7;color:var(--gray-500);white-space:pre-line;}
   .doc-foot{margin-top:40px;padding-top:14px;border-top:1px solid var(--hairline);display:flex;justify-content:space-between;font-size:10px;color:var(--gray-300);letter-spacing:.03em;font-family:var(--font-mono);}
 
+  /* ---------- PROJE TEKLİFİ (PROPOSAL) DOKÜMAN ---------- */
+  .doc-cover-title{font-family:var(--font-display);font-size:26px;font-weight:800;letter-spacing:.02em;color:var(--ink);margin:34px 0 22px;line-height:1.25;}
+  .doc-cover-table{display:grid;grid-template-columns:1fr 1fr;gap:16px 40px;padding-top:20px;border-top:1.5px solid var(--ink);}
+  .doc-cover-note{margin-top:60px;font-size:10.5px;font-style:italic;color:var(--gray-300);}
+  .doc-page-header{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--gray-300);font-family:var(--font-display);padding-bottom:10px;border-bottom:1px solid var(--hairline);margin-bottom:24px;}
+  .doc-sub-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink);font-family:var(--font-display);margin:24px 0 12px;}
+  .doc-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:16px;padding-bottom:20px;border-bottom:1px solid var(--hairline);}
+  .doc-info-block-h{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--gray-500);font-family:var(--font-display);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--hairline-strong);}
+  .doc-info-h{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--gray-500);font-weight:700;margin-bottom:2px;margin-top:9px;}
+  .doc-info-h:first-child{margin-top:0;}
+  .doc-info-v{font-size:12.5px;color:var(--ink);}
+  .doc-toc{margin-top:22px;}
+  .doc-toc-row{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid var(--hairline);font-size:12.5px;}
+  .doc-toc-num{font-family:var(--font-mono);color:var(--gray-500);width:18px;flex:none;}
+  .doc-section{margin-top:30px;}
+  .doc-section-h{font-family:var(--font-display);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink);margin-bottom:12px;padding-bottom:7px;border-bottom:1.5px solid var(--ink);display:flex;gap:10px;align-items:baseline;}
+  .doc-section-h .n{color:var(--gray-300);font-family:var(--font-mono);font-size:12px;}
+  .doc-section-t{font-size:12.5px;line-height:1.75;color:var(--gray-700);white-space:pre-line;}
+  .doc-list{margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.85;color:var(--gray-700);}
+  .doc-simple-table{width:100%;border-collapse:collapse;margin-top:8px;}
+  .doc-simple-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-500);padding:0 10px 9px;font-weight:700;border-bottom:1.5px solid var(--ink);}
+  .doc-simple-table td{padding:10px;font-size:12.5px;border-bottom:1px solid var(--hairline);}
+  .doc-simple-table td.pos{font-weight:700;color:var(--ink);}
+  .doc-simple-table .num,.doc-simple-table th.num{text-align:right;font-family:var(--font-mono);}
+  .doc-simple-table .center,.doc-simple-table th.center{text-align:center;}
+  .doc-note{font-size:11px;font-style:italic;color:var(--gray-500);margin-top:12px;}
+  .doc-sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:56px;}
+  .doc-sig-h{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink);font-family:var(--font-display);}
+  .doc-sig-line{border-top:1px solid var(--hairline-strong);margin-top:46px;padding-top:8px;}
+  .doc-sig-sub{font-size:10.5px;color:var(--gray-300);}
+  .small-label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--gray-500);margin-bottom:8px;}
+  .dyn-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .dyn-row input{flex:1;padding:9px 11px;border:1px solid var(--hairline-strong);border-radius:var(--radius);font-family:var(--font-sans);font-size:13.5px;background:var(--white);color:var(--ink);}
+  .dyn-row input:focus{outline:none;border-color:var(--ink);}
+  .dyn-row .row-remove{flex:none;}
+
   .preview-toolbar{max-width:900px;margin:0 auto 18px;display:flex;justify-content:flex-end;gap:10px;}
 
   @media print{
@@ -251,6 +288,9 @@
     .doc-terms{ page-break-inside:avoid; }
     .doc-terms .blk{ page-break-inside:avoid; }
     .doc-totals{ page-break-inside:avoid; }
+    .doc-simple-table tr{ page-break-inside:avoid; }
+    .doc-sig-grid{ page-break-inside:avoid; }
+    .doc-cover-title, .doc-cover-table{ page-break-after:auto; }
     @page{ size:A4; margin:10mm 12mm; }
   }
 
@@ -324,7 +364,24 @@
 </head>
 <body>
 
-<div id="app">
+<div id="authGate" style="position:fixed;inset:0;background:#0E0E0E;z-index:9999;display:flex;align-items:center;justify-content:center;font-family:'Inter',sans-serif;">
+  <div style="width:340px;max-width:90vw;">
+    <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:22px;color:#F4F4F2;letter-spacing:1px;margin-bottom:2px;">GODO<span style="color:#8B8A82;">MATRIX</span></div>
+    <div style="font-size:11px;color:#8B8A82;letter-spacing:1.5px;margin-bottom:28px;text-transform:uppercase;">Teklif &amp; CRM Sistemi</div>
+
+    <div id="authError" style="display:none;background:rgba(220,60,60,.12);border:1px solid rgba(220,60,60,.4);color:#ff8a8a;font-size:12px;padding:9px 11px;border-radius:4px;margin-bottom:14px;"></div>
+
+    <input id="authEmail" type="email" placeholder="E-posta" autocomplete="username" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="authPassword" type="password" placeholder="Şifre" autocomplete="current-password" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;margin-bottom:16px;box-sizing:border-box;">
+
+    <button id="btnAuthSignIn" style="width:100%;background:#F4F4F2;color:#0E0E0E;border:none;font-size:13px;font-weight:700;padding:11px;border-radius:4px;cursor:pointer;margin-bottom:10px;">Giriş Yap</button>
+    <button id="btnAuthSignUp" style="width:100%;background:transparent;color:#F4F4F2;border:1px dashed rgba(255,255,255,.3);font-size:12.5px;font-weight:600;padding:10px;border-radius:4px;cursor:pointer;">Hesap Oluştur</button>
+
+    <div id="authHint" style="font-size:10.5px;color:#8B8A82;margin-top:16px;line-height:1.6;">İlk girişte "Hesap Oluştur"a basıp aynı bilgilerle kayıt ol; e-postana gelen onay linkine tıkladıktan sonra buradan giriş yapabilirsin.</div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
   <div class="sidebar">
     <div class="sidebar-brand">
       <div class="word">GODO<span class="word-suffix">MATRIX</span></div>
@@ -339,10 +396,11 @@
       <div id="storageBanner"></div>
       <div id="storageModeLabel" style="margin-bottom:4px;font-size:10.5px;"></div>
       <div id="syncStatusLabel" style="margin-bottom:10px;font-size:9.5px;color:#8B8A82;"></div>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
         <button id="btnBackup" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.25);color:var(--paper);font-size:11px;font-weight:700;padding:7px 6px;border-radius:3px;cursor:pointer;">Yedek Al</button>
         <button id="btnRestore" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.25);color:var(--paper);font-size:11px;font-weight:700;padding:7px 6px;border-radius:3px;cursor:pointer;">Geri Yükle</button>
       </div>
+      <button id="btnSignOut" style="width:100%;background:transparent;border:none;color:#8B8A82;font-size:10.5px;padding:4px;cursor:pointer;text-align:left;">Çıkış Yap</button>
       <input type="file" id="restoreFile" accept="application/json" style="display:none;">
     </div>
   </div>
@@ -391,7 +449,7 @@ function blankItem(){
   return { id: crypto.randomUUID(), productId:null, code:"", desc:"", delivery:"", qty:1, listPrice:"", buyDiscount:"", discount:"", unitPrice:"", useCalc:false };
 }
 function emptyCompany(){
-  return { name:"Godo Endüstriyel Otomasyon", legalName:"", address:"", phone:"", email:"", website:"godo.tr", taxOffice:"", taxNo:"", iban:"", tagline:"GLOBAL OPTIMIZATION | DIGITAL OPERATION" };
+  return { name:"Godo Endüstriyel Otomasyon", legalName:"", contactName:"", address:"", phone:"", email:"", website:"godo.tr", taxOffice:"", taxNo:"", iban:"", tagline:"GLOBAL OPTIMIZATION | DIGITAL OPERATION" };
 }
 function emptyCustomer(){
   return { id:null, name:"", address:"", taxOffice:"", taxNo:"", website:"", contacts:[], notes:[], tags:[],
@@ -408,6 +466,81 @@ const TAG_PRESETS = ["Sıcak","Ilık","Soğuk"];
 const LOSS_REASON_OPTIONS = ["Fiyat","Rakip Firma","Zamanlama / Vazgeçildi","Stok / Teslim Süresi","Bütçe","Diğer"];
 const FOLLOWUP_DAYS = 3; // "Gönderildi" durumuna geçince kaç iş günü sonra takip görevi oluşsun
 
+/* ---------------- PROJE TEKLİFİ (PROPOSAL) ---------------- */
+const PROPOSAL_STATUS_OPTIONS = ["Taslak","Gönderildi","Onaylandı","Reddedildi","Siparişe Dönüştü"];
+const PROPOSAL_SECTIONS = [
+  "Giriş","Proje Kapsamı","Teknik Çözüm","Teslimat ve Proje Takvimi",
+  "Fiyatlandırma","Opsiyonel Kalemler","Genel Şartlar","Kapanış"
+];
+const DEFAULT_PROPOSAL_INTRO = "[Müşteri Firma Adı] için talep etmiş olduğunuz [proje adı / kapsamı] kapsamında hazırladığımız proje teklifimizi bilgilerinize sunarız. Godo Endüstriyel Otomasyon olarak, projenizin teknik ihtiyaçlarını doğru analiz ederek; güvenilir, sürdürülebilir ve yüksek performanslı bir otomasyon çözümü sunmayı hedefliyoruz.\n\nAşağıda; projenin kapsamı, önerilen teknik çözüm, teslimat takvimi ve fiyatlandırma detayları yer almaktadır. Teklifimizle ilgili her türlü soru ve görüşme talebiniz için iletişime geçmekten memnuniyet duyarız.";
+const DEFAULT_PROPOSAL_SCOPE_INTRO = "[Projenin genel amacı, mevcut durum, ihtiyacın kısa tanımı ve bu teklifin kapsadığı sınırlar burada özetlenir.]";
+const DEFAULT_PROPOSAL_ARCH = "[Önerilen otomasyon mimarisinin genel açıklaması: PLC/SCADA/HMI seçimleri, kontrol felsefesi, entegrasyon yaklaşımı.]\n\nSistem Mimarisi: [Kontrol mimarisi, haberleşme protokolleri (Profinet / Profibus / Ethernet IP vb.), ağ topolojisi.]";
+const DEFAULT_PROPOSAL_SOFTWARE = "[PLC yazılımı, HMI ekranları, parametrizasyon, test senaryoları ve saha devreye alma sürecinin tanımı.]";
+const DEFAULT_PROPOSAL_TIMELINE = [
+  {activity:"Mühendislik ve detay tasarım (elektrik / panel / PLC yazılım şeması)", duration:""},
+  {activity:"Malzeme temini ve panel imalatı", duration:""},
+  {activity:"Saha montajı ve kablaj", duration:""},
+  {activity:"Devreye alma, testler ve SAT", duration:""},
+  {activity:"Eğitim ve proje teslimi", duration:""},
+];
+const DEFAULT_PROPOSAL_TIMELINE_NOTE = "Proje, aşağıdaki aşamalar doğrultusunda planlanmaktadır. Süreler, sipariş onayı ve avans ödemesinin alınmasını takip eden iş günü olarak hesaplanmıştır.";
+const DEFAULT_PROPOSAL_PRICING_NOTE = "Aşağıdaki tabloda proje kapsamında yer alan kalemler ve toplam bedel belirtilmiştir. Fiyatlara aksi belirtilmedikçe KDV dahil değildir.";
+const DEFAULT_PROPOSAL_EXCLUDED_NOTE = "[iskele, vinç, elektrik / pnömatik enerji temini, izin ve ruhsat bedelleri vb.]";
+const DEFAULT_PROPOSAL_OPTIONAL_NOTE = "Aşağıdaki kalemler ana teklif kapsamına dahil değildir; talep edilmesi halinde ayrıca fiyatlandırılıp sözleşmeye eklenebilir.";
+const DEFAULT_PROPOSAL_TERMS = {
+  payment: "[%.. avans, %.. teslimatta, %.. devreye almada]",
+  delivery: "[Sipariş onayından itibaren .. iş günü]",
+  validity: "", // otomatik: "Bu teklif, teklif tarihinden itibaren [X] gün süreyle geçerlidir."
+  warranty: "12",  // sadece ay sayısı — cümle önizlemede otomatik kurulur
+  priceKur: "[TL / EUR / USD] bazında olup kur farkına tabidir / tabi değildir.",
+  other: ""
+};
+const DEFAULT_PROPOSAL_CLOSING = "Projenizde Godo Endüstriyel Otomasyon güvencesiyle yanınızda olmaktan memnuniyet duyarız. Teklifimizin değerlendirilmesi ve olası soru, revizyon veya görüşme talepleriniz için bizimle iletişime geçebilirsiniz.";
+
+function emptyProposal(){
+  return {
+    id: null,
+    proposalNo: "",
+    date: new Date().toISOString().slice(0,10),
+    validityDays: 30,
+    title: "",
+    status: "Taslak",
+    preparedBy: "",
+    customer: { customerId:null, name:"", contactName:"", address:"", taxOffice:"", taxNo:"", phone:"", email:"", website:"" },
+    intro: DEFAULT_PROPOSAL_INTRO,
+    scopeIntro: DEFAULT_PROPOSAL_SCOPE_INTRO,
+    scopeIncluded: [""],
+    scopeExcluded: [""],
+    techArchitecture: DEFAULT_PROPOSAL_ARCH,
+    techEquipment: ["[Marka / Model — PLC]","[Marka / Model — Sürücü / Motor]","[Marka / Model — HMI / SCADA]","[Pano, kablo, saha ekipmanları]"],
+    techSoftware: DEFAULT_PROPOSAL_SOFTWARE,
+    timelineNote: DEFAULT_PROPOSAL_TIMELINE_NOTE,
+    timeline: DEFAULT_PROPOSAL_TIMELINE.map(t=>({ id: crypto.randomUUID(), ...t })),
+    currency: "₺",
+    items: [ blankProposalItem() ],
+    vatEnabled: true,
+    vatRate: 20,
+    excludedNote: DEFAULT_PROPOSAL_EXCLUDED_NOTE,
+    optionalItems: [],
+    terms: { ...DEFAULT_PROPOSAL_TERMS },
+    closing: DEFAULT_PROPOSAL_CLOSING
+  };
+}
+function blankProposalItem(){ return { id: crypto.randomUUID(), desc:"[Kalem / iş kalemi açıklaması]", qty:1, unitPrice:"" }; }
+function blankOptionalItem(){ return { id: crypto.randomUUID(), desc:"[Opsiyonel hizmet / ekipman]", duration:"[--]", price:"" }; }
+function computeProposalTotals(p){
+  const sub = p.items.reduce((s,it)=> s + (parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0), 0);
+  const vat = p.vatEnabled ? sub*(parseFloat(p.vatRate)||0)/100 : 0;
+  const optSum = (p.optionalItems||[]).reduce((s,it)=> s + (parseFloat(it.price)||0), 0);
+  return { sub, vat, grand: sub+vat, optSum };
+}
+function isProposalTab(t){ return t==='pInfo'||t==='pContent'||t==='pPricing'||t==='pTerms'||t==='pPreview'; }
+function nextProposalNo(){
+  const year = new Date().getFullYear();
+  const count = proposalsIndex.filter(p=>p.proposalNo && p.proposalNo.includes('PRJ'+year)).length + 1;
+  return `GODO-PRJ${year}-${String(count).padStart(2,'0')}`;
+}
+
 let company = emptyCompany();
 let customers = [];
 let products = [];
@@ -420,6 +553,8 @@ let docTemplates = { classic:{html:'',css:''}, dark:{html:'',css:''}, minimal:{h
 let defaultTemplate = 'classic';
 let docEditingSlot = 'classic';
 let quote = emptyQuote();
+let proposalsIndex = [];
+let proposal = emptyProposal();
 let activeTab = "dashboard";
 let selectedCustomerId = null;
 let selectedSupplierId = null;
@@ -433,17 +568,84 @@ let productCategoryFilter = "";
 let saveTimer = null;
 
 /* ---------------- STORAGE ADAPTER ----------------
-   Üç kademeli depolama:
-   1) FILE  — bilgisayarda seçtiğin bir dosyaya (ör. Google Drive senkron klasöründeki
-      godo-veri.json) doğrudan yazar. File System Access API gerektirir (Chrome/Edge,
-      ve sayfa http://localhost üzerinden açılmalı — file:// üzerinden çalışmaz).
+   Kademeli depolama:
+   0) SUPABASE — birincil, kalıcı depolama. Giriş yaptıktan sonra her stSet çağrısı
+      hem Supabase'e (kv_store tablosu, kullanıcıya özel RLS ile) hem de anlık bir
+      yerel önbelleğe (localStorage) yazar. Ağ hatası/çevrimdışı durumda stGet
+      otomatik olarak bu yerel önbelleğe düşer, senkronizasyon bekleyen yazımlar
+      kuyruğa alınır ve bağlantı dönünce otomatik gönderilir.
+   1) FILE  — bilgisayarda seçtiğin bir dosyaya doğrudan yazar (eski yöntem, hâlâ
+      kullanılabilir ama artık gerekli değil — Supabase bunun yerini alıyor).
    2) CLOUD — Claude içinde açıldığında window.storage (Claude bulutu).
-   3) LOCAL — hiçbiri yoksa bu tarayıcının localStorage'ı (yedek plan).
+   3) LOCAL — hiçbiri yoksa bu tarayıcının localStorage'ı (son çare).
    Hepsi aynı key/value arayüzünü (stGet/stSet/stDelete) kullanır, üstteki kod
    hangi modda olduğunu bilmek zorunda değildir. */
+
+/* --- Supabase istemcisi --- */
+const SUPABASE_URL = 'https://laopdoxuxvcwgcjghdim.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_1nISfnWk7beTCi0DDnquYA_IALD-58G';
+const sb = (typeof window.supabase !== 'undefined')
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+let currentUser = null;       // { id, email } — giriş yapan kullanıcı
+let pendingSync = [];         // ağ hatası sırasında biriken, gönderilemeyen yazımlar: {key, value|null(=delete)}
+let syncFailed = false;
+
+async function sbGet(key){
+  try{
+    const { data, error } = await sb.from('kv_store').select('value').eq('user_id', currentUser.id).eq('key', key).maybeSingle();
+    if(error) throw error;
+    if(data){ try{ localStorage.setItem('godo::'+key, data.value); }catch(e){} return { key, value:data.value, shared:false }; }
+    return null;
+  }catch(e){
+    syncFailed = true; renderStorageBanner();
+    const v = localStorage.getItem('godo::'+key);
+    return v!==null ? { key, value:v, shared:false } : null;
+  }
+}
+async function sbSet(key, value){
+  try{ localStorage.setItem('godo::'+key, value); }catch(e){}
+  try{
+    const { error } = await sb.from('kv_store').upsert(
+      { user_id: currentUser.id, key, value },
+      { onConflict: 'user_id,key' }
+    );
+    if(error) throw error;
+    syncFailed = false;
+  }catch(e){
+    syncFailed = true;
+    pendingSync.push({ key, value });
+    renderStorageBanner();
+  }
+  return { key, value, shared:false };
+}
+async function sbDelete(key){
+  try{ localStorage.removeItem('godo::'+key); }catch(e){}
+  try{
+    const { error } = await sb.from('kv_store').delete().eq('user_id', currentUser.id).eq('key', key);
+    if(error) throw error;
+  }catch(e){
+    syncFailed = true;
+    pendingSync.push({ key, value:null });
+    renderStorageBanner();
+  }
+  return { key, deleted:true, shared:false };
+}
+async function retryPendingSync(){
+  if(!pendingSync.length || !currentUser) return;
+  const queue = pendingSync; pendingSync = [];
+  for(const item of queue){
+    if(item.value===null) await sbDelete(item.key);
+    else await sbSet(item.key, item.value);
+  }
+  if(!pendingSync.length){ syncFailed = false; renderStorageBanner(); }
+}
+window.addEventListener('online', retryPendingSync);
+setInterval(retryPendingSync, 20000);
+
 const hasCloudStorage = (typeof window.storage !== 'undefined' && window.storage && typeof window.storage.get === 'function');
 const hasFileSystemAccess = ('showSaveFilePicker' in window);
-let storageMode = hasCloudStorage ? 'cloud' : 'local'; // 'file' | 'cloud' | 'local' — 'file' set later if linked
+let storageMode = 'local'; // 'supabase' | 'file' | 'cloud' | 'local' — giriş yapınca 'supabase' olur
 let fileHandle = null;
 let fileStore = {};      // key -> string value, mirrored to disk as one JSON object when storageMode==='file'
 let fileWriteTimer = null;
@@ -547,6 +749,7 @@ async function tryReconnectFile(){
 }
 
 async function initStorage(){
+  if(storageMode==='supabase') return; // Supabase birincil kaynak — eski dosya-bağlama mantığı devre dışı
   if(!hasFileSystemAccess) return; // file:// veya desteklenmeyen tarayıcı — cloud/local moda devam
   const handle = await idbGetHandle();
   if(!handle) return;
@@ -563,23 +766,27 @@ async function initStorage(){
 }
 
 async function stGet(key){
+  if(storageMode==='supabase'){ return await sbGet(key); }
   if(storageMode==='file'){ return fileStore[key]!==undefined ? { key, value:fileStore[key], shared:false } : null; }
   if(storageMode==='cloud'){ try{ return await window.storage.get(key); }catch(e){ return null; } }
   const v = localStorage.getItem('godo::'+key);
   return v!==null ? { key, value:v, shared:false } : null;
 }
 async function stSet(key, value){
+  if(storageMode==='supabase'){ return await sbSet(key, value); }
   if(storageMode==='file'){ fileStore[key]=value; scheduleFileWrite(); return { key, value, shared:false }; }
   if(storageMode==='cloud'){ try{ return await window.storage.set(key, value); }catch(e){ return null; } }
   try{ localStorage.setItem('godo::'+key, value); return { key, value, shared:false }; }catch(e){ return null; }
 }
 async function stDelete(key){
+  if(storageMode==='supabase'){ return await sbDelete(key); }
   if(storageMode==='file'){ delete fileStore[key]; scheduleFileWrite(); return { key, deleted:true, shared:false }; }
   if(storageMode==='cloud'){ try{ return await window.storage.delete(key); }catch(e){ return null; } }
   localStorage.removeItem('godo::'+key);
   return { key, deleted:true, shared:false };
 }
 function storageModeLabel(){
+  if(storageMode==='supabase') return syncFailed ? '⚠ Çevrimdışı — son senkronize veriler gösteriliyor' : ('● Godo Matrix bulut veritabanına kaydediliyor ('+(currentUser?currentUser.email:'')+' hesabıyla giriş yapıldı)');
   if(storageMode==='file') return '● Bağlı — bu bilgisayardaki dosyaya kaydediliyor';
   if(storageMode==='cloud') return 'Depolama: Claude bulut (bu artifact\'e bağlı)';
   return 'Depolama: bu tarayıcı (yerel — dosyaya bağlı değil)';
@@ -587,6 +794,14 @@ function storageModeLabel(){
 function renderStorageBanner(){
   const el = document.getElementById('storageBanner');
   if(!el) return;
+  if(storageMode==='supabase'){
+    if(syncFailed){
+      el.innerHTML = `<div style="font-size:10.5px;color:#ffb84d;line-height:1.5;margin-bottom:10px;">⚠ Sunucuya ulaşılamıyor, değişiklikler bu cihazda bekletiliyor ve bağlantı dönünce otomatik gönderilecek.</div>`;
+    } else {
+      el.innerHTML = '';
+    }
+    return;
+  }
   if(storageMode==='file'){ el.innerHTML=''; return; }
   if(fileNeedsReconnect){
     el.innerHTML = `<button id="btnReconnectFile" style="width:100%;background:#fff;color:var(--ink);border:none;font-size:11.5px;font-weight:700;padding:8px;border-radius:3px;cursor:pointer;margin-bottom:10px;">Bilgisayardaki Dosyaya Bağlan (tek tık)</button>`;
@@ -611,6 +826,7 @@ async function loadAll(){
   try{ const ps = await stGet('godo:products'); if(ps && ps.value) products = JSON.parse(ps.value); }catch(e){}
   try{ const sp = await stGet('godo:suppliers'); if(sp && sp.value) suppliers = JSON.parse(sp.value); }catch(e){}
   try{ const idx = await stGet('godo:quotes-index'); if(idx && idx.value) quotesIndex = JSON.parse(idx.value); }catch(e){}
+  try{ const pidx = await stGet('godo:proposals-index'); if(pidx && pidx.value) proposalsIndex = JSON.parse(pidx.value); }catch(e){}
   try{ const ts = await stGet('godo:tasks'); if(ts && ts.value) tasks = JSON.parse(ts.value); }catch(e){}
   try{ const tr = await stGet('godo:trash'); if(tr && tr.value) trash = JSON.parse(tr.value); }catch(e){}
   try{ const tt = await stGet('godo:termTemplates'); if(tt && tt.value) termTemplates = JSON.parse(tt.value); }catch(e){}
@@ -708,6 +924,10 @@ async function restoreFromTrash(trashId){
     quotesIndex.unshift(item.data.indexEntry); await saveIndex();
     await stSet('godo:quote:'+item.data.full.id, JSON.stringify(item.data.full));
   }
+  else if(item.type==='proposal'){
+    proposalsIndex.unshift(item.data.indexEntry); await saveProposalsIndex();
+    await stSet('godo:proposal:'+item.data.full.id, JSON.stringify(item.data.full));
+  }
   trash.splice(idx,1);
   await saveTrash();
 }
@@ -753,12 +973,47 @@ async function deleteQuote(id){
   render();
 }
 
+/* ---------------- PROJE TEKLİFİ: KAYIT / AÇMA / SİLME ---------------- */
+async function saveProposalsIndex(){ await stSet('godo:proposals-index', JSON.stringify(proposalsIndex)); }
+async function persistProposal(){
+  if(!proposal.id) proposal.id = crypto.randomUUID();
+  await stSet('godo:proposal:'+proposal.id, JSON.stringify(proposal));
+  const total = computeProposalTotals(proposal).grand;
+  const entry = { id: proposal.id, proposalNo: proposal.proposalNo, title: proposal.title, customerName: proposal.customer.name || "İsimsiz Müşteri", customerId: proposal.customer.customerId||null, date: proposal.date, total, currency: proposal.currency, status: proposal.status };
+  const idx = proposalsIndex.findIndex(p=>p.id===proposal.id);
+  if(idx>=0) proposalsIndex[idx]=entry; else proposalsIndex.unshift(entry);
+  await saveProposalsIndex();
+  flashSaved();
+}
+async function openProposal(id){
+  const r = await stGet('godo:proposal:'+id);
+  if(r && r.value){ proposal = JSON.parse(r.value); activeTab='pInfo'; render(); }
+}
+async function deleteProposal(id){
+  const indexEntry = proposalsIndex.find(p=>p.id===id);
+  const r = await stGet('godo:proposal:'+id);
+  let full = null;
+  if(r && r.value){ try{ full = JSON.parse(r.value); }catch(e){} }
+  if(indexEntry && full) await moveToTrash('proposal', { indexEntry, full });
+  await stDelete('godo:proposal:'+id);
+  proposalsIndex = proposalsIndex.filter(p=>p.id!==id);
+  await saveProposalsIndex();
+  if(proposal.id === id){ proposal = emptyProposal(); proposal.proposalNo = nextProposalNo(); }
+  activeTab = 'proposalsList';
+  render();
+}
+function scheduleProposalSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(persistProposal, 700); }
+
 /* ---------------- BACKUP: EXPORT / IMPORT ---------------- */
 async function exportBackup(){
-  const data = { exportedAt: new Date().toISOString(), company, customers, products, suppliers, quotesIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {} };
+  const data = { exportedAt: new Date().toISOString(), company, customers, products, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
   for(const q of quotesIndex){
     const r = await stGet('godo:quote:'+q.id);
     if(r && r.value){ try{ data.quotes[q.id] = JSON.parse(r.value); }catch(e){} }
+  }
+  for(const p of proposalsIndex){
+    const r = await stGet('godo:proposal:'+p.id);
+    if(r && r.value){ try{ data.proposals[p.id] = JSON.parse(r.value); }catch(e){} }
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
   const url = URL.createObjectURL(blob);
@@ -778,13 +1033,15 @@ function importBackupFile(file){
     if(data.products) products = data.products;
     if(data.suppliers) suppliers = data.suppliers;
     if(data.quotesIndex) quotesIndex = data.quotesIndex;
+    if(data.proposalsIndex) proposalsIndex = data.proposalsIndex;
     if(data.tasks) tasks = data.tasks;
     if(data.trash) trash = data.trash;
     if(data.termTemplates) termTemplates = data.termTemplates;
     if(data.docTemplates) docTemplates = data.docTemplates;
     if(data.defaultTemplate) defaultTemplate = data.defaultTemplate;
-    await saveCompany(); await saveCustomers(); await saveProducts(); await saveSuppliers(); await saveIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
+    await saveCompany(); await saveCustomers(); await saveProducts(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
     if(data.quotes){ for(const id in data.quotes){ await stSet('godo:quote:'+id, JSON.stringify(data.quotes[id])); } }
+    if(data.proposals){ for(const id in data.proposals){ await stSet('godo:proposal:'+id, JSON.stringify(data.proposals[id])); } }
     alert('Yedek başarıyla yüklendi.');
     await loadAll();
   };
@@ -889,6 +1146,7 @@ function renderSidebarPrimaryNav(){
     <div class="side-primary-nav">
       <div class="tab ${activeTab==='dashboard'?'active':''}" data-tab="dashboard">Pano ${dueCount?`<span class="nav-badge">${dueCount}</span>`:''}</div>
       <div class="tab ${activeTab==='list'||editorActive?'active':''}" data-tab="list">Teklifler</div>
+      <div class="tab ${activeTab==='proposalsList'||isProposalTab(activeTab)?'active':''}" data-tab="proposalsList">Proje Teklifleri</div>
       <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler</div>
       <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
       <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
@@ -899,6 +1157,20 @@ function renderSidebarPrimaryNav(){
 }
 
 function renderTabsBar(){
+  if(isProposalTab(activeTab)){
+    const label = proposal.id
+      ? `${escapeHtml(proposal.proposalNo||'')}${proposal.title ? ' — '+escapeHtml(proposal.title) : ''}`
+      : 'Yeni Proje Teklifi — henüz kaydedilmedi';
+    return `
+      <div class="subtabs-context">${label}</div>
+      <div class="tabs subtabs">
+        <div class="tab ${activeTab==='pInfo'?'active':''}" data-tab="pInfo">Bilgiler</div>
+        <div class="tab ${activeTab==='pContent'?'active':''}" data-tab="pContent">İçerik</div>
+        <div class="tab ${activeTab==='pPricing'?'active':''}" data-tab="pPricing">Fiyatlandırma</div>
+        <div class="tab ${activeTab==='pTerms'?'active':''}" data-tab="pTerms">Şartlar</div>
+        <div class="tab ${activeTab==='pPreview'?'active':''}" data-tab="pPreview">Önizleme</div>
+      </div>`;
+  }
   if(isEditorTab(activeTab)){
     const label = quote.id
       ? `${escapeHtml(quote.quoteNo||'')}${quote.customer.name ? ' — '+escapeHtml(quote.customer.name) : ''}`
@@ -934,6 +1206,12 @@ function render(){
     ensureReportsData().then(data=>{ if(activeTab==='dashboard'){ const el=document.getElementById('dashProfitKPIs'); if(el) el.innerHTML = renderDashProfitKPIs(data); } });
   }
   else if(activeTab==='list') c.innerHTML = renderQuotesList();
+  else if(activeTab==='proposalsList') c.innerHTML = renderProposalsList();
+  else if(activeTab==='pInfo') c.innerHTML = renderProposalInfo();
+  else if(activeTab==='pContent') c.innerHTML = renderProposalContent();
+  else if(activeTab==='pPricing') c.innerHTML = renderProposalPricing();
+  else if(activeTab==='pTerms') c.innerHTML = renderProposalTerms();
+  else if(activeTab==='pPreview') c.innerHTML = renderProposalPreview();
   else if(activeTab==='orders') c.innerHTML = renderOrdersPage();
   else if(activeTab==='orderPrint') c.innerHTML = renderOrderPrint();
   else if(activeTab==='irsaliyePrint') c.innerHTML = renderIrsaliyePrint();
@@ -1147,6 +1425,385 @@ function renderOrdersPage(){
           <span data-irsaliye-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">${q.irsaliyeNo?'İrsaliye ('+q.irsaliyeNo+')':'İrsaliye Oluştur'}</span>
         </div>
       </div>`).join('') : '<p class="hint">Henüz siparişe dönüşen teklif yok.</p>'}
+  </div>`;
+}
+
+/* ================= PROJE TEKLİFİ (PROPOSAL) SAYFALARI ================= */
+function renderProposalsList(){
+  const rows = proposalsIndex.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const totalSum = rows.reduce((s,p)=>s+(p.total||0),0);
+  const curr = (rows[0]&&rows[0].currency) || '₺';
+  return `
+  <div class="panel" style="max-width:1040px;">
+    <div class="subhead-row" style="margin-bottom:4px;">
+      <h2 style="margin:0;">Proje Teklifleri</h2>
+      <button class="btn btn-primary" id="btnNewProposal" style="padding:8px 14px;font-size:12px;">+ Yeni Proje Teklifi</button>
+    </div>
+    <p class="hint">${rows.length} proje teklifi · Toplam ${curr} ${fmt(totalSum)} — mühendislik/otomasyon projeleri için kapsam, teknik çözüm ve fiyatlandırma içeren detaylı teklif belgeleri. Malzeme/ürün fiyat teklifleri için "Teklifler" sekmesini kullan.</p>
+    ${rows.length ? rows.map(p=>`
+      <div class="dash-quote-row" data-open-proposal="${p.id}">
+        <div><div class="dqr-cust">${escapeHtml(p.title||'İsimsiz Proje')}${p.customerName?' <span style="color:var(--gray-500);font-weight:400;">— '+escapeHtml(p.customerName)+'</span>':''}</div><div class="dqr-meta">${p.proposalNo||''} · ${p.date||''}</div></div>
+        <div style="text-align:right;"><div class="mono dqr-total">${p.currency||curr} ${fmt(p.total)}</div><div class="dqr-status status-${(p.status||'').replace(/\s/g,'')}">${p.status||''}</div></div>
+      </div>`).join('') : '<p class="hint">Henüz proje teklifi yok. "+ Yeni Proje Teklifi" ile başla.</p>'}
+  </div>`;
+}
+
+function renderProposalInfo(){
+  const custOptions = customers.map(c=>`<option value="${c.id}" ${proposal.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+  return `
+  <div class="panel">
+    <h2>Proje Teklifi Bilgileri</h2>
+    <p class="hint">Teklif no, proje başlığı ve müşteri bilgileri — doküman başlığında ve kapak sayfasında görünecek.</p>
+    <div class="grid3">
+      <div class="field mono"><label>Teklif No</label><input id="p-no" value="${escapeAttr(proposal.proposalNo)}"></div>
+      <div class="field"><label>Tarih</label><input id="p-date" type="date" value="${proposal.date}"></div>
+      <div class="field"><label>Geçerlilik (gün)</label><input id="p-validity" type="number" min="1" value="${proposal.validityDays}"></div>
+    </div>
+    <div class="field"><label>Proje Başlığı</label><input id="p-title" placeholder="Örn. Islak Mendil Makinesi Revizyonu" value="${escapeAttr(proposal.title)}"></div>
+    <div class="grid3">
+      <div class="field" style="max-width:220px;"><label>Para Birimi</label>
+        <select id="p-currency">${['₺','€','$'].map(c=>`<option ${proposal.currency===c?'selected':''}>${c}</option>`).join('')}</select>
+      </div>
+      <div class="field" style="max-width:220px;"><label>Durum</label>
+        <select id="p-status">${PROPOSAL_STATUS_OPTIONS.map(s=>`<option ${proposal.status===s?'selected':''}>${s}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Hazırlayan | Unvan</label><input id="p-preparedBy" placeholder="Furkan Özbent | Kurucu" value="${escapeAttr(proposal.preparedBy)}"></div>
+    </div>
+
+    <div class="section-div"></div>
+    <div class="subhead-row"><div class="subhead">Müşteri</div><button class="link-btn" id="p-btnManageCustomers">Cari Kayıtlarını Yönet</button></div>
+    <div class="grid2">
+      <div class="field"><label>Cari Seç</label><select id="p-custSelect"><option value="">— Manuel / Kayıtsız —</option>${custOptions}</select></div>
+      <div class="field"><label>Yetkili | Unvan</label><input id="p-contactName" placeholder="Cafer Usta | Genel Müdür" value="${escapeAttr(proposal.customer.contactName)}"></div>
+    </div>
+    <div class="field"><label>Firma Adı</label><input id="p-custName" value="${escapeAttr(proposal.customer.name)}"></div>
+    <div class="grid2">
+      <div class="field"><label>Telefon</label><input id="p-custPhone" value="${escapeAttr(proposal.customer.phone)}"></div>
+      <div class="field"><label>E-posta</label><input id="p-custEmail" value="${escapeAttr(proposal.customer.email)}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Vergi Dairesi</label><input id="p-custTaxOffice" value="${escapeAttr(proposal.customer.taxOffice)}"></div>
+      <div class="field"><label>Vergi No</label><input id="p-custTaxNo" value="${escapeAttr(proposal.customer.taxNo)}"></div>
+    </div>
+    <div class="field"><label>Adres</label><textarea id="p-custAddr" rows="2">${escapeHtml(proposal.customer.address)}</textarea></div>
+
+    <div class="section-div"></div>
+    <div class="actions-row">
+      <button class="btn btn-primary" id="p-btnSave">Kaydet</button>
+      ${proposal.id ? '<button class="btn btn-danger" id="p-btnDelete">Sil</button>' : ''}
+      <span class="save-indicator" id="statusIndicator">${proposal.status}</span>
+    </div>
+  </div>`;
+}
+
+function renderProposalContent(){
+  const scopeInRows = proposal.scopeIncluded.map((v,i)=>`
+    <div class="dyn-row" data-idx="${i}"><input class="p-scopeIn" value="${escapeAttr(v)}" placeholder="Kapsam maddesi"><span class="row-remove" data-action="removeScopeIn" data-i="${i}">✕</span></div>`).join('');
+  const scopeOutRows = proposal.scopeExcluded.map((v,i)=>`
+    <div class="dyn-row" data-idx="${i}"><input class="p-scopeOut" value="${escapeAttr(v)}" placeholder="Kapsam dışı madde"><span class="row-remove" data-action="removeScopeOut" data-i="${i}">✕</span></div>`).join('');
+  const eqRows = proposal.techEquipment.map((v,i)=>`
+    <div class="dyn-row" data-idx="${i}"><input class="p-equip" value="${escapeAttr(v)}" placeholder="Marka / Model"><span class="row-remove" data-action="removeEquip" data-i="${i}">✕</span></div>`).join('');
+  const tlRows = proposal.timeline.map((t,i)=>`
+    <div class="dyn-row" data-idx="${i}" style="display:grid;grid-template-columns:1fr 160px 24px;gap:8px;">
+      <input class="p-tlActivity" value="${escapeAttr(t.activity)}" placeholder="Faaliyet">
+      <input class="p-tlDuration" value="${escapeAttr(t.duration)}" placeholder="Tahmini süre (iş günü)">
+      <span class="row-remove" data-action="removeTimeline" data-i="${i}">✕</span>
+    </div>`).join('');
+
+  return `
+  <div class="panel" style="max-width:900px;">
+    <h2>İçerik</h2>
+    <p class="hint">Metinler şablon olarak geliyor, dilediğin gibi düzenle. Köşeli parantez <span class="mono">[ ]</span> içindeki alanlar proje özelinde doldurulmalı.</p>
+
+    <div class="subhead">Giriş</div>
+    <div class="field"><textarea id="p-intro" rows="6">${escapeHtml(proposal.intro)}</textarea></div>
+
+    <div class="section-div"></div>
+    <div class="subhead">Proje Kapsamı</div>
+    <div class="field"><textarea id="p-scopeIntro" rows="2">${escapeHtml(proposal.scopeIntro)}</textarea></div>
+    <div class="grid2">
+      <div>
+        <label class="small-label">Kapsam Dahilinde Olanlar</label>
+        <div id="scopeInList">${scopeInRows}</div>
+        <button class="add-row-btn" id="btnAddScopeIn">+ Madde Ekle</button>
+      </div>
+      <div>
+        <label class="small-label">Kapsam Dışında Olanlar</label>
+        <div id="scopeOutList">${scopeOutRows}</div>
+        <button class="add-row-btn" id="btnAddScopeOut">+ Madde Ekle</button>
+      </div>
+    </div>
+
+    <div class="section-div"></div>
+    <div class="subhead">Teknik Çözüm</div>
+    <div class="field"><label>Genel Açıklama / Sistem Mimarisi</label><textarea id="p-arch" rows="4">${escapeHtml(proposal.techArchitecture)}</textarea></div>
+    <label class="small-label">Kullanılacak Ekipmanlar</label>
+    <div id="equipList">${eqRows}</div>
+    <button class="add-row-btn" id="btnAddEquip">+ Ekipman Ekle</button>
+    <div class="field" style="margin-top:16px;"><label>Yazılım ve Devreye Alma</label><textarea id="p-software" rows="3">${escapeHtml(proposal.techSoftware)}</textarea></div>
+
+    <div class="section-div"></div>
+    <div class="subhead">Teslimat ve Proje Takvimi</div>
+    <div class="field"><textarea id="p-timelineNote" rows="2">${escapeHtml(proposal.timelineNote)}</textarea></div>
+    <div id="timelineList">${tlRows}</div>
+    <button class="add-row-btn" id="btnAddTimeline">+ Aşama Ekle</button>
+  </div>`;
+}
+
+function renderProposalPricing(){
+  const rows = proposal.items.map((it,i)=>`
+    <tr data-idx="${i}">
+      <td><input class="p-it-desc" value="${escapeAttr(it.desc)}" placeholder="Kalem / iş kalemi açıklaması"></td>
+      <td style="width:80px;"><input class="p-it-qty num" type="number" min="0" step="1" value="${it.qty}"></td>
+      <td style="width:130px;"><input class="mono p-it-unit num" type="number" step="0.01" value="${it.unitPrice}"></td>
+      <td class="num mono" style="width:130px;padding-top:12px;">${fmt((parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0))}</td>
+      <td class="row-remove" data-action="removeProposalItem" data-i="${i}">✕</td>
+    </tr>`).join('');
+  const optRows = (proposal.optionalItems||[]).map((it,i)=>`
+    <tr data-idx="${i}">
+      <td><input class="p-opt-desc" value="${escapeAttr(it.desc)}" placeholder="Opsiyonel kalem / hizmet"></td>
+      <td style="width:150px;"><input class="p-opt-duration" value="${escapeAttr(it.duration)}" placeholder="Süre"></td>
+      <td style="width:130px;"><input class="mono p-opt-price num" type="number" step="0.01" value="${it.price}"></td>
+      <td class="row-remove" data-action="removeOptionalItem" data-i="${i}">✕</td>
+    </tr>`).join('');
+  const t = computeProposalTotals(proposal);
+  return `
+  <div class="panel" style="max-width:1040px;">
+    <h2>Fiyatlandırma</h2>
+    <p class="hint">${escapeHtml(proposal.timelineNote ? '' : '')}Proje kapsamındaki kalemler ve toplam bedel. Fiyatlara aksi belirtilmedikçe KDV dahil değildir.</p>
+    <table class="items-table">
+      <thead><tr><th>Açıklama</th><th>Miktar</th><th>Birim Fiyat</th><th>Toplam</th><th></th></tr></thead>
+      <tbody id="pItemsBody">${rows}</tbody>
+    </table>
+    <button class="add-row-btn" id="btnAddProposalItem">+ Kalem Ekle</button>
+
+    <div class="totals-box">
+      <div class="vat-row">
+        <input type="checkbox" id="p-vatEnabled" ${proposal.vatEnabled?'checked':''}>
+        <label for="p-vatEnabled" style="margin:0;">KDV uygula, oran %</label>
+        <input type="number" id="p-vatRate" value="${proposal.vatRate}">
+      </div>
+      <div class="totals-row"><span>Ara Toplam</span><span class="mono">${proposal.currency} ${fmt(t.sub)}</span></div>
+      <div class="totals-row"><span>KDV</span><span class="mono">${proposal.currency} ${fmt(t.vat)}</span></div>
+      <div class="totals-row grand"><span>Genel Toplam</span><span>${proposal.currency} ${fmt(t.grand)}</span></div>
+    </div>
+
+    <div class="field" style="margin-top:26px;max-width:640px;"><label>Fiyata Dahil Olmayanlar</label><textarea id="p-excludedNote" rows="2">${escapeHtml(proposal.excludedNote)}</textarea></div>
+
+    <div class="section-div"></div>
+    <div class="subhead">Opsiyonel Kalemler</div>
+    <p class="hint">${escapeHtml(DEFAULT_PROPOSAL_OPTIONAL_NOTE)}</p>
+    <table class="items-table">
+      <thead><tr><th>Opsiyonel Kalem</th><th>Süre</th><th>Ek Bedel</th><th></th></tr></thead>
+      <tbody id="pOptBody">${optRows}</tbody>
+    </table>
+    <button class="add-row-btn" id="btnAddOptionalItem">+ Opsiyonel Kalem Ekle</button>
+  </div>`;
+}
+
+function renderProposalTerms(){
+  return `
+  <div class="panel" style="max-width:760px;">
+    <h2>Genel Şartlar ve Kapanış</h2>
+    <p class="hint">Köşeli parantez <span class="mono">[ ]</span> içindeki alanları proje özelinde doldur.</p>
+    <div class="field"><label>Ödeme Koşulları</label><textarea id="p-termPayment" rows="2">${escapeHtml(proposal.terms.payment)}</textarea></div>
+    <div class="field"><label>Teslim Süresi</label><textarea id="p-termDelivery" rows="2">${escapeHtml(proposal.terms.delivery)}</textarea></div>
+    <div class="field"><label>Garanti (ay)</label><input id="p-termWarranty" class="mono" style="max-width:120px;" value="${escapeAttr(proposal.terms.warranty)}"></div>
+    <div class="field"><label>Fiyat ve Kur</label><textarea id="p-termKur" rows="2">${escapeHtml(proposal.terms.priceKur)}</textarea></div>
+    <div class="field"><label>Diğer</label><textarea id="p-termOther" rows="2" placeholder="Nakliye, sigorta, vergi ve harçlarla ilgili özel şartlar...">${escapeHtml(proposal.terms.other)}</textarea></div>
+    <div class="section-div"></div>
+    <div class="field"><label>Kapanış Metni</label><textarea id="p-closing" rows="4">${escapeHtml(proposal.closing)}</textarea></div>
+  </div>`;
+}
+
+function renderProposalPreview(){
+  const t = computeProposalTotals(proposal);
+  const validUntil = (()=>{
+    if(!proposal.date) return '—';
+    const d = new Date(proposal.date+'T00:00:00');
+    d.setDate(d.getDate() + (parseInt(proposal.validityDays)||30));
+    return formatDate(d.toISOString().slice(0,10));
+  })();
+  const itemsRows = proposal.items.map((it,i)=>`
+    <tr><td class="pos">${i+1}</td><td>${escapeHtml(it.desc||'—')}</td><td class="center">${it.qty||0}</td><td class="num">${proposal.currency} ${fmt(parseFloat(it.unitPrice)||0)}</td><td class="num">${proposal.currency} ${fmt((parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0))}</td></tr>`).join('');
+  const optRows = (proposal.optionalItems||[]).filter(it=>it.desc).map(it=>`
+    <tr><td>${escapeHtml(it.desc)}</td><td class="center">${escapeHtml(it.duration||'—')}</td><td class="num">${proposal.currency} ${fmt(parseFloat(it.price)||0)}</td></tr>`).join('');
+  const timelineRows = proposal.timeline.filter(tl=>tl.activity).map((tl,i)=>`
+    <tr><td class="pos">${i+1}</td><td>${escapeHtml(tl.activity)}</td><td class="num">${escapeHtml(tl.duration||'—')}</td></tr>`).join('');
+  const scopeInHtml = proposal.scopeIncluded.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
+  const scopeOutHtml = proposal.scopeExcluded.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
+  const equipHtml = proposal.techEquipment.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
+  const warrantyText = `Teslim edilen ekipman ve işçilik ${proposal.terms.warranty ? '['+escapeHtml(proposal.terms.warranty)+']' : '[--]'} ay garanti kapsamındadır.`;
+  const validityText = `Bu teklif, teklif tarihinden itibaren [${escapeHtml(String(proposal.validityDays||30))}] gün süreyle geçerlidir.`;
+
+  return `
+  <div class="preview-wrap">
+    <div class="preview-toolbar">
+      <button class="btn btn-ghost" id="p-btnBackEdit">← Düzenlemeye Dön</button>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-ghost" id="p-btnMailDraft">E-posta Taslağı Oluştur</button>
+        <button class="btn btn-primary" id="p-btnPrint">Yazdır / PDF Kaydet</button>
+      </div>
+    </div>
+    <div id="printArea">
+
+      <!-- KAPAK -->
+      <div class="doc-head">
+        <div>
+          <div class="doc-word">${escapeHtml(company.name||'GODO')}</div>
+          <div class="doc-rule"></div>
+          <div class="doc-tagline">${escapeHtml(company.tagline||'')}</div>
+        </div>
+      </div>
+      <div class="doc-cover-title">${escapeHtml(proposal.title||'Proje Teklifi')}</div>
+      <div class="doc-cover-table">
+        <div><div class="doc-info-h">Hazırlanan Firma</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div></div>
+        <div><div class="doc-info-h">Teklif No</div><div class="doc-info-v mono">${escapeHtml(proposal.proposalNo||'—')}</div></div>
+        <div><div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div></div>
+        <div><div class="doc-info-h">Teklif Tarihi</div><div class="doc-info-v">${formatDate(proposal.date)}</div></div>
+        <div><div class="doc-info-h">Hazırlayan</div><div class="doc-info-v">${escapeHtml(proposal.preparedBy||'—')}</div></div>
+        <div><div class="doc-info-h">Geçerlilik</div><div class="doc-info-v">${validUntil}</div></div>
+      </div>
+      <div class="doc-cover-note">Bu doküman yalnızca yukarıda belirtilen firmaya özel hazırlanmıştır.</div>
+
+      <div style="page-break-before:always;"></div>
+
+      <!-- DOKÜMAN BİLGİLERİ -->
+      <div class="doc-page-header">${escapeHtml((company.name||'GODO').toUpperCase())} PROJE TEKLİFİ</div>
+      <div class="doc-sub-h">Doküman Bilgileri</div>
+      <div class="doc-info-grid">
+        <div>
+          <div class="doc-info-block-h">Firma Bilgileri</div>
+          <div class="doc-info-h">Firma</div><div class="doc-info-v">${escapeHtml(company.name||'—')}</div>
+          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(company.contactName||proposal.preparedBy||'—')}</div>
+          <div class="doc-info-h">Adres</div><div class="doc-info-v">${escapeHtml(company.address||'—')}</div>
+          <div class="doc-info-h">Telefon</div><div class="doc-info-v">${escapeHtml(company.phone||'—')}</div>
+          <div class="doc-info-h">E-posta</div><div class="doc-info-v">${escapeHtml(company.email||'—')}</div>
+          <div class="doc-info-h">Web</div><div class="doc-info-v">${escapeHtml(company.website||'—')}</div>
+          <div class="doc-info-h">Vergi Dairesi / No</div><div class="doc-info-v">${escapeHtml(company.taxOffice||'—')} ${company.taxNo?'/ '+escapeHtml(company.taxNo):''}</div>
+        </div>
+        <div>
+          <div class="doc-info-block-h">Müşteri Bilgileri</div>
+          <div class="doc-info-h">Firma</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div>
+          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div>
+          <div class="doc-info-h">Adres</div><div class="doc-info-v">${escapeHtml(proposal.customer.address||'—')}</div>
+          <div class="doc-info-h">Telefon</div><div class="doc-info-v">${escapeHtml(proposal.customer.phone||'—')}</div>
+          <div class="doc-info-h">E-posta</div><div class="doc-info-v">${escapeHtml(proposal.customer.email||'—')}</div>
+          <div class="doc-info-h">Web</div><div class="doc-info-v">${escapeHtml(proposal.customer.website||'[Müşteri Web]')}</div>
+          <div class="doc-info-h">Vergi Dairesi / No</div><div class="doc-info-v">${escapeHtml(proposal.customer.taxOffice||'[Müşteri Vergi Dairesi]')} / ${escapeHtml(proposal.customer.taxNo||'[Müşteri Vergi No]')}</div>
+        </div>
+      </div>
+
+      <div class="doc-sub-h">İçindekiler</div>
+      <div class="doc-toc">
+        ${PROPOSAL_SECTIONS.map((s,i)=>`<div class="doc-toc-row"><span class="doc-toc-num">${i+1}</span><span>${s.toUpperCase()}</span></div>`).join('')}
+      </div>
+
+      <!-- 1. GİRİŞ -->
+      <div class="doc-section">
+        <div class="doc-section-h"><span class="n">1</span> Giriş</div>
+        <div class="doc-section-t" style="margin-bottom:10px;font-weight:700;">Sayın ${escapeHtml(proposal.customer.contactName||'[Müşteri Yetkilisi Ad Soyad]')},</div>
+        <div class="doc-section-t">${escapeHtml(proposal.intro)}</div>
+      </div>
+
+      <!-- 2. PROJE KAPSAMI -->
+      <div class="doc-section">
+        <div class="doc-section-h"><span class="n">2</span> Proje Kapsamı</div>
+        <div class="doc-section-t">${escapeHtml(proposal.scopeIntro)}</div>
+        <div class="doc-info-grid" style="border-bottom:none;padding-bottom:0;">
+          <div><div class="doc-info-block-h">Kapsam Dahilinde Olanlar</div><ul class="doc-list">${scopeInHtml}</ul></div>
+          <div><div class="doc-info-block-h">Kapsam Dışında Olanlar</div><ul class="doc-list">${scopeOutHtml}</ul></div>
+        </div>
+      </div>
+
+      <!-- 3. TEKNİK ÇÖZÜM -->
+      <div class="doc-section">
+        <div class="doc-section-h"><span class="n">3</span> Teknik Çözüm</div>
+        <div class="doc-section-t">${escapeHtml(proposal.techArchitecture)}</div>
+        <div class="doc-info-block-h" style="margin-top:16px;">Kullanılacak Ekipmanlar</div>
+        <ul class="doc-list">${equipHtml}</ul>
+        <div class="doc-info-block-h" style="margin-top:16px;">Yazılım ve Devreye Alma</div>
+        <div class="doc-section-t">${escapeHtml(proposal.techSoftware)}</div>
+      </div>
+
+      <!-- 4. TESLİMAT VE PROJE TAKVİMİ -->
+      <div class="doc-section" style="page-break-inside:avoid;">
+        <div class="doc-section-h"><span class="n">4</span> Teslimat ve Proje Takvimi</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(proposal.timelineNote)}</div>
+        <table class="doc-simple-table">
+          <thead><tr><th class="num">Aşama</th><th>Faaliyet</th><th class="num">Tahmini Süre</th></tr></thead>
+          <tbody>${timelineRows || '<tr><td colspan="3">—</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <!-- 5. FİYATLANDIRMA -->
+      <div class="doc-section" style="page-break-inside:avoid;">
+        <div class="doc-section-h"><span class="n">5</span> Fiyatlandırma</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(DEFAULT_PROPOSAL_PRICING_NOTE)}</div>
+        <table class="doc-items">
+          <thead><tr><th class="num">No</th><th>Açıklama</th><th class="center">Miktar</th><th class="num">Birim Fiyat</th><th class="num">Toplam</th></tr></thead>
+          <tbody>${itemsRows}</tbody>
+        </table>
+        <div class="doc-totals">
+          <div class="r"><span>Ara Toplam</span><span>${proposal.currency} ${fmt(t.sub)}</span></div>
+          <div class="r"><span>KDV${proposal.vatEnabled?' (%'+proposal.vatRate+')':''}</span><span>${proposal.vatEnabled?proposal.currency+' '+fmt(t.vat):'Hariçtir'}</span></div>
+          <div class="r grand"><span>Genel Toplam</span><span>${proposal.currency} ${fmt(t.grand)}</span></div>
+        </div>
+        ${proposal.excludedNote ? `<div class="doc-note">Fiyatlara dahil olmayanlar: ${escapeHtml(proposal.excludedNote)}</div>` : ''}
+      </div>
+
+      <!-- 6. OPSİYONEL KALEMLER -->
+      ${(proposal.optionalItems||[]).some(it=>it.desc) ? `
+      <div class="doc-section" style="page-break-inside:avoid;">
+        <div class="doc-section-h"><span class="n">6</span> Opsiyonel Kalemler</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(DEFAULT_PROPOSAL_OPTIONAL_NOTE)}</div>
+        <table class="doc-simple-table">
+          <thead><tr><th>Opsiyonel Kalem</th><th class="center">Süre</th><th class="num">Ek Bedel</th></tr></thead>
+          <tbody>${optRows}</tbody>
+        </table>
+      </div>` : ''}
+
+      <!-- 7. GENEL ŞARTLAR -->
+      <div class="doc-section">
+        <div class="doc-section-h"><span class="n">7</span> Genel Şartlar</div>
+        <ul class="doc-list">
+          <li><strong>Ödeme Koşulları:</strong> ${escapeHtml(proposal.terms.payment)}</li>
+          <li><strong>Teslim Süresi:</strong> ${escapeHtml(proposal.terms.delivery)}</li>
+          <li><strong>Geçerlilik Süresi:</strong> ${validityText}</li>
+          <li><strong>Garanti:</strong> ${warrantyText}</li>
+          <li><strong>Fiyat ve Kur:</strong> Fiyatlar ${escapeHtml(proposal.terms.priceKur)}</li>
+          ${proposal.terms.other ? `<li><strong>Diğer:</strong> ${escapeHtml(proposal.terms.other)}</li>` : ''}
+        </ul>
+      </div>
+
+      <!-- 8. KAPANIŞ -->
+      <div class="doc-section" style="page-break-inside:avoid;">
+        <div class="doc-section-h"><span class="n">8</span> Kapanış</div>
+        <div class="doc-section-t">${escapeHtml(proposal.closing)}</div>
+        <div style="margin-top:14px;font-size:12.5px;">Saygılarımızla,</div>
+        <div style="margin-top:2px;font-weight:700;font-size:13px;">${escapeHtml(company.name||'Godo Endüstriyel Otomasyon')}</div>
+      </div>
+
+      <div class="doc-sig-grid">
+        <div>
+          <div class="doc-sig-h">${escapeHtml((company.name||'Godo Endüstriyel Otomasyon').toUpperCase())}</div>
+          <div class="doc-sig-line"></div>
+          <div class="doc-sig-sub">Ad Soyad / Unvan</div>
+          <div class="doc-sig-sub">Tarih</div>
+        </div>
+        <div>
+          <div class="doc-sig-h">MÜŞTERİ ONAYI</div>
+          <div class="doc-sig-line"></div>
+          <div class="doc-sig-sub">Ad Soyad / Unvan</div>
+          <div class="doc-sig-sub">Tarih</div>
+        </div>
+      </div>
+
+      <div class="doc-foot">
+        <span>${escapeHtml((company.name||'GODO').toUpperCase())} · ${escapeHtml(company.website||'')}</span>
+        <span>${escapeHtml(proposal.proposalNo||'')}</span>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -2004,7 +2661,7 @@ function renderIrsaliyePrint(){
       <div>
         <div class="doc-word">${tokens.COMPANY_NAME}</div>
         <div class="doc-rule"></div>
-        ${tokens.COMPANY_TAGLINE_BLOCK}
+        ${tokens.COMPANY_TAGLINE_BLOCK||''}
         <div class="doc-sub">${tokens.COMPANY_WEBSITE}</div>
       </div>
       <div class="doc-meta">
@@ -2021,7 +2678,7 @@ function renderIrsaliyePrint(){
         <div><span class="dc-label">Vergi Dairesi / No</span><span class="dc-value">${tokens.CUSTOMER_TAX}</span></div>
         <div><span class="dc-label">Yetkili / İletişim</span><span class="dc-value">${tokens.CUSTOMER_CONTACT}</span></div>
       </div>
-      ${tokens.CUSTOMER_ADDRESS_BLOCK}
+      ${tokens.CUSTOMER_ADDRESS_BLOCK||''}
     </div>
     <table class="doc-items">
       <colgroup><col style="width:6%"><col style="width:74%"><col style="width:20%"></colgroup>
@@ -2145,6 +2802,116 @@ function attachHandlers(){
         });
       });
     }
+  }
+
+  if(activeTab==='proposalsList'){
+    document.getElementById('btnNewProposal').onclick = ()=>{ proposal = emptyProposal(); proposal.proposalNo = nextProposalNo(); proposal.preparedBy = company.contactName||''; activeTab='pInfo'; render(); };
+    document.querySelectorAll('[data-open-proposal]').forEach(row=>{
+      row.onclick = async ()=>{ await openProposal(row.dataset.openProposal); };
+    });
+  }
+
+  if(activeTab==='pInfo'){
+    const bindP = (id, key)=>{ const el=document.getElementById(id); if(el) el.oninput = ()=>{ proposal[key]=el.value; scheduleProposalSave(); }; };
+    bindP('p-no','proposalNo'); bindP('p-title','title'); bindP('p-preparedBy','preparedBy');
+    document.getElementById('p-date').onchange = e=>{ proposal.date=e.target.value; scheduleProposalSave(); };
+    document.getElementById('p-validity').oninput = e=>{ proposal.validityDays=e.target.value; scheduleProposalSave(); };
+    document.getElementById('p-currency').onchange = e=>{ proposal.currency=e.target.value; scheduleProposalSave(); };
+    document.getElementById('p-status').onchange = e=>{ proposal.status=e.target.value; scheduleProposalSave(); render(); };
+    document.getElementById('p-btnManageCustomers').onclick = ()=>{ activeTab='customers'; render(); };
+    document.getElementById('p-custSelect').onchange = e=>{
+      const c = customers.find(x=>x.id===e.target.value);
+      if(c){
+        proposal.customer.customerId = c.id; proposal.customer.name = c.name; proposal.customer.address = c.address||'';
+        proposal.customer.taxOffice = c.taxOffice||''; proposal.customer.taxNo = c.taxNo||''; proposal.customer.website = c.website||'';
+        const primary = (c.contacts||[])[0];
+        if(primary){ proposal.customer.contactName = primary.name||''; proposal.customer.phone = primary.phone||''; proposal.customer.email = primary.email||''; }
+      } else {
+        proposal.customer.customerId = null;
+      }
+      scheduleProposalSave(); render();
+    };
+    const bindC = (id, key)=>{ const el=document.getElementById(id); if(el) el.oninput = ()=>{ proposal.customer[key]=el.value; scheduleProposalSave(); }; };
+    bindC('p-contactName','contactName'); bindC('p-custName','name'); bindC('p-custPhone','phone');
+    bindC('p-custEmail','email'); bindC('p-custTaxOffice','taxOffice'); bindC('p-custTaxNo','taxNo'); bindC('p-custAddr','address');
+    document.getElementById('p-btnSave').onclick = ()=>{ persistProposal(); };
+    const del = document.getElementById('p-btnDelete');
+    if(del) del.onclick = ()=>{ if(confirm('Bu proje teklifini silmek istediğine emin misin?')) deleteProposal(proposal.id); };
+  }
+
+  if(activeTab==='pContent'){
+    const bindP = (id, key)=>{ const el=document.getElementById(id); if(el) el.oninput = ()=>{ proposal[key]=el.value; scheduleProposalSave(); }; };
+    bindP('p-intro','intro'); bindP('p-scopeIntro','scopeIntro'); bindP('p-arch','techArchitecture');
+    bindP('p-software','techSoftware'); bindP('p-timelineNote','timelineNote');
+
+    document.getElementById('btnAddScopeIn').onclick = ()=>{ proposal.scopeIncluded.push(''); render(); };
+    document.getElementById('btnAddScopeOut').onclick = ()=>{ proposal.scopeExcluded.push(''); render(); };
+    document.getElementById('btnAddEquip').onclick = ()=>{ proposal.techEquipment.push(''); render(); };
+    document.getElementById('btnAddTimeline').onclick = ()=>{ proposal.timeline.push({id:crypto.randomUUID(), activity:'', duration:''}); render(); };
+
+    document.querySelectorAll('[data-action="removeScopeIn"]').forEach(el=>{ el.onclick=()=>{ proposal.scopeIncluded.splice(+el.dataset.i,1); if(!proposal.scopeIncluded.length) proposal.scopeIncluded.push(''); scheduleProposalSave(); render(); }; });
+    document.querySelectorAll('[data-action="removeScopeOut"]').forEach(el=>{ el.onclick=()=>{ proposal.scopeExcluded.splice(+el.dataset.i,1); if(!proposal.scopeExcluded.length) proposal.scopeExcluded.push(''); scheduleProposalSave(); render(); }; });
+    document.querySelectorAll('[data-action="removeEquip"]').forEach(el=>{ el.onclick=()=>{ proposal.techEquipment.splice(+el.dataset.i,1); if(!proposal.techEquipment.length) proposal.techEquipment.push(''); scheduleProposalSave(); render(); }; });
+    document.querySelectorAll('[data-action="removeTimeline"]').forEach(el=>{ el.onclick=()=>{ proposal.timeline.splice(+el.dataset.i,1); scheduleProposalSave(); render(); }; });
+
+    document.querySelectorAll('#scopeInList .dyn-row').forEach(row=>{ const i=+row.dataset.idx; const inp=row.querySelector('.p-scopeIn'); if(inp) inp.oninput=()=>{ proposal.scopeIncluded[i]=inp.value; scheduleProposalSave(); }; });
+    document.querySelectorAll('#scopeOutList .dyn-row').forEach(row=>{ const i=+row.dataset.idx; const inp=row.querySelector('.p-scopeOut'); if(inp) inp.oninput=()=>{ proposal.scopeExcluded[i]=inp.value; scheduleProposalSave(); }; });
+    document.querySelectorAll('#equipList .dyn-row').forEach(row=>{ const i=+row.dataset.idx; const inp=row.querySelector('.p-equip'); if(inp) inp.oninput=()=>{ proposal.techEquipment[i]=inp.value; scheduleProposalSave(); }; });
+    document.querySelectorAll('#timelineList .dyn-row').forEach(row=>{
+      const i=+row.dataset.idx; const t=proposal.timeline[i]; if(!t) return;
+      const a=row.querySelector('.p-tlActivity'), d=row.querySelector('.p-tlDuration');
+      if(a) a.oninput=()=>{ t.activity=a.value; scheduleProposalSave(); };
+      if(d) d.oninput=()=>{ t.duration=d.value; scheduleProposalSave(); };
+    });
+  }
+
+  if(activeTab==='pPricing'){
+    document.getElementById('btnAddProposalItem').onclick = ()=>{ proposal.items.push(blankProposalItem()); render(); };
+    document.getElementById('btnAddOptionalItem').onclick = ()=>{ proposal.optionalItems.push(blankOptionalItem()); render(); };
+    document.getElementById('p-vatEnabled').onchange = e=>{ proposal.vatEnabled=e.target.checked; scheduleProposalSave(); render(); };
+    document.getElementById('p-vatRate').oninput = e=>{ proposal.vatRate=e.target.value; scheduleProposalSave(); render(); };
+    document.getElementById('p-excludedNote').oninput = e=>{ proposal.excludedNote=e.target.value; scheduleProposalSave(); };
+
+    document.querySelectorAll('[data-action="removeProposalItem"]').forEach(el=>{
+      el.onclick=()=>{ proposal.items.splice(+el.dataset.i,1); if(!proposal.items.length) proposal.items.push(blankProposalItem()); scheduleProposalSave(); render(); };
+    });
+    document.querySelectorAll('[data-action="removeOptionalItem"]').forEach(el=>{
+      el.onclick=()=>{ proposal.optionalItems.splice(+el.dataset.i,1); scheduleProposalSave(); render(); };
+    });
+    document.querySelectorAll('#pItemsBody tr[data-idx]').forEach(tr=>{
+      const i=+tr.dataset.idx; const it=proposal.items[i]; if(!it) return;
+      const map = {'.p-it-desc':'desc','.p-it-qty':'qty','.p-it-unit':'unitPrice'};
+      Object.entries(map).forEach(([sel,key])=>{
+        const inp = tr.querySelector(sel);
+        if(inp) inp.oninput = ()=>{ it[key]=inp.value; scheduleProposalSave(); renderProposalTotalsOnly(); };
+      });
+    });
+    document.querySelectorAll('#pOptBody tr[data-idx]').forEach(tr=>{
+      const i=+tr.dataset.idx; const it=proposal.optionalItems[i]; if(!it) return;
+      const map = {'.p-opt-desc':'desc','.p-opt-duration':'duration','.p-opt-price':'price'};
+      Object.entries(map).forEach(([sel,key])=>{
+        const inp = tr.querySelector(sel);
+        if(inp) inp.oninput = ()=>{ it[key]=inp.value; scheduleProposalSave(); };
+      });
+    });
+  }
+
+  if(activeTab==='pTerms'){
+    const bindT = (id, key)=>{ const el=document.getElementById(id); if(el) el.oninput = ()=>{ proposal.terms[key]=el.value; scheduleProposalSave(); }; };
+    bindT('p-termPayment','payment'); bindT('p-termDelivery','delivery'); bindT('p-termWarranty','warranty');
+    bindT('p-termKur','priceKur'); bindT('p-termOther','other');
+    const closingEl = document.getElementById('p-closing');
+    if(closingEl) closingEl.oninput = ()=>{ proposal.closing = closingEl.value; scheduleProposalSave(); };
+  }
+
+  if(activeTab==='pPreview'){
+    document.getElementById('p-btnBackEdit').onclick = ()=>{ activeTab='pInfo'; render(); };
+    document.getElementById('p-btnPrint').onclick = ()=>{ persistProposal(); window.print(); };
+    document.getElementById('p-btnMailDraft').onclick = ()=>{
+      const to = proposal.customer.email || '';
+      if(!to){ alert('Bu carinin kayıtlı bir e-postası yok. Yine de e-posta penceresini açıyorum, alıcıyı elle girebilirsin.'); }
+      window.location.href = buildMailtoLink(to);
+    };
   }
 
   if(activeTab==='orders'){
@@ -2307,7 +3074,7 @@ function attachHandlers(){
     document.getElementById('c-save').onclick = ()=>{
       const val = id => document.getElementById(id).value;
       company = {
-        name: val('c-name'), legalName: val('c-legalName'), tagline: val('c-tagline'), address: val('c-address'),
+        name: val('c-name'), legalName: val('c-legalName'), contactName: val('c-contactName'), tagline: val('c-tagline'), address: val('c-address'),
         taxOffice: val('c-taxOffice'), taxNo: val('c-taxNo'), phone: val('c-phone'),
         email: val('c-email'), website: val('c-website'), iban: val('c-iban')
       };
@@ -2619,6 +3386,24 @@ function refreshTotalsOnly(){
     if(rowsT[3]) rowsT[3].querySelector('span:last-child').textContent = `${quote.currency} ${fmt(t.profit)}`;
   }
 }
+function renderProposalTotalsOnly(){
+  const rows = document.querySelectorAll('#pItemsBody tr[data-idx]');
+  rows.forEach((tr,idx)=>{
+    const it = proposal.items[idx];
+    if(!it) return;
+    const cells = tr.querySelectorAll('td');
+    const totalCell = cells[3];
+    if(totalCell) totalCell.textContent = fmt((parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0));
+  });
+  const t = computeProposalTotals(proposal);
+  const box = document.querySelector('.totals-box');
+  if(box){
+    const rowsT = box.querySelectorAll('.totals-row');
+    if(rowsT[0]) rowsT[0].querySelector('span:last-child').textContent = `${proposal.currency} ${fmt(t.sub)}`;
+    if(rowsT[1]) rowsT[1].querySelector('span:last-child').textContent = `${proposal.currency} ${fmt(t.vat)}`;
+    if(rowsT[2]) rowsT[2].querySelector('span:last-child').textContent = `${proposal.currency} ${fmt(t.grand)}`;
+  }
+}
 
 function bind(id, key){ const el = document.getElementById(id); el.oninput = ()=>{ quote[key] = el.value; scheduleSave(); }; }
 function bindNested(id, parentKey, childKey){ const el = document.getElementById(id); if(!el) return; el.oninput = ()=>{ quote[parentKey][childKey] = el.value; scheduleSave(); }; }
@@ -2631,6 +3416,8 @@ function renderSettingsCompany(){
     <p class="hint">Bu bilgiler teklif PDF'inin üst bölümünde görünür.</p>
     <div class="field"><label>Marka Adı</label><input id="c-name" value="${escapeAttr(company.name)}"></div>
     <div class="field"><label>Ticari Unvan</label><input id="c-legalName" value="${escapeAttr(company.legalName)}" placeholder="Godo Endüstriyel Otomasyon San. ve Tic. Ltd. Şti."></div>
+    <div class="field"><label>Yetkili | Unvan</label><input id="c-contactName" value="${escapeAttr(company.contactName||'')}" placeholder="Furkan Özbent | Kurucu"></div>
+    <p class="hint" style="margin-top:-8px;">Proje teklifi dokümanlarında "Hazırlayan / Yetkili" olarak otomatik doldurulur.</p>
     <div class="field"><label>Slogan</label><input id="c-tagline" value="${escapeAttr(company.tagline||'')}" placeholder="ör. GLOBAL OPTIMIZATION | DIGITAL OPERATION"></div>
     <p class="hint" style="margin-top:-8px;">Girersen, teklif PDF'inde logonun hemen altında görünür.</p>
     <div class="field"><label>Adres</label><textarea id="c-address" rows="2">${escapeHtml(company.address)}</textarea></div>
@@ -2717,9 +3504,10 @@ function renderSettingsDesign(){
   </div>`;
 }
 function renderSettingsTrash(){
-  const typeLabels = { customer:'Cari', product:'Ürün', supplier:'Tedarikçi', quote:'Teklif' };
+  const typeLabels = { customer:'Cari', product:'Ürün', supplier:'Tedarikçi', quote:'Teklif', proposal:'Proje Teklifi' };
   const nameOf = (item)=>{
     if(item.type==='quote') return `${item.data.indexEntry.quoteNo||''} — ${item.data.indexEntry.customerName||''}`;
+    if(item.type==='proposal') return `${item.data.indexEntry.proposalNo||''} — ${item.data.indexEntry.title||''}`;
     return item.data.name || item.data.code || 'İsimsiz';
   };
   return `
@@ -3145,7 +3933,60 @@ document.getElementById('btnBackup').onclick = ()=>exportBackup();
 document.getElementById('btnRestore').onclick = ()=>document.getElementById('restoreFile').click();
 document.getElementById('restoreFile').onchange = e=>{ if(e.target.files[0]) importBackupFile(e.target.files[0]); e.target.value=''; };
 
-loadAll();
+/* ---------------- AUTH / BOOT ---------------- */
+function showAuthError(msg){
+  const el = document.getElementById('authError');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function hideAuthError(){
+  document.getElementById('authError').style.display = 'none';
+}
+async function enterApp(user){
+  currentUser = user;
+  storageMode = 'supabase';
+  document.getElementById('authGate').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  await loadAll();
+}
+async function boot(){
+  if(!sb){
+    // Supabase istemcisi yüklenemedi (CDN'e erişilemedi vb.) — yerel moda düş, giriş ekranını atla
+    document.getElementById('authGate').style.display = 'none';
+    document.getElementById('app').style.display = '';
+    storageMode = 'local';
+    await loadAll();
+    return;
+  }
+  const { data: { session } } = await sb.auth.getSession();
+  if(session && session.user){ await enterApp(session.user); return; }
+  // Giriş ekranı zaten görünür durumda; buton olaylarını bağla
+  document.getElementById('btnAuthSignIn').onclick = async ()=>{
+    hideAuthError();
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    if(!email || !password){ showAuthError('E-posta ve şifre gerekli.'); return; }
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ showAuthError(error.message==='Invalid login credentials' ? 'E-posta veya şifre hatalı.' : error.message); return; }
+    await enterApp(data.user);
+  };
+  document.getElementById('btnAuthSignUp').onclick = async ()=>{
+    hideAuthError();
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    if(!email || !password){ showAuthError('E-posta ve şifre gerekli.'); return; }
+    if(password.length < 6){ showAuthError('Şifre en az 6 karakter olmalı.'); return; }
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if(error){ showAuthError(error.message); return; }
+    if(data.session){ await enterApp(data.user); }
+    else { document.getElementById('authHint').textContent = 'Kayıt oluşturuldu. E-postana gelen onay linkine tıkladıktan sonra "Giriş Yap" ile devam edebilirsin.'; document.getElementById('authHint').style.color = '#9be89b'; }
+  };
+}
+document.getElementById('btnSignOut').onclick = async ()=>{
+  if(sb) await sb.auth.signOut();
+  location.reload();
+};
+boot();
 </script>
 
 </body>
