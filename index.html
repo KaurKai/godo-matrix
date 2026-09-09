@@ -452,7 +452,7 @@ function emptyCompany(){
 }
 function emptyCustomer(){
   return { id:null, name:"", address:"", taxOffice:"", taxNo:"", website:"", contacts:[], notes:[], tags:[],
-    defaultPaymentTplId:"", defaultDeliveryTplId:"", defaultShippingTplId:"" };
+    defaultPaymentTplId:"", defaultDeliveryTplId:"", defaultShippingTplId:"", lastContactDate:"" };
 }
 function emptyProduct(){
   return { id:null, code:"", desc:"", delivery:"", listPrice:"", buyDiscount:"", discount:"", category:"", supplierId:"" };
@@ -871,6 +871,17 @@ async function loadAll(){
 }
 async function saveCompany(){ await stSet('godo:company', JSON.stringify(company)); }
 async function saveCustomers(){ await stSet('godo:customers', JSON.stringify(customers)); }
+function logContactAndOpenMail(customerId, email){
+  const c = customers.find(x=>x.id===customerId);
+  if(c){
+    c.lastContactDate = new Date().toISOString().slice(0,10);
+    if(!c.notes) c.notes = [];
+    c.notes.unshift({ id:crypto.randomUUID(), date:c.lastContactDate, text:'E-posta gönderildi ('+(email||'')+').' });
+    saveCustomers();
+  }
+  window.location.href = 'mailto:'+(email||'');
+  render();
+}
 async function saveProducts(){ await stSet('godo:products', JSON.stringify(products)); }
 async function saveSuppliers(){ await stSet('godo:suppliers', JSON.stringify(suppliers)); }
 async function saveIndex(){ await stSet('godo:quotes-index', JSON.stringify(quotesIndex)); }
@@ -1817,28 +1828,37 @@ function renderCustomersPage(){
   const allTags = [...new Set(customers.flatMap(c=>c.tags||[]))];
 
   return `
-  <div class="panel" style="max-width:1040px;">
+  <div class="panel" style="max-width:1080px;">
     <div class="subhead-row" style="margin-bottom:4px;">
       <h2 style="margin:0;">Cariler</h2>
-      <button class="btn btn-primary" id="btnNewCustPage">+ Yeni Cari</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="btnBulkImportCust">Excel'den / Yapıştır ile Yükle</button>
+        <button class="btn btn-primary" id="btnNewCustPage">+ Yeni Cari</button>
+      </div>
     </div>
     <p class="hint">${customers.length} kayıtlı cari.</p>
     <div style="display:flex;gap:10px;margin-bottom:18px;">
       <div class="field" style="max-width:320px;margin:0;"><input id="custSearch" placeholder="Cari ara..." value="${escapeAttr(customerSearch)}"></div>
       ${allTags.length ? `<div class="field" style="max-width:200px;margin:0;"><select id="custTagFilter"><option value="">Tüm etiketler</option>${allTags.map(t=>`<option ${customerTagFilter===t?'selected':''}>${t}</option>`).join('')}</select></div>` : ''}
     </div>
-    ${rows.length ? rows.map(c=>`
+    ${rows.length ? rows.map(c=>{
+      const primaryContact = c.contacts && c.contacts[0];
+      const hasEmail = primaryContact && primaryContact.email;
+      return `
       <div class="dash-quote-row" data-id="${c.id}">
         <div>
           <div class="dqr-cust">${escapeHtml(c.name)}</div>
           <div class="dqr-meta">${c.contacts.length} yetkili${c.taxOffice?' · '+escapeHtml(c.taxOffice):''}${c.website?' · '+escapeHtml(c.website):''}</div>
+          <div class="dqr-meta" style="margin-top:2px;color:${c.lastContactDate?'var(--gray-500)':'var(--danger)'};">${c.lastContactDate ? 'Son iletişim: '+formatDate(c.lastContactDate) : 'Henüz iletişime geçilmedi'}</div>
           ${(c.tags&&c.tags.length) ? `<div style="margin-top:5px;">${c.tags.map(t=>`<span class="tag-pill ${t==='Sıcak'?'hot':t==='Ilık'?'warm':t==='Soğuk'?'cold':''}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         </div>
-        <div class="icons" style="display:flex;gap:14px;">
+        <div class="icons" style="display:flex;gap:14px;align-items:center;">
+          ${hasEmail ? `<span data-action="mail" data-email="${escapeAttr(primaryContact.email)}" style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Mail Gönder</span>` : ''}
           <span data-action="edit" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Düzenle</span>
           <span data-action="del" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Sil</span>
         </div>
-      </div>`).join('') : `<p class="hint">${customerSearch ? 'Aramayla eşleşen cari yok.' : 'Henüz kayıtlı cari yok — "+ Yeni Cari" ile başla.'}</p>`}
+      </div>`;
+    }).join('') : `<p class="hint">${customerSearch ? 'Aramayla eşleşen cari yok.' : 'Henüz kayıtlı cari yok — "+ Yeni Cari" ile başla.'}</p>`}
   </div>`;
 }
 
@@ -1975,9 +1995,13 @@ function renderCustomerDetail(){
     <button class="link-btn" id="backToDash" style="margin-bottom:16px;">← Panoya Dön</button>
     <div class="subhead-row">
       <h2 style="margin:0;">${escapeHtml(c.name)}</h2>
-      <button class="link-btn" id="editCustFromDetail">Cari Bilgilerini Düzenle</button>
+      <div style="display:flex;gap:14px;">
+        ${(c.contacts&&c.contacts[0]&&c.contacts[0].email) ? `<button class="link-btn" id="btnMailFromDetail" data-email="${escapeAttr(c.contacts[0].email)}">Mail Gönder</button>` : ''}
+        <button class="link-btn" id="editCustFromDetail">Cari Bilgilerini Düzenle</button>
+      </div>
     </div>
     <p class="hint">${escapeHtml(c.address||'—')}${c.taxOffice||c.taxNo?' · '+escapeHtml((c.taxOffice||'')+(c.taxNo?' V.D. '+c.taxNo:'')):''}${c.website?' · <a href="https://'+escapeAttr(c.website.replace(/^https?:\/\//,''))+'" target="_blank" style="color:inherit;">'+escapeHtml(c.website)+'</a>':''}</p>
+    <p class="hint" style="margin-top:-14px;color:${c.lastContactDate?'var(--gray-500)':'var(--danger)'};">${c.lastContactDate ? 'Son iletişim: '+formatDate(c.lastContactDate) : 'Henüz iletişime geçilmedi'}</p>
     ${(c.tags&&c.tags.length) ? `<div style="margin:-4px 0 16px;">${c.tags.map(t=>`<span class="tag-pill ${t==='Sıcak'?'hot':t==='Ilık'?'warm':t==='Soğuk'?'cold':''}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
 
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);">
@@ -2960,6 +2984,7 @@ function attachHandlers(){
     const s = document.getElementById('custSearch');
     s.oninput = e=>{ customerSearch=e.target.value; render(); const el=document.getElementById('custSearch'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } };
     document.getElementById('btnNewCustPage').onclick = ()=>{ custEditing = emptyCustomer(); openCustomerEditModal(); };
+    document.getElementById('btnBulkImportCust').onclick = ()=>openCustomerBulkImportModal();
     const tagFilterEl = document.getElementById('custTagFilter');
     if(tagFilterEl) tagFilterEl.onchange = e=>{ customerTagFilter=e.target.value; render(); };
     document.querySelectorAll('#content .dash-quote-row').forEach(row=>{
@@ -2976,6 +3001,11 @@ function attachHandlers(){
         customers = customers.filter(c=>c.id!==id);
         saveCustomers();
         render();
+      };
+      const mailEl = row.querySelector('[data-action="mail"]');
+      if(mailEl) mailEl.onclick = e=>{
+        e.stopPropagation();
+        logContactAndOpenMail(id, mailEl.dataset.email);
       };
     });
   }
@@ -3150,6 +3180,8 @@ function attachHandlers(){
     document.getElementById('backToDash').onclick = ()=>{ activeTab='dashboard'; render(); };
     const editBtn = document.getElementById('editCustFromDetail');
     if(editBtn) editBtn.onclick = ()=>{ custEditing = JSON.parse(JSON.stringify(customers.find(x=>x.id===selectedCustomerId))); openCustomerEditModal(); };
+    const mailBtn = document.getElementById('btnMailFromDetail');
+    if(mailBtn) mailBtn.onclick = ()=>logContactAndOpenMail(selectedCustomerId, mailBtn.dataset.email);
     document.querySelectorAll('.dash-quote-row').forEach(row=>{ row.onclick = async ()=>{ await openQuote(row.dataset.id); activeTab='info'; render(); }; });
     const addBtn = document.getElementById('addNoteBtn');
     if(addBtn) addBtn.onclick = ()=>{
@@ -3733,6 +3765,80 @@ function attachCustomerEditHandlers(overlay){
 /* ---------------- PRODUCTS (ÜRÜN) ---------------- */
 let prodEditing = null;
 /* ---------------- BULK PRODUCT IMPORT (Excel / Paste) ---------------- */
+function openCustomerBulkImportModal(){
+  const old = document.getElementById('modalOverlay'); if(old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id='modalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
+  overlay.innerHTML = `<div class="modal-box" style="width:780px;max-width:94vw;">
+    <h2>Excel'den / Yapıştır ile Cari Yükle</h2>
+    <p class="hint">Excel'de <b>Firma Adı, Adres, Yetkili Adı, Telefon, E-posta</b> sütunlarını sırayla seç, kopyala (Ctrl+C), aşağıya yapıştır (Ctrl+V). Aynı isimde firma zaten kayıtlıysa üzerine yeni yetkili olarak eklenir, yoksa yeni cari oluşturulur.</p>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin-bottom:8px;"><input type="checkbox" id="ci-header" checked> İlk satır başlık (atlanacak)</label>
+    <textarea id="ci-paste" rows="10" class="code-editor" style="width:100%;" placeholder="Örnek Firma A.Ş.	Egemenlik Mah. No:14 Bornova/İzmir	Ahmet Yılmaz	+90 555 111 22 33	ahmet@ornekfirma.com"></textarea>
+    <div class="subhead" style="margin-top:16px;">Önizleme</div>
+    <div id="ci-preview" style="max-height:240px;overflow-y:auto;font-size:12px;"><p class="hint">Yapıştırdığında burada önizleme görünecek.</p></div>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="ci-import">İçe Aktar</button>
+      <button class="btn btn-ghost" id="ci-cancel">Vazgeç</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
+
+  const ta = overlay.querySelector('#ci-paste');
+  const headerChk = overlay.querySelector('#ci-header');
+  const previewEl = overlay.querySelector('#ci-preview');
+  function getRows(){
+    let lines = ta.value.split(/\r?\n/).filter(l=>l.trim().length);
+    if(headerChk.checked && lines.length) lines = lines.slice(1);
+    return lines.map(l=> l.split('\t').length>1 ? l.split('\t') : l.split(','));
+  }
+  function updatePreview(){
+    const rows = getRows();
+    if(!rows.length){ previewEl.innerHTML = '<p class="hint">Yapıştırdığında burada önizleme görünecek.</p>'; return; }
+    previewEl.innerHTML = `<table class="items-table"><thead><tr><th>Firma Adı</th><th>Adres</th><th>Yetkili</th><th>Telefon</th><th>E-posta</th></tr></thead><tbody>${
+      rows.map(r=>`<tr><td>${escapeHtml((r[0]||'').trim())}</td><td>${escapeHtml((r[1]||'').trim())}</td><td>${escapeHtml((r[2]||'').trim())}</td><td class="mono">${escapeHtml((r[3]||'').trim())}</td><td class="mono">${escapeHtml((r[4]||'').trim())}</td></tr>`).join('')
+    }</tbody></table><p class="hint" style="margin-top:6px;">${rows.length} satır bulundu.</p>`;
+  }
+  ta.oninput = updatePreview;
+  headerChk.onchange = updatePreview;
+  overlay.querySelector('#ci-cancel').onclick = ()=>overlay.remove();
+  overlay.querySelector('#ci-import').onclick = ()=>{
+    const rows = getRows();
+    if(!rows.length){ alert('İçe aktarılacak veri yok.'); return; }
+    let created=0, updated=0;
+    rows.forEach(r=>{
+      const name = (r[0]||'').trim();
+      const address = (r[1]||'').trim();
+      const contactName = (r[2]||'').trim();
+      const phone = (r[3]||'').trim();
+      const email = (r[4]||'').trim();
+      if(!name) return;
+      let existing = customers.find(c=>(c.name||'').trim().toLowerCase()===name.toLowerCase());
+      if(existing){
+        if(address) existing.address = address;
+        if(contactName || phone || email){
+          if(!existing.contacts) existing.contacts=[];
+          existing.contacts.push({ id:crypto.randomUUID(), name:contactName, phone, email });
+        }
+        updated++;
+      } else {
+        const c = emptyCustomer();
+        c.id = crypto.randomUUID();
+        c.name = name;
+        c.address = address;
+        if(contactName || phone || email) c.contacts.push({ id:crypto.randomUUID(), name:contactName, phone, email });
+        customers.push(c);
+        created++;
+      }
+    });
+    saveCustomers();
+    overlay.remove();
+    alert(`${created} yeni cari eklendi, ${updated} cari güncellendi.`);
+    render();
+  };
+}
+
 function openProductBulkImportModal(){
   const old = document.getElementById('modalOverlay'); if(old) old.remove();
   const overlay = document.createElement('div');
