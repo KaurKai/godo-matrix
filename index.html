@@ -445,7 +445,8 @@ function emptyQuote(){
     invoiceNo: "",
     paymentStatus: "",
     paidAmount: "",
-    paymentDueDate: ""
+    paymentDueDate: "",
+    paymentTermDays: ""
   };
 }
 const PAYMENT_STATUS_OPTIONS = ["Fatura Kesilmedi","Fatura Kesildi / Ödeme Bekleniyor","Kısmi Ödeme Alındı","Tamamen Ödendi","Vadesi Geçti"];
@@ -978,7 +979,7 @@ async function persistQuote(){
   await stSet('godo:quote:'+quote.id, JSON.stringify(quote));
   const total = computeTotals(quote).grand;
   const existingIdx = quotesIndex.findIndex(q=>q.id===quote.id);
-  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"" };
+  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"" };
   if(existingIdx >= 0) quotesIndex[existingIdx] = entry; else quotesIndex.unshift(entry);
   await saveIndex();
   flashSaved();
@@ -1514,7 +1515,7 @@ function renderOrdersPage(){
             <span class="mono" style="font-size:11px;color:var(--gray-500);">Kalan: ${q.currency||curr} ${fmt(remaining)}</span>
           ` : ''}
           <span style="width:1px;height:20px;background:var(--hairline-strong);"></span>
-          <label style="font-size:11px;color:var(--gray-500);">Vade:</label>
+          <label style="font-size:11px;color:var(--gray-500);">Vade${q.paymentTermDays?' ('+q.paymentTermDays+' gün)':''}:</label>
           <input class="due-date-pick" data-id="${q.id}" type="date" value="${q.paymentDueDate||''}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
           ${renderDueBadge(q)}
         </div>
@@ -2382,6 +2383,10 @@ function renderInfo(){
       <div class="field"><label>Geçerlilik (iş günü)</label><input id="f-validity" type="number" min="1" value="${quote.validityDays}"></div>
     </div>
     <div class="grid3">
+      <div class="field" style="max-width:220px;"><label>Ödeme Vadesi (gün)</label><input id="f-paymentTermDays" type="number" min="0" value="${escapeAttr(quote.paymentTermDays||'')}" placeholder="ör. 30"></div>
+    </div>
+    <p class="hint" style="margin-top:-10px;">Sipariş fatura kesildi olarak işaretlendiğinde, ödeme vadesi bu sayıya göre otomatik hesaplanır.</p>
+    <div class="grid3">
       <div class="field" style="max-width:220px;"><label>Para Birimi</label>
         <select id="f-currency">${['€','$','₺'].map(c=>`<option ${quote.currency===c?'selected':''}>${c}</option>`).join('')}</select>
       </div>
@@ -3047,7 +3052,20 @@ function attachHandlers(){
     });
     document.querySelectorAll('.payment-status-pick').forEach(sel=>{
       sel.onclick = e=>e.stopPropagation();
-      sel.onchange = async e=>{ e.stopPropagation(); await updateOrderField(sel.dataset.id, 'paymentStatus', sel.value); render(); };
+      sel.onchange = async e=>{
+        e.stopPropagation();
+        const id = sel.dataset.id;
+        await updateOrderField(id, 'paymentStatus', sel.value);
+        if(sel.value==='Fatura Kesildi / Ödeme Bekleniyor'){
+          const row = quotesIndex.find(q=>q.id===id);
+          if(row && !row.paymentDueDate && row.paymentTermDays){
+            const d = new Date();
+            d.setDate(d.getDate() + parseInt(row.paymentTermDays));
+            await updateOrderField(id, 'paymentDueDate', d.toISOString().slice(0,10));
+          }
+        }
+        render();
+      };
     });
     document.querySelectorAll('.paid-amount-pick').forEach(inp=>{
       inp.onclick = e=>e.stopPropagation();
@@ -3333,7 +3351,7 @@ function attachHandlers(){
   }
 
   if(activeTab==='info'){
-    bind('f-quoteNo','quoteNo'); bind('f-date','date'); bind('f-validity','validityDays');
+    bind('f-quoteNo','quoteNo'); bind('f-date','date'); bind('f-validity','validityDays'); bind('f-paymentTermDays','paymentTermDays');
     document.getElementById('f-currency').onchange = e=>{ quote.currency=e.target.value; scheduleSave(); };
     document.getElementById('f-status').onchange = e=>{
       const prevStatus = quote.status;
@@ -3459,7 +3477,15 @@ function attachHandlers(){
   if(activeTab==='terms'){
     bindNested('f-termPayment','terms','payment'); bindNested('f-termDelivery','terms','delivery'); bindNested('f-termShipping','terms','shipping'); bindNested('f-termLegal','terms','legal');
     document.getElementById('btnManageTemplates').onclick = ()=>{ activeTab='settingsTemplates'; render(); };
-    document.getElementById('tpl-payment').onchange = e=>{ const t=termTemplates.payment.find(x=>x.id===e.target.value); if(t){ quote.terms.payment=t.text; scheduleSave(); render(); } };
+    document.getElementById('tpl-payment').onchange = e=>{
+      const t=termTemplates.payment.find(x=>x.id===e.target.value);
+      if(t){
+        quote.terms.payment=t.text;
+        const dayMatch = t.name.match(/(\d+)\s*[Gg]ün/);
+        if(dayMatch) quote.paymentTermDays = dayMatch[1];
+        scheduleSave(); render();
+      }
+    };
     document.getElementById('tpl-delivery').onchange = e=>{ const t=termTemplates.delivery.find(x=>x.id===e.target.value); if(t){ quote.terms.delivery=t.text; scheduleSave(); render(); } };
     document.getElementById('tpl-shipping').onchange = e=>{ const t=termTemplates.shipping.find(x=>x.id===e.target.value); if(t){ quote.terms.shipping=t.text; scheduleSave(); render(); } };
     document.getElementById('tpl-legal').onchange = e=>{ const t=termTemplates.legal.find(x=>x.id===e.target.value); if(t){ quote.terms.legal=t.text; scheduleSave(); render(); } };
