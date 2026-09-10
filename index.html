@@ -441,9 +441,13 @@ function emptyQuote(){
     template: "classic",
     irsaliyeNo: "",
     irsaliyeDate: "",
-    irsaliyeNote: ""
+    irsaliyeNote: "",
+    invoiceNo: "",
+    paymentStatus: "",
+    paidAmount: ""
   };
 }
+const PAYMENT_STATUS_OPTIONS = ["Fatura Kesilmedi","Fatura Kesildi / Ödeme Bekleniyor","Kısmi Ödeme Alındı","Tamamen Ödendi","Vadesi Geçti"];
 function blankItem(){
   return { id: crypto.randomUUID(), productId:null, code:"", desc:"", delivery:"", qty:1, listPrice:"", buyDiscount:"", discount:"", unitPrice:"", useCalc:false };
 }
@@ -885,6 +889,18 @@ function logContactAndOpenMail(customerId, email){
 async function saveProducts(){ await stSet('godo:products', JSON.stringify(products)); }
 async function saveSuppliers(){ await stSet('godo:suppliers', JSON.stringify(suppliers)); }
 async function saveIndex(){ await stSet('godo:quotes-index', JSON.stringify(quotesIndex)); }
+async function updateOrderField(id, field, value){
+  const r = await stGet('godo:quote:'+id);
+  if(r && r.value){
+    const full = JSON.parse(r.value);
+    full[field] = value;
+    await stSet('godo:quote:'+id, JSON.stringify(full));
+    const idx = quotesIndex.findIndex(q=>q.id===id);
+    if(idx>=0) quotesIndex[idx][field] = value;
+    await saveIndex();
+    if(quote && quote.id===id) quote[field] = value;
+  }
+}
 async function saveTasks(){ await stSet('godo:tasks', JSON.stringify(tasks)); }
 function applyCustomerDefaultsToQuote(cust){
   if(cust.defaultPaymentTplId){
@@ -961,7 +977,7 @@ async function persistQuote(){
   await stSet('godo:quote:'+quote.id, JSON.stringify(quote));
   const total = computeTotals(quote).grand;
   const existingIdx = quotesIndex.findIndex(q=>q.id===quote.id);
-  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"" };
+  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"" };
   if(existingIdx >= 0) quotesIndex[existingIdx] = entry; else quotesIndex.unshift(entry);
   await saveIndex();
   flashSaved();
@@ -1414,27 +1430,61 @@ function renderOrdersPage(){
   const orders = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü').sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const totalSum = orders.reduce((s,q)=>s+(q.total||0),0);
   const curr = (orders[0]&&orders[0].currency) || '€';
+  const outstanding = orders.reduce((s,q)=>{
+    if(q.paymentStatus==='Tamamen Ödendi') return s;
+    const paid = parseFloat(q.paidAmount)||0;
+    return s + Math.max(0,(q.total||0)-paid);
+  },0);
+
+  const PAY_COLORS = {
+    'Fatura Kesilmedi':'var(--gray-500)',
+    'Fatura Kesildi / Ödeme Bekleniyor':'var(--gray-700)',
+    'Kısmi Ödeme Alındı':'#8A6B22',
+    'Tamamen Ödendi':'var(--ink)',
+    'Vadesi Geçti':'var(--danger)'
+  };
 
   return `
-  <div class="panel" style="max-width:1040px;">
+  <div class="panel" style="max-width:1120px;">
     <h2>Siparişler</h2>
     <p class="hint">${orders.length} sipariş · Toplam ${curr} ${fmt(totalSum)} — "Siparişe Dönüştü" durumundaki teklifler burada listelenir.</p>
-    ${orders.length ? orders.map(q=>`
-      <div class="dash-quote-row" style="cursor:default;">
-        <div style="cursor:pointer;" data-open="${q.id}">
-          <div class="dqr-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
-          <div class="dqr-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''} · ${q.date||''}</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);max-width:520px;margin-bottom:24px;">
+      <div class="kpi-card"><div class="kpi-label">Toplam Sipariş Tutarı</div><div class="kpi-value">${curr} ${fmt(totalSum)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="color:${outstanding>0?'var(--danger)':'var(--ink)'};">${curr} ${fmt(outstanding)}</div></div>
+    </div>
+    ${orders.length ? orders.map(q=>{
+      const paid = parseFloat(q.paidAmount)||0;
+      const remaining = Math.max(0,(q.total||0)-paid);
+      return `
+      <div class="dash-quote-row" style="cursor:default;flex-direction:column;align-items:stretch;gap:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="cursor:pointer;" data-open="${q.id}">
+            <div class="dqr-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
+            <div class="dqr-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''} · ${q.date||''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div class="mono dqr-total">${q.currency||curr} ${fmt(q.total)}</div>
+            <select class="order-status-pick" data-id="${q.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
+              <option value="">— Sipariş Durumu —</option>
+              ${ORDER_STATUS_OPTIONS.map(s=>`<option ${q.orderStatus===s?'selected':''}>${s}</option>`).join('')}
+            </select>
+            <span data-order-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">Sipariş Çıktısı</span>
+            <span data-irsaliye-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">${q.irsaliyeNo?'İrsaliye ('+q.irsaliyeNo+')':'İrsaliye Oluştur'}</span>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:16px;">
-          <div class="mono dqr-total">${q.currency||curr} ${fmt(q.total)}</div>
-          <select class="order-status-pick" data-id="${q.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
-            <option value="">— Sipariş Durumu —</option>
-            ${ORDER_STATUS_OPTIONS.map(s=>`<option ${q.orderStatus===s?'selected':''}>${s}</option>`).join('')}
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper-2);border-radius:4px;flex-wrap:wrap;">
+          <input class="invoice-no-pick" data-id="${q.id}" value="${escapeAttr(q.invoiceNo||'')}" placeholder="Fatura No (e-Arşiv)" style="width:170px;font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
+          <select class="payment-status-pick" data-id="${q.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;color:${PAY_COLORS[q.paymentStatus]||'var(--gray-500)'};font-weight:600;">
+            <option value="">— Ödeme Durumu —</option>
+            ${PAYMENT_STATUS_OPTIONS.map(s=>`<option ${q.paymentStatus===s?'selected':''}>${s}</option>`).join('')}
           </select>
-          <span data-order-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">Sipariş Çıktısı</span>
-          <span data-irsaliye-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">${q.irsaliyeNo?'İrsaliye ('+q.irsaliyeNo+')':'İrsaliye Oluştur'}</span>
+          ${q.paymentStatus==='Kısmi Ödeme Alındı' ? `
+            <input class="paid-amount-pick" data-id="${q.id}" type="number" step="0.01" value="${q.paidAmount||''}" placeholder="Alınan tutar" style="width:120px;font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
+            <span class="mono" style="font-size:11px;color:var(--gray-500);">Kalan: ${q.currency||curr} ${fmt(remaining)}</span>
+          ` : ''}
         </div>
-      </div>`).join('') : '<p class="hint">Henüz siparişe dönüşen teklif yok.</p>'}
+      </div>`;
+    }).join('') : '<p class="hint">Henüz siparişe dönüşen teklif yok.</p>'}
   </div>`;
 }
 
@@ -2955,6 +3005,18 @@ function attachHandlers(){
     });
     document.querySelectorAll('[data-irsaliye-print]').forEach(el=>{
       el.onclick = async e=>{ e.stopPropagation(); await openQuote(el.dataset.irsaliyePrint); activeTab='irsaliyePrint'; render(); };
+    });
+    document.querySelectorAll('.invoice-no-pick').forEach(inp=>{
+      inp.onclick = e=>e.stopPropagation();
+      inp.onchange = async e=>{ e.stopPropagation(); await updateOrderField(inp.dataset.id, 'invoiceNo', inp.value); };
+    });
+    document.querySelectorAll('.payment-status-pick').forEach(sel=>{
+      sel.onclick = e=>e.stopPropagation();
+      sel.onchange = async e=>{ e.stopPropagation(); await updateOrderField(sel.dataset.id, 'paymentStatus', sel.value); render(); };
+    });
+    document.querySelectorAll('.paid-amount-pick').forEach(inp=>{
+      inp.onclick = e=>e.stopPropagation();
+      inp.onchange = async e=>{ e.stopPropagation(); await updateOrderField(inp.dataset.id, 'paidAmount', inp.value); render(); };
     });
   }
 
