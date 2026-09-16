@@ -2470,7 +2470,7 @@ function renderItems(){
         <td class="col-disc"><input class="mono it-buydisc num" type="number" step="0.1" value="${it.buyDiscount}" placeholder="Alış %"></td>
         <td class="col-disc"><input class="mono it-disc num" type="number" step="0.1" value="${it.discount}" placeholder="Satış %"></td>
       ` : `<td class="col-list" colspan="3" style="text-align:center;"><span class="calc-toggle" data-i="${i}" data-action="toggleCalc">Liste+İskonto</span></td>`}
-      <td class="col-unit"><input class="mono it-unit num" type="number" step="0.01" value="${it.useCalc ? lineUnitPrice(it).toFixed(2) : it.unitPrice}" ${it.useCalc?'disabled':''}></td>
+      <td class="col-unit"><input class="mono it-unit num" type="number" step="0.01" value="${it.useCalc ? lineUnitPrice(it).toFixed(2) : it.unitPrice}" title="${it.useCalc?'Elle yazarsan satış iskontosu buna göre otomatik ayarlanır':''}"></td>
       <td class="col-margin num mono" style="padding-top:12px;color:var(--gray-500);">${margin===null?'—':(margin>=0?'+':'')+margin.toFixed(1)+'%'}</td>
       <td class="col-total num mono" style="padding-top:12px;">${fmt(lineTotal(it))}</td>
       <td class="row-remove" data-action="removeRow" data-i="${i}">✕</td>
@@ -3466,11 +3466,27 @@ function attachHandlers(){
           }
         };
       }
-      const map = {'.it-desc':'desc','.it-delivery':'delivery','.it-qty':'qty','.it-list':'listPrice','.it-buydisc':'buyDiscount','.it-disc':'discount','.it-unit':'unitPrice'};
+      const map = {'.it-desc':'desc','.it-delivery':'delivery','.it-qty':'qty','.it-list':'listPrice','.it-buydisc':'buyDiscount','.it-disc':'discount'};
       Object.entries(map).forEach(([sel,key])=>{
         const inp = tr.querySelector(sel);
         if(inp) inp.oninput = ()=>{ it[key]=inp.value; scheduleSave(); refreshTotalsOnly(); };
       });
+      const unitInp = tr.querySelector('.it-unit');
+      if(unitInp){
+        if(it.useCalc){
+          // Liste+İskonto modunda: birim fiyatı elle yazınca, liste fiyatı sabit kalıp satış iskontosu geriye doğru hesaplanır
+          unitInp.onchange = ()=>{
+            const lp = parseFloat(it.listPrice)||0;
+            const newUnit = parseFloat(unitInp.value)||0;
+            if(lp>0){
+              it.discount = ((1 - newUnit/lp) * 100).toFixed(2);
+            }
+            scheduleSave(); render();
+          };
+        } else {
+          unitInp.oninput = ()=>{ it.unitPrice = unitInp.value; scheduleSave(); refreshTotalsOnly(); };
+        }
+      }
     });
   }
 
