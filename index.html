@@ -149,7 +149,7 @@
   .items-table input.mono{font-family:var(--font-mono);font-size:12.5px;}
   .items-table .num{text-align:right;}
   .col-code{width:110px;} .col-delivery{width:100px;} .col-qty{width:60px;}
-  .col-list{width:80px;} .col-disc{width:70px;} .col-unit{width:90px;} .col-margin{width:70px;} .col-total{width:100px;}
+  .col-list{width:80px;} .col-disc{width:70px;} .col-unit{width:90px;} .col-buyprice{width:90px;} .col-margin{width:70px;} .col-total{width:100px;}
   .row-remove{cursor:pointer;color:var(--gray-300);font-size:15px;padding:6px 4px;text-align:center;width:26px;}
   .row-remove:hover{color:var(--danger);}
   .calc-toggle{font-size:10.5px;color:var(--ink);cursor:pointer;font-weight:700;letter-spacing:.02em;user-select:none;text-decoration:underline;}
@@ -2468,14 +2468,15 @@ function renderItems(){
       ${it.useCalc ? `
         <td class="col-list"><input class="mono it-list num" type="number" step="0.01" value="${it.listPrice}" placeholder="Liste €"></td>
         <td class="col-disc"><input class="mono it-buydisc num" type="number" step="0.1" value="${it.buyDiscount}" placeholder="Alış %"></td>
+        <td class="col-buyprice"><input class="mono it-buyprice num" type="number" step="0.01" value="${lineBuyPrice(it)===null?'':lineBuyPrice(it).toFixed(2)}" placeholder="Alış €" title="Elle yazarsan alış iskontosu buna göre otomatik ayarlanır"></td>
         <td class="col-disc"><input class="mono it-disc num" type="number" step="0.1" value="${it.discount}" placeholder="Satış %"></td>
-      ` : `<td class="col-list" colspan="3" style="text-align:center;"><span class="calc-toggle" data-i="${i}" data-action="toggleCalc">Liste+İskonto</span></td>`}
+      ` : `<td class="col-list" colspan="4" style="text-align:center;"><span class="calc-toggle" data-i="${i}" data-action="toggleCalc">Liste+İskonto</span></td>`}
       <td class="col-unit"><input class="mono it-unit num" type="number" step="0.01" value="${it.useCalc ? lineUnitPrice(it).toFixed(2) : it.unitPrice}" title="${it.useCalc?'Elle yazarsan satış iskontosu buna göre otomatik ayarlanır':''}"></td>
       <td class="col-margin num mono" style="padding-top:12px;color:var(--gray-500);">${margin===null?'—':(margin>=0?'+':'')+margin.toFixed(1)+'%'}</td>
       <td class="col-total num mono" style="padding-top:12px;">${fmt(lineTotal(it))}</td>
       <td class="row-remove" data-action="removeRow" data-i="${i}">✕</td>
     </tr>
-    ${it.useCalc ? `<tr><td colspan="2"></td><td colspan="7" style="border-bottom:1px solid var(--hairline);padding-top:0;"><span class="calc-toggle" data-i="${i}" data-action="toggleCalc" style="font-size:10px;">Manuel fiyata dön</span></td><td></td></tr>` : ''}
+    ${it.useCalc ? `<tr><td colspan="2"></td><td colspan="8" style="border-bottom:1px solid var(--hairline);padding-top:0;"><span class="calc-toggle" data-i="${i}" data-action="toggleCalc" style="font-size:10px;">Manuel fiyata dön</span></td><td></td></tr>` : ''}
   `;
   }).join('');
 
@@ -2499,10 +2500,10 @@ function renderItems(){
       <button class="btn btn-ghost" id="bulkDiscApply" style="padding:6px 12px;font-size:11px;">Liste Fiyatlı Tüm Kalemlere Uygula</button>
     </div>
     <div style="overflow-x:auto;">
-    <table class="items-table" style="min-width:980px;">
+    <table class="items-table" style="min-width:1060px;">
       <thead><tr>
         <th class="col-code" colspan="2">Ürün</th><th class="col-delivery">Teslim Süresi</th>
-        <th class="col-qty">Adet</th><th class="col-list">Liste</th><th class="col-disc">Alış %</th><th class="col-disc">Satış %</th>
+        <th class="col-qty">Adet</th><th class="col-list">Liste</th><th class="col-disc">Alış %</th><th class="col-buyprice">Alış Fiyatı</th><th class="col-disc">Satış %</th>
         <th class="col-unit">Birim Fiyat</th><th class="col-margin">Kâr %</th><th class="col-total">Toplam</th><th></th>
       </tr></thead>
       <tbody id="itemsBody">${rows}</tbody>
@@ -3487,6 +3488,18 @@ function attachHandlers(){
           unitInp.oninput = ()=>{ it.unitPrice = unitInp.value; scheduleSave(); refreshTotalsOnly(); };
         }
       }
+      const buyPriceInp = tr.querySelector('.it-buyprice');
+      if(buyPriceInp){
+        // Liste+İskonto modunda: alış fiyatını elle yazınca, liste fiyatı sabit kalıp alış iskontosu geriye doğru hesaplanır
+        buyPriceInp.onchange = ()=>{
+          const lp = parseFloat(it.listPrice)||0;
+          const newBuy = parseFloat(buyPriceInp.value)||0;
+          if(lp>0){
+            it.buyDiscount = ((1 - newBuy/lp) * 100).toFixed(2);
+          }
+          scheduleSave(); render();
+        };
+      }
     });
   }
 
@@ -3535,6 +3548,12 @@ function refreshTotalsOnly(){
     if(totalCell) totalCell.textContent = fmt(lineTotal(it));
     const marginCell = tr.querySelector('.col-margin');
     if(marginCell){ const m=lineMarginPct(it); marginCell.textContent = m===null?'—':(m>=0?'+':'')+m.toFixed(1)+'%'; }
+    if(it.useCalc){
+      const unitInp = tr.querySelector('.it-unit');
+      if(unitInp && document.activeElement!==unitInp) unitInp.value = lineUnitPrice(it).toFixed(2);
+      const buyPriceInp = tr.querySelector('.it-buyprice');
+      if(buyPriceInp && document.activeElement!==buyPriceInp){ const bp=lineBuyPrice(it); buyPriceInp.value = bp===null?'':bp.toFixed(2); }
+    }
   });
   const t = computeTotals(quote);
   const box = document.querySelector('.totals-box');
