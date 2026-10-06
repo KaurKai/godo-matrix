@@ -413,7 +413,9 @@
 
 <script>
 /* ---------------- STATE ---------------- */
-const STATUS_OPTIONS = ["Taslak","Gönderildi","Onaylandı","Reddedildi","Siparişe Dönüştü"];
+const STATUS_OPTIONS = ["Taslak","Gönderildi","Onaylandı","Reddedildi","Siparişe Dönüştü","Fatura Kesildi"];
+// Siparişe dönüşmüş sayılan durumlar: Fatura Kesildi de bir siparişin sonraki aşaması
+function isOrderStatus(s){ return s==='Siparişe Dönüştü' || s==='Fatura Kesildi'; }
 const defaultTerms = {
   payment: "Ödemenin %30'u sipariş onayında, bakiye %70'i sevkiyat öncesinde peşin olarak yapılır.\nBanka havalesi / EFT ile ödeme kabul edilir.\nFatura, sevkiyat tarihinde düzenlenir.",
   delivery: "Belirtilen teslim süreleri, sipariş onayı ve ödemenin ilgili kısmının tarafımıza ulaşmasından itibaren işlemeye başlar.\nTeslimat EXW / Fabrika teslim şeklindedir; nakliye ve sigorta bedelleri fiyata dahil değildir, ayrıca teklif edilir.\nStokta bulunan ürünlerde sevkiyat 2-3 iş günü içinde gerçekleştirilir.",
@@ -1278,7 +1280,7 @@ function renderDashboard(){
   const ym = new Date().toISOString().slice(0,7);
   const thisMonthCount = quotesIndex.filter(q=>q.date && q.date.startsWith(ym)).length;
   const openTotal = quotesIndex.filter(q=>q.status==='Taslak'||q.status==='Gönderildi').reduce((s,q)=>s+(q.total||0),0);
-  const wonTotal = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü').reduce((s,q)=>s+(q.total||0),0);
+  const wonTotal = quotesIndex.filter(q=>isOrderStatus(q.status)).reduce((s,q)=>s+(q.total||0),0);
   const avgTotal = totalQuotes ? quotesIndex.reduce((s,q)=>s+(q.total||0),0)/totalQuotes : 0;
   const primaryCurrency = (quotesIndex[0] && quotesIndex[0].currency) || '€';
 
@@ -1297,7 +1299,7 @@ function renderDashboard(){
   const dueTasks = tasks.filter(t=>!t.done && t.dueDate && t.dueDate<=today).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
   const dueCutoff = new Date(); dueCutoff.setDate(dueCutoff.getDate()+7);
   const dueCutoffStr = dueCutoff.toISOString().slice(0,10);
-  const duePayments = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü' && q.paymentStatus!=='Tamamen Ödendi' && q.paymentDueDate && q.paymentDueDate<=dueCutoffStr).sort((a,b)=>(a.paymentDueDate||'').localeCompare(b.paymentDueDate||''));
+  const duePayments = quotesIndex.filter(q=>isOrderStatus(q.status) && q.paymentStatus!=='Tamamen Ödendi' && q.paymentDueDate && q.paymentDueDate<=dueCutoffStr).sort((a,b)=>(a.paymentDueDate||'').localeCompare(b.paymentDueDate||''));
 
   return `
   <div class="panel" style="max-width:1040px;">
@@ -1459,7 +1461,7 @@ function renderDueBadge(q){
 }
 
 function renderOrdersPage(){
-  const orders = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü').sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const orders = quotesIndex.filter(q=>isOrderStatus(q.status)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const totalSum = orders.reduce((s,q)=>s+(q.total||0),0);
   const curr = (orders[0]&&orders[0].currency) || '€';
   const outstanding = orders.reduce((s,q)=>{
@@ -1479,7 +1481,7 @@ function renderOrdersPage(){
   return `
   <div class="panel" style="max-width:1120px;">
     <h2>Siparişler</h2>
-    <p class="hint">${orders.length} sipariş · Toplam ${curr} ${fmt(totalSum)} — "Siparişe Dönüştü" durumundaki teklifler burada listelenir.</p>
+    <p class="hint">${orders.length} sipariş · Toplam ${curr} ${fmt(totalSum)} — "Siparişe Dönüştü" ve "Fatura Kesildi" durumundaki teklifler burada listelenir.</p>
     <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);max-width:520px;margin-bottom:24px;">
       <div class="kpi-card"><div class="kpi-label">Toplam Sipariş Tutarı</div><div class="kpi-value">${curr} ${fmt(totalSum)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="color:${outstanding>0?'var(--danger)':'var(--ink)'};">${curr} ${fmt(outstanding)}</div></div>
@@ -2069,7 +2071,7 @@ function renderCustomerDetail(){
   const c = customers.find(x=>x.id===selectedCustomerId);
   if(!c) return '<div class="panel"><p class="hint">Cari bulunamadı.</p></div>';
   const custQuotes = quotesIndex.filter(q=> q.customerId===c.id || (!q.customerId && q.customerName===c.name)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const totalRevenue = custQuotes.filter(q=>q.status==='Siparişe Dönüştü').reduce((s,q)=>s+(q.total||0),0);
+  const totalRevenue = custQuotes.filter(q=>isOrderStatus(q.status)).reduce((s,q)=>s+(q.total||0),0);
   const openTotal = custQuotes.filter(q=>q.status==='Taslak'||q.status==='Gönderildi').reduce((s,q)=>s+(q.total||0),0);
   const notes = (c.notes||[]).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const curr = (custQuotes[0]&&custQuotes[0].currency) || '€';
@@ -2146,7 +2148,7 @@ async function ensureReportsData(){
   const monthly = {};
   const monthlyProfit = {};
   quotesIndex.forEach(q=>{
-    if(q.status==='Siparişe Dönüştü'){
+    if(isOrderStatus(q.status)){
       const ym=(q.date||'').slice(0,7);
       if(ym) monthly[ym]=(monthly[ym]||0)+(q.total||0);
     }
@@ -2158,7 +2160,7 @@ async function ensureReportsData(){
     const r = await stGet('godo:quote:'+qEntry.id);
     if(!r || !r.value) continue;
     let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
-    const isOrder = full.status==='Siparişe Dönüştü';
+    const isOrder = isOrderStatus(full.status);
     const ym = (full.date||'').slice(0,7);
     let quoteRevenue = 0, quoteProfit = 0, quoteHasCost = false;
     (full.items||[]).forEach(it=>{
@@ -2285,7 +2287,7 @@ function renderReportsBody(data){
 }
 function buildFunnelHTML(counts, total){
   if(!total) return '<p class="hint">Henüz teklif yok.</p>';
-  const stages = ['Taslak','Gönderildi','Onaylandı','Siparişe Dönüştü'];
+  const stages = ['Taslak','Gönderildi','Onaylandı','Siparişe Dönüştü','Fatura Kesildi'];
   const maxCount = Math.max(1, ...stages.map(s=>counts[s]||0));
   const rows = stages.map(s=>{
     const c = counts[s]||0;
@@ -2393,7 +2395,7 @@ function renderInfo(){
       <div class="field" style="max-width:220px;"><label>Teklif Durumu</label>
         <select id="f-status">${STATUS_OPTIONS.map(s=>`<option ${quote.status===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
-      ${quote.status==='Siparişe Dönüştü' ? `
+      ${isOrderStatus(quote.status) ? `
       <div class="field" style="max-width:220px;"><label>Sipariş Durumu</label>
         <select id="f-orderStatus"><option value="">— Seçiniz —</option>${ORDER_STATUS_OPTIONS.map(s=>`<option ${quote.orderStatus===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>` : ''}
@@ -2898,11 +2900,13 @@ function attachHandlers(){
           if(r && r.value){
             const full = JSON.parse(r.value);
             full.status = newStatus;
+            const syncPay = newStatus==='Fatura Kesildi' && (!full.paymentStatus || full.paymentStatus==='Fatura Kesilmedi');
+            if(syncPay) full.paymentStatus = 'Fatura Kesildi / Ödeme Bekleniyor';
             await stSet('godo:quote:'+draggedId, JSON.stringify(full));
             const idx = quotesIndex.findIndex(q=>q.id===draggedId);
-            if(idx>=0) quotesIndex[idx].status = newStatus;
+            if(idx>=0){ quotesIndex[idx].status = newStatus; if(syncPay) quotesIndex[idx].paymentStatus = full.paymentStatus; }
             await saveIndex();
-            if(quote.id===draggedId) quote.status = newStatus;
+            if(quote.id===draggedId){ quote.status = newStatus; if(syncPay) quote.paymentStatus = full.paymentStatus; }
           }
           draggedId = null;
           render();
@@ -3357,6 +3361,7 @@ function attachHandlers(){
     document.getElementById('f-status').onchange = e=>{
       const prevStatus = quote.status;
       quote.status = e.target.value;
+      if(quote.status==='Fatura Kesildi' && (!quote.paymentStatus || quote.paymentStatus==='Fatura Kesilmedi')) quote.paymentStatus = 'Fatura Kesildi / Ödeme Bekleniyor';
       document.getElementById('statusIndicator').textContent = quote.status;
       if(quote.status==='Gönderildi' && prevStatus!=='Gönderildi') maybeCreateFollowupTask();
       scheduleSave(); render();
