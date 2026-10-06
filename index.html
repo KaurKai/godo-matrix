@@ -324,18 +324,19 @@
   .view-toggle-btn:first-child{border-radius:3px 0 0 3px;}
   .view-toggle-btn:last-child{border-radius:0 3px 3px 0;border-left:none;}
   .view-toggle-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
-  .kanban-board{display:flex;gap:14px;overflow-x:auto;padding-bottom:12px;}
-  .kanban-col{flex:0 0 220px;background:var(--paper-2);border-radius:6px;padding:12px;min-height:120px;}
-  .kanban-col-head{display:flex;justify-content:space-between;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--gray-700);margin-bottom:2px;}
+  .kanban-board{display:flex;gap:10px;padding-bottom:12px;}
+  .kanban-col{flex:1 1 0;min-width:0;background:var(--paper-2);border-radius:6px;padding:10px;min-height:120px;}
+  @media (max-width:1000px){ .kanban-board{flex-wrap:wrap;} .kanban-col{flex:1 1 30%;} }
+  .kanban-col-head{display:flex;justify-content:space-between;gap:6px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--gray-700);margin-bottom:2px;}
   .kanban-col-sum{font-size:10.5px;font-family:var(--font-mono);color:var(--gray-500);margin-bottom:12px;}
   .kanban-col-body{min-height:60px;}
   .kanban-col-body.drag-over{background:rgba(14,14,14,.06);border-radius:4px;}
-  .kanban-card{background:var(--white);border:1px solid var(--hairline-strong);border-radius:4px;padding:10px 11px;margin-bottom:8px;cursor:grab;transition:box-shadow .12s,transform .12s;}
+  .kanban-card{min-width:0;background:var(--white);border:1px solid var(--hairline-strong);border-radius:4px;padding:10px 11px;margin-bottom:8px;cursor:grab;transition:box-shadow .12s,transform .12s;}
   .kanban-card:hover{box-shadow:0 3px 10px rgba(0,0,0,.08);transform:translateY(-1px);}
   .kanban-card:active{cursor:grabbing;}
   .kanban-card.dragging{opacity:.4;}
   .kc-drag-handle{color:var(--gray-300);font-size:13px;line-height:1;cursor:grab;}
-  .kc-cust{font-size:12.5px;font-weight:700;}
+  .kc-cust{font-size:12px;font-weight:700;min-width:0;overflow-wrap:anywhere;}
   .kc-meta{font-size:10.5px;color:var(--gray-500);font-family:var(--font-mono);margin:3px 0;}
   .kc-total{font-size:12px;font-weight:600;}
 
@@ -1396,7 +1397,7 @@ function renderQuotesList(){
   const curr = (rows[0]&&rows[0].currency) || (quotesIndex[0]&&quotesIndex[0].currency) || '€';
 
   return `
-  <div class="panel" style="max-width:${quotesViewMode==='kanban'?'1200':'1040'}px;">
+  <div class="panel" style="max-width:${quotesViewMode==='kanban'?'none':'1040px'};">
     <div class="subhead-row" style="margin-bottom:4px;">
       <h2 style="margin:0;">Teklifler</h2>
       <div style="display:flex;gap:2px;">
