@@ -257,8 +257,9 @@
   .doc-section{margin-top:30px;}
   .doc-section-h{font-family:var(--font-display);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink);margin-bottom:12px;padding-bottom:7px;border-bottom:1.5px solid var(--ink);display:flex;gap:10px;align-items:baseline;}
   .doc-section-h .n{color:var(--gray-300);font-family:var(--font-mono);font-size:12px;}
-  .doc-section-t{font-size:12.5px;line-height:1.75;color:var(--gray-700);white-space:pre-line;}
-  .doc-list{margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.85;color:var(--gray-700);}
+  .doc-section-t{font-size:12.5px;line-height:1.55;color:var(--gray-700);}
+  .doc-section-t .prose-gap{height:7px;}
+  .doc-list{margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.6;color:var(--gray-700);}
   .doc-simple-table{width:100%;border-collapse:collapse;margin-top:8px;}
   .doc-simple-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-500);padding:0 10px 9px;font-weight:700;border-bottom:1.5px solid var(--ink);}
   .doc-simple-table td{padding:10px;font-size:12.5px;border-bottom:1px solid var(--hairline);}
@@ -1802,13 +1803,13 @@ function renderProposalPreview(){
       <div class="doc-section">
         <div class="doc-section-h"><span class="n">1</span> Giriş</div>
         <div class="doc-section-t" style="margin-bottom:10px;font-weight:700;">Sayın ${escapeHtml(proposal.customer.contactName||'[Müşteri Yetkilisi Ad Soyad]')},</div>
-        <div class="doc-section-t">${escapeHtml(proposal.intro)}</div>
+        <div class="doc-section-t">${proseHtml(proposal.intro)}</div>
       </div>
 
       <!-- 2. PROJE KAPSAMI -->
       <div class="doc-section">
         <div class="doc-section-h"><span class="n">2</span> Proje Kapsamı</div>
-        <div class="doc-section-t">${escapeHtml(proposal.scopeIntro)}</div>
+        <div class="doc-section-t">${proseHtml(proposal.scopeIntro)}</div>
         <div class="doc-info-grid" style="border-bottom:none;padding-bottom:0;">
           <div><div class="doc-info-block-h">Kapsam Dahilinde Olanlar</div><ul class="doc-list">${scopeInHtml}</ul></div>
           <div><div class="doc-info-block-h">Kapsam Dışında Olanlar</div><ul class="doc-list">${scopeOutHtml}</ul></div>
@@ -1818,19 +1819,20 @@ function renderProposalPreview(){
       <!-- 3. TEKNİK ÇÖZÜM -->
       <div class="doc-section">
         <div class="doc-section-h"><span class="n">3</span> Teknik Çözüm</div>
-        <div class="doc-section-t">${escapeHtml(proposal.techArchitecture)}</div>
+        <div class="doc-section-t">${proseHtml(proposal.techArchitecture)}</div>
         <div class="doc-info-block-h" style="margin-top:16px;">Kullanılacak Ekipmanlar</div>
         <ul class="doc-list">${equipHtml}</ul>
         <div class="doc-info-block-h" style="margin-top:16px;">Yazılım ve Devreye Alma</div>
-        <div class="doc-section-t">${escapeHtml(proposal.techSoftware)}</div>
+        <div class="doc-section-t">${proseHtml(proposal.techSoftware)}</div>
       </div>
 
       <!-- 4. TESLİMAT VE PROJE TAKVİMİ -->
       <div class="doc-section" style="page-break-inside:avoid;">
         <div class="doc-section-h"><span class="n">4</span> Teslimat ve Proje Takvimi</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(proposal.timelineNote)}</div>
-        <table class="doc-simple-table">
-          <thead><tr><th class="num">Aşama</th><th>Faaliyet</th><th class="num">Tahmini Süre</th></tr></thead>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(proposal.timelineNote)}</div>
+        <table class="doc-simple-table" style="table-layout:fixed;">
+          <colgroup><col style="width:9%"><col style="width:67%"><col style="width:24%"></colgroup>
+          <thead><tr><th>Aşama</th><th>Faaliyet</th><th class="num">Tahmini Süre</th></tr></thead>
           <tbody>${timelineRows || '<tr><td colspan="3">—</td></tr>'}</tbody>
         </table>
       </div>
@@ -1838,9 +1840,10 @@ function renderProposalPreview(){
       <!-- 5. FİYATLANDIRMA -->
       <div class="doc-section" style="page-break-inside:avoid;">
         <div class="doc-section-h"><span class="n">5</span> Fiyatlandırma</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(DEFAULT_PROPOSAL_PRICING_NOTE)}</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(DEFAULT_PROPOSAL_PRICING_NOTE)}</div>
         <table class="doc-items">
-          <thead><tr><th class="num">No</th><th>Açıklama</th><th class="center">Miktar</th><th class="num">Birim Fiyat</th><th class="num">Toplam</th></tr></thead>
+          <colgroup><col style="width:7%"><col style="width:45%"><col style="width:10%"><col style="width:19%"><col style="width:19%"></colgroup>
+          <thead><tr><th>No</th><th>Açıklama</th><th class="center">Miktar</th><th class="num">Birim Fiyat</th><th class="num">Toplam</th></tr></thead>
           <tbody>${itemsRows}</tbody>
         </table>
         <div class="doc-totals">
@@ -1855,7 +1858,7 @@ function renderProposalPreview(){
       ${(proposal.optionalItems||[]).some(it=>it.desc) ? `
       <div class="doc-section" style="page-break-inside:avoid;">
         <div class="doc-section-h"><span class="n">6</span> Opsiyonel Kalemler</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${escapeHtml(DEFAULT_PROPOSAL_OPTIONAL_NOTE)}</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(DEFAULT_PROPOSAL_OPTIONAL_NOTE)}</div>
         <table class="doc-simple-table">
           <thead><tr><th>Opsiyonel Kalem</th><th class="center">Süre</th><th class="num">Ek Bedel</th></tr></thead>
           <tbody>${optRows}</tbody>
@@ -1878,7 +1881,7 @@ function renderProposalPreview(){
       <!-- 8. KAPANIŞ -->
       <div class="doc-section" style="page-break-inside:avoid;">
         <div class="doc-section-h"><span class="n">8</span> Kapanış</div>
-        <div class="doc-section-t">${escapeHtml(proposal.closing)}</div>
+        <div class="doc-section-t">${proseHtml(proposal.closing)}</div>
         <div style="margin-top:14px;font-size:12.5px;">Saygılarımızla,</div>
         <div style="margin-top:2px;font-weight:700;font-size:13px;">${escapeHtml(company.name||'Godo Endüstriyel Otomasyon')}</div>
       </div>
@@ -2831,6 +2834,17 @@ function renderIrsaliyePrint(){
 }
 
 /* ---------------- HELPERS ---------------- */
+function proseHtml(text){
+  // Satırları korur; art arda gelen boş satırları tek bir küçük boşluğa indirir
+  let out = '', gap = false;
+  String(text||'').replace(/\r/g,'').split('\n').forEach(l=>{
+    if(!l.trim()){ gap = true; return; }
+    if(gap && out) out += '<div class="prose-gap"></div>';
+    gap = false;
+    out += '<div>'+escapeHtml(l)+'</div>';
+  });
+  return out;
+}
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 function addBusinessDays(dateStr, days){
