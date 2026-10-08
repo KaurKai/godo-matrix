@@ -1806,8 +1806,8 @@ function renderProposalPreview(){
         <div class="doc-section-t">${proseHtml(proposal.intro)}</div>
       </div>
 
-      <!-- 2. PROJE KAPSAMI -->
-      <div class="doc-section">
+      <!-- 2. PROJE KAPSAMI (her zaman yeni sayfadan başlar) -->
+      <div class="doc-section" style="page-break-before:always;break-before:page;margin-top:0;">
         <div class="doc-section-h"><span class="n">2</span> Proje Kapsamı</div>
         <div class="doc-section-t">${proseHtml(proposal.scopeIntro)}</div>
         <div class="doc-info-grid" style="border-bottom:none;padding-bottom:0;">
