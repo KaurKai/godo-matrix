@@ -424,6 +424,42 @@ const defaultTerms = {
   shipping: "",
   legal: "İşbu teklif, tarihinden itibaren belirtilen geçerlilik süresi boyunca geçerlidir; bu süre sonunda fiyat ve teslim süreleri yeniden teyit gerektirir.\nFiyatlara KDV dahil değildir, ayrıca belirtilmiştir.\nDöviz kuru bazlı fiyatlarda, fatura tarihindeki güncel kur esas alınır.\nÜrün teknik özellikleri, üretici firma tarafından önceden haber verilmeksizin değiştirilebilir."
 };
+const defaultTermsEN = {
+  payment: "30% of the total amount is payable upon order confirmation; the remaining 70% is payable in advance, before shipment.\nPayment by bank transfer (T/T) is accepted.\nThe invoice is issued on the shipping date.",
+  delivery: "Stated delivery times start from the receipt of the order confirmation and the relevant payment.\nDelivery is EXW (Ex Works) our premises; freight and insurance costs are not included in the price and will be quoted separately.\nFor items in stock, shipment is made within 2-3 working days.",
+  shipping: "",
+  legal: "This quotation is valid for the validity period stated from its date; after that, prices and lead times are subject to reconfirmation.\nPrices are exclusive of VAT and any other applicable taxes or duties.\nFor prices based on foreign currency, the exchange rate on the invoice date applies.\nProduct specifications may be changed by the manufacturer without prior notice."
+};
+const TERM_EN_BY_NAME = {
+  payment: {
+    'Avanslı (%30/%70)': defaultTermsEN.payment,
+    'Peşin': "Full payment is due in advance, upon order confirmation.\nPayment by bank transfer (T/T) is accepted.",
+    'Vadeli (30 Gün)': "Payment is due 30 days from the invoice date.\nThe full amount is payable at maturity."
+  },
+  delivery: { 'Standart': defaultTermsEN.delivery },
+  legal: { 'Standart': defaultTermsEN.legal }
+};
+function tplText(t, lang){ return (lang==='en' && t.textEN) ? t.textEN : t.text; }
+function backfillEnglishTerms(){
+  // Mevcut şablonlarda İngilizce metin yoksa, bilinen varsayılan şablonlar için doldur
+  let changed = false;
+  ['payment','delivery','legal'].forEach(cat=>{
+    (termTemplates[cat]||[]).forEach(t=>{
+      if(t.textEN===undefined){
+        const en = (TERM_EN_BY_NAME[cat]||{})[t.name];
+        if(en){ t.textEN = en; changed = true; }
+      }
+    });
+  });
+  (termTemplates.shipping||[]).forEach(t=>{
+    if(t.textEN===undefined){
+      const m = /^(.+) — Alıcı Öder$/.exec(t.name||'');
+      if(m){ t.textEN = 'Carrier: '+m[1]+'\nShipping cost: Paid by buyer'; changed = true; }
+    }
+  });
+  return changed;
+}
+
 
 function emptyQuote(){
   return {
@@ -443,6 +479,7 @@ function emptyQuote(){
     orderStatus: "",
     lossReason: "",
     template: "classic",
+    lang: "tr",
     irsaliyeNo: "",
     irsaliyeDate: "",
     irsaliyeNote: "",
@@ -873,6 +910,7 @@ async function loadAll(){
     }));
     await saveTermTemplates();
   }
+  if(backfillEnglishTerms()) await saveTermTemplates();
   document.getElementById('storageModeLabel').textContent = storageModeLabel();
   updateSyncStatusLabel();
   renderStorageBanner();
@@ -911,15 +949,15 @@ async function saveTasks(){ await stSet('godo:tasks', JSON.stringify(tasks)); }
 function applyCustomerDefaultsToQuote(cust){
   if(cust.defaultPaymentTplId){
     const pt = termTemplates.payment.find(t=>t.id===cust.defaultPaymentTplId);
-    if(pt) quote.terms.payment = pt.text;
+    if(pt) quote.terms.payment = tplText(pt, qLang(quote));
   }
   if(cust.defaultDeliveryTplId){
     const dt = termTemplates.delivery.find(t=>t.id===cust.defaultDeliveryTplId);
-    if(dt) quote.terms.delivery = dt.text;
+    if(dt) quote.terms.delivery = tplText(dt, qLang(quote));
   }
   if(cust.defaultShippingTplId){
     const st = termTemplates.shipping.find(t=>t.id===cust.defaultShippingTplId);
-    if(st) quote.terms.shipping = st.text;
+    if(st) quote.terms.shipping = tplText(st, qLang(quote));
   }
 }
 
@@ -1137,8 +1175,73 @@ const VAT_NOTE_TEXT = 'Fatura tarihinde KDV ilave edilerek fatura edilecektir.';
 function paymentTermsWithVat(q){
   // KDV teklif toplamına eklenmediyse, ödeme planının sonuna faturalamada KDV eklenecek notu düşer
   let t = (q.terms && q.terms.payment) || '';
-  if(!q.vatEnabled && !/KDV/i.test(t)) t = (t.trim() ? t.replace(/\s+$/,'') + '\n' : '') + VAT_NOTE_TEXT;
+  if(!q.vatEnabled && qLang(q)!=='en' && !/KDV/i.test(t)) t = (t.trim() ? t.replace(/\s+$/,'') + '\n' : '') + VAT_NOTE_TEXT;
   return t;
+}
+/* ---------------- TR / EN (teklif dili) ---------------- */
+function qLang(q){ return (q && q.lang==='en') ? 'en' : 'tr'; }
+const DOC_STR_PAIRS = [
+  ['Geçerlilik ve Genel Şartlar','Validity &amp; General Terms'], ['Geçerlilik: ','Valid until: '], ['Tarih: ','Date: '],
+  ['Vergi Dairesi / No','Tax Office / ID'], ['Yetkili / İletişim','Contact'], ['Ürün Kodu ve Açıklama','Item Code &amp; Description'],
+  ['>Miktar<','>Qty<'], ['Teslim Süresi','Lead Time'], ['Birim Fiyat','Unit Price'], ['>Fiyat<','>Price<'],
+  ['Ara Toplam','Subtotal'], ['Genel Toplam','Total'], ['Ödeme Planı','Payment Terms'], ['Teslimat Koşulları','Delivery Terms'],
+  ['Kargo Koşulları','Shipping Terms']
+];
+function localizeTemplate(str, lang){
+  // Şablonun sabit Türkçe etiketlerini çevirir (müşteri verisine dokunmaz: token'lar henüz doldurulmamıştır)
+  if(lang!=='en') return str;
+  let s = str;
+  DOC_STR_PAIRS.forEach(([a,b])=>{ s = s.split(a).join(b); });
+  return s;
+}
+function renderDocHTML(tplStr, tokens, lang){ return applyTemplate(localizeTemplate(tplStr, lang), tokens); }
+const EN_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatDateL(dateStr, lang){
+  if(lang!=='en') return formatDate(dateStr);
+  if(!dateStr) return '—';
+  const [y,m,d] = dateStr.split('-');
+  return `${d} ${EN_MONTHS[(parseInt(m,10)||1)-1]} ${y}`;
+}
+function fmtL(n, lang){
+  if(lang==='en') return (n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return fmt(n);
+}
+function leadTimeL(s, lang){
+  s = String(s||'');
+  if(lang!=='en') return s;
+  const rng = '(\\d+(?:\\s*[-–]\\s*\\d+)?)';
+  const one = n => n.trim()==='1';
+  return s
+    .replace(new RegExp(rng+'\\s*[İi]ş\\s*[Gg]ün[üu]?','g'), (m,n)=>`${n} Business ${one(n)?'Day':'Days'}`)
+    .replace(new RegExp(rng+'\\s*[Hh]afta','g'), (m,n)=>`${n} ${one(n)?'Week':'Weeks'}`)
+    .replace(new RegExp(rng+'\\s*[Gg]ün(?![A-Za-zÇĞİÖŞÜçğıöşü])','g'), (m,n)=>`${n} ${one(n)?'Day':'Days'}`)
+    .replace(new RegExp(rng+'\\s*[Aa]y(?![A-Za-zÇĞİÖŞÜçğıöşü])','g'), (m,n)=>`${n} ${one(n)?'Month':'Months'}`)
+    .replace(/\bStokta\b/gi,'In stock').replace(/\bStoktan\b/gi,'Ex stock').replace(/\bStok\b/gi,'Ex stock');
+}
+function setQuoteLang(lang){
+  // Dili değiştirir; değiştirilmemiş şartları karşı dildeki metne çevirir, elle düzenlenmişleri korur
+  const prev = qLang(quote);
+  quote.lang = lang;
+  const kept = [];
+  if(prev===lang) return kept;
+  const labels = {payment:'Ödeme Planı', delivery:'Teslimat Koşulları', shipping:'Kargo Koşulları', legal:'Geçerlilik ve Genel Şartlar'};
+  ['payment','delivery','shipping','legal'].forEach(cat=>{
+    const cur = ((quote.terms||{})[cat]||'').trim();
+    if(!cur) return;
+    const tpl = (termTemplates[cat]||[]).find(t=>(t.text||'').trim()===cur || (t.textEN||'').trim()===cur);
+    if(tpl){
+      const nt = lang==='en' ? tpl.textEN : tpl.text;
+      if(nt){ quote.terms[cat] = nt; } else kept.push(labels[cat]);
+      return;
+    }
+    if(lang==='en' && cur===(defaultTerms[cat]||'').trim() && defaultTermsEN[cat]){ quote.terms[cat]=defaultTermsEN[cat]; return; }
+    if(lang==='tr' && cur===(defaultTermsEN[cat]||'').trim() && defaultTerms[cat]){ quote.terms[cat]=defaultTerms[cat]; return; }
+    kept.push(labels[cat]);
+  });
+  return kept;
+}
+function notifyKeptTerms(kept){
+  if(kept && kept.length) alert('Şu bölümler elle düzenlendiği ya da karşı dilde metni olmadığı için çevrilmedi: '+kept.join(', ')+'.\n\nŞartlar sekmesinden elle düzenleyebilir, ya da Ayarlar > Şablonlar\'da şablona İngilizce metin ekleyebilirsin.');
 }
 function fmt(n){ return (n||0).toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function parseTRNumber(str){
@@ -2403,6 +2506,9 @@ function renderInfo(){
       <div class="field" style="max-width:220px;"><label>Para Birimi</label>
         <select id="f-currency">${['€','$','₺'].map(c=>`<option ${quote.currency===c?'selected':''}>${c}</option>`).join('')}</select>
       </div>
+      <div class="field" style="max-width:220px;"><label>Teklif Dili</label>
+        <select id="f-lang"><option value="tr" ${qLang(quote)==='tr'?'selected':''}>Türkçe</option><option value="en" ${qLang(quote)==='en'?'selected':''}>English</option></select>
+      </div>
       <div class="field" style="max-width:220px;"><label>Teklif Durumu</label>
         <select id="f-status">${STATUS_OPTIONS.map(s=>`<option ${quote.status===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
@@ -2552,7 +2658,7 @@ function renderTerms(){
       <label>Ödeme Planı</label>
       <select id="tpl-payment" style="max-width:280px;margin-bottom:8px;"><option value="">— Şablon Seç —</option>${tplOptions('payment')}</select>
       <textarea id="f-termPayment" rows="4">${escapeHtml(quote.terms.payment)}</textarea>
-      ${!quote.vatEnabled && !/KDV/i.test(quote.terms.payment||'') ? `<p class="hint" style="margin-top:6px;">KDV teklif toplamına eklenmediği için, çıktıda ödeme planının sonuna otomatik olarak şu satır eklenir: <i>${VAT_NOTE_TEXT}</i></p>` : ''}
+      ${!quote.vatEnabled && qLang(quote)!=='en' && !/KDV/i.test(quote.terms.payment||'') ? `<p class="hint" style="margin-top:6px;">KDV teklif toplamına eklenmediği için, çıktıda ödeme planının sonuna otomatik olarak şu satır eklenir: <i>${VAT_NOTE_TEXT}</i></p>` : ''}
     </div>
     <div class="field">
       <label>Teslimat Koşulları</label>
@@ -2669,6 +2775,8 @@ function applyTemplate(str, tokens){
 }
 
 function buildDocTokens(){
+  const L = qLang(quote), EN = L==='en';
+  const F = n=>fmtL(n,L);
   const t = computeTotals(quote);
   const validUntil = addBusinessDays(quote.date, quote.validityDays);
   const filteredItems = quote.items.filter(it=>it.code||it.desc);
@@ -2679,40 +2787,40 @@ function buildDocTokens(){
         <div class="item-code">${escapeHtml(it.code)}</div>
         ${it.desc ? `<div class="item-desc">${escapeHtml(it.desc)}</div>` : ''}
       </td>
-      <td class="center">${it.qty} AD</td>
-      <td>${escapeHtml(it.delivery)}</td>
-      <td class="num">${quote.currency} ${fmt(lineUnitPrice(it))}</td>
-      <td class="num">${quote.currency} ${fmt(lineTotal(it))}</td>
+      <td class="center">${it.qty} ${EN?(parseFloat(it.qty)===1?'pc':'pcs'):'AD'}</td>
+      <td>${escapeHtml(leadTimeL(it.delivery,L))}</td>
+      <td class="num">${quote.currency} ${F(lineUnitPrice(it))}</td>
+      <td class="num">${quote.currency} ${F(lineTotal(it))}</td>
     </tr>
-  `).join('') || '<tr><td colspan="6" style="color:var(--gray-300);text-align:center;padding:20px 0;">Henüz ürün kalemi eklenmedi</td></tr>';
+  `).join('') || `<tr><td colspan="6" style="color:var(--gray-300);text-align:center;padding:20px 0;">${EN?'No items added yet':'Henüz ürün kalemi eklenmedi'}</td></tr>`;
 
   const custContact = quote.customer.contactName ? escapeHtml(quote.customer.contactName)+(quote.customer.contactPhone?' · '+escapeHtml(quote.customer.contactPhone):'') : (quote.customer.contactPhone?escapeHtml(quote.customer.contactPhone):'—');
-  const custTaxLine = (quote.customer.taxOffice||quote.customer.taxNo) ? escapeHtml((quote.customer.taxOffice||'—')+' · '+(quote.customer.taxNo?'VN '+quote.customer.taxNo:'')) : '—';
+  const custTaxLine = (quote.customer.taxOffice||quote.customer.taxNo) ? escapeHtml((quote.customer.taxOffice||'—')+' · '+(quote.customer.taxNo?(EN?'Tax ID ':'VN ')+quote.customer.taxNo:'')) : '—';
   const addressBlock = quote.customer.address ? `<div class="dc-address">${escapeHtml(quote.customer.address)}</div>` : '';
   const taglineBlock = company.tagline ? `<div class="doc-tagline">${escapeHtml(company.tagline)}</div>` : '';
 
   return {
-    DOC_TITLE: 'Fiyat Teklifi',
+    DOC_TITLE: EN ? 'Quotation' : 'Fiyat Teklifi',
     COMPANY_NAME: escapeHtml(company.name || 'GODO'),
     COMPANY_NAME_UPPER: escapeHtml((company.name||'GODO').toUpperCase()),
     COMPANY_TAGLINE_BLOCK: taglineBlock,
     COMPANY_TAGLINE: escapeHtml(company.tagline||''),
     COMPANY_WEBSITE: escapeHtml(company.website||'godo.tr'),
     QUOTE_NO: escapeHtml(quote.quoteNo),
-    DATE: formatDate(quote.date),
-    VALID_UNTIL: formatDate(validUntil),
+    DATE: formatDateL(quote.date, L),
+    VALID_UNTIL: formatDateL(validUntil, L),
     CUSTOMER_NAME: escapeHtml(quote.customer.name||'—'),
     CUSTOMER_TAX: custTaxLine,
     CUSTOMER_CONTACT: custContact,
     CUSTOMER_ADDRESS_BLOCK: addressBlock,
     ITEMS_ROWS: itemsRows,
-    SUBTOTAL: `${quote.currency} ${fmt(t.sub)}`,
-    VAT_LABEL: quote.vatEnabled ? `KDV (%${quote.vatRate})` : 'KDV',
-    VAT_VALUE: quote.vatEnabled ? `${quote.currency} ${fmt(t.vat)}` : 'Hariçtir',
-    GRAND_TOTAL: `${quote.currency} ${fmt(t.grand)}`,
+    SUBTOTAL: `${quote.currency} ${F(t.sub)}`,
+    VAT_LABEL: quote.vatEnabled ? (EN ? `VAT (${quote.vatRate}%)` : `KDV (%${quote.vatRate})`) : (EN ? 'VAT' : 'KDV'),
+    VAT_VALUE: quote.vatEnabled ? `${quote.currency} ${F(t.vat)}` : (EN ? 'Excluded' : 'Hariçtir'),
+    GRAND_TOTAL: `${quote.currency} ${F(t.grand)}`,
     PAYMENT_TERMS: escapeHtml(paymentTermsWithVat(quote)),
     DELIVERY_TERMS: escapeHtml(quote.terms.delivery),
-    SHIPPING_BLOCK: quote.terms.shipping ? `<div class="blk"><div class="h">Kargo Koşulları</div><div class="t">${escapeHtml(quote.terms.shipping)}</div></div>` : '',
+    SHIPPING_BLOCK: quote.terms.shipping ? `<div class="blk"><div class="h">${EN?'Shipping Terms':'Kargo Koşulları'}</div><div class="t">${escapeHtml(quote.terms.shipping)}</div></div>` : '',
     LEGAL_TERMS: escapeHtml(quote.terms.legal),
     CURRENCY: quote.currency
   };
@@ -2724,7 +2832,7 @@ function renderPreview(){
   const isOverridden = quote.template && quote.template!=='classic';
   const styleEl = document.getElementById('userDocStyle');
   if(styleEl) styleEl.textContent = getSlotCSS(eff);
-  const printAreaHTML = applyTemplate(getSlotHTML(eff), tokens);
+  const printAreaHTML = renderDocHTML(getSlotHTML(eff), tokens, qLang(quote));
   const TPL_NAMES = { classic:'Klasik', dark:'Koyu Başlık', minimal:'Minimal', custom:'Özel' };
 
   return `
@@ -2735,6 +2843,10 @@ function renderPreview(){
         <option value="dark" ${eff==='dark'?'selected':''}>Şablon: Koyu Başlık</option>
         <option value="minimal" ${eff==='minimal'?'selected':''}>Şablon: Minimal</option>
         <option value="custom" ${eff==='custom'?'selected':''}>Şablon: Özel</option>
+      </select>
+      <select id="f-lang-prev" style="padding:8px 10px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:12px;font-family:var(--font-sans);">
+        <option value="tr" ${qLang(quote)==='tr'?'selected':''}>Dil: Türkçe</option>
+        <option value="en" ${qLang(quote)==='en'?'selected':''}>Dil: English</option>
       </select>
       <button class="btn btn-ghost" id="btnBackEdit">Düzenlemeye Dön</button>
       <button class="btn btn-ghost" id="btnMailDraft">E-posta Taslağı Oluştur</button>
@@ -2750,11 +2862,11 @@ function renderPreview(){
 
 function renderOrderPrint(){
   const tokens = buildDocTokens();
-  tokens.DOC_TITLE = 'Sipariş Onayı';
+  tokens.DOC_TITLE = qLang(quote)==='en' ? 'Order Confirmation' : 'Sipariş Onayı';
   const eff = effectiveTemplate();
   const styleEl = document.getElementById('userDocStyle');
   if(styleEl) styleEl.textContent = getSlotCSS(eff);
-  const printAreaHTML = applyTemplate(getSlotHTML(eff), tokens);
+  const printAreaHTML = renderDocHTML(getSlotHTML(eff), tokens, qLang(quote));
   return `
   <div class="preview-wrap">
     <div class="preview-toolbar">
@@ -2872,9 +2984,20 @@ function formatDate(dateStr){
   return `${d}.${m}.${y}`;
 }
 function buildMailtoLink(to){
+  const EN = qLang(quote)==='en';
   const validUntil = addBusinessDays(quote.date, quote.validityDays);
-  const subject = `${company.name||'Godo'} Teklifi — ${quote.quoteNo}`;
-  const body = [
+  const subject = EN ? `${company.name||'Godo'} Quotation — ${quote.quoteNo}` : `${company.name||'Godo'} Teklifi — ${quote.quoteNo}`;
+  const body = (EN ? [
+    `Dear ${quote.customer.contactName||''}`.trim()+ ',',
+    '',
+    `Please find our quotation no. ${quote.quoteNo} attached.`,
+    `Quotation valid until: ${formatDateL(validUntil,'en')}`,
+    '',
+    'Please do not hesitate to contact us if you have any questions.',
+    '',
+    'Best regards,',
+    company.name || 'Godo'
+  ] : [
     `Merhaba ${quote.customer.contactName||''}`.trim()+ ',',
     '',
     `${quote.quoteNo} numaralı teklifimizi ilişikte bulabilirsiniz.`,
@@ -2884,7 +3007,7 @@ function buildMailtoLink(to){
     '',
     'İyi çalışmalar,',
     company.name || 'Godo'
-  ].join('\n');
+  ]).join('\n');
   return `mailto:${to||''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
@@ -3249,13 +3372,13 @@ function attachHandlers(){
 
   if(activeTab==='settingsTemplates'){
     document.querySelectorAll('[data-tpl-new]').forEach(el=>{
-      el.onclick = ()=>{ tplEditing = { cat:el.dataset.tplNew, id:null, name:'', text:'' }; openTemplateEditModal(); };
+      el.onclick = ()=>{ tplEditing = { cat:el.dataset.tplNew, id:null, name:'', text:'', textEN:'' }; openTemplateEditModal(); };
     });
     document.querySelectorAll('[data-tpl-edit]').forEach(el=>{
       el.onclick = ()=>{
         const cat = el.dataset.tplEdit, id = el.dataset.id;
         const t = termTemplates[cat].find(x=>x.id===id);
-        tplEditing = { cat, id:t.id, name:t.name, text:t.text };
+        tplEditing = { cat, id:t.id, name:t.name, text:t.text, textEN:t.textEN||'' };
         openTemplateEditModal();
       };
     });
@@ -3280,7 +3403,7 @@ function attachHandlers(){
         const styleEl = document.getElementById('docTplPreviewStyle');
         const areaEl = document.getElementById('docTplPreviewArea');
         if(styleEl) styleEl.textContent = cssTa.value;
-        if(areaEl){ try{ areaEl.innerHTML = applyTemplate(htmlTa.value, buildDocTokens()); }catch(e){} }
+        if(areaEl){ try{ areaEl.innerHTML = renderDocHTML(htmlTa.value, buildDocTokens(), qLang(quote)); }catch(e){} }
       }, 350);
     };
     htmlTa.oninput = updateLivePreview;
@@ -3381,6 +3504,7 @@ function attachHandlers(){
   if(activeTab==='info'){
     bind('f-quoteNo','quoteNo'); bind('f-date','date'); bind('f-validity','validityDays'); bind('f-paymentTermDays','paymentTermDays');
     document.getElementById('f-currency').onchange = e=>{ quote.currency=e.target.value; scheduleSave(); };
+    document.getElementById('f-lang').onchange = e=>{ const kept = setQuoteLang(e.target.value); scheduleSave(); render(); notifyKeptTerms(kept); };
     document.getElementById('f-status').onchange = e=>{
       const prevStatus = quote.status;
       quote.status = e.target.value;
@@ -3537,19 +3661,20 @@ function attachHandlers(){
     document.getElementById('tpl-payment').onchange = e=>{
       const t=termTemplates.payment.find(x=>x.id===e.target.value);
       if(t){
-        quote.terms.payment=t.text;
+        quote.terms.payment=tplText(t, qLang(quote));
         const dayMatch = t.name.match(/(\d+)\s*[Gg]ün/);
         if(dayMatch) quote.paymentTermDays = dayMatch[1];
         scheduleSave(); render();
       }
     };
-    document.getElementById('tpl-delivery').onchange = e=>{ const t=termTemplates.delivery.find(x=>x.id===e.target.value); if(t){ quote.terms.delivery=t.text; scheduleSave(); render(); } };
-    document.getElementById('tpl-shipping').onchange = e=>{ const t=termTemplates.shipping.find(x=>x.id===e.target.value); if(t){ quote.terms.shipping=t.text; scheduleSave(); render(); } };
-    document.getElementById('tpl-legal').onchange = e=>{ const t=termTemplates.legal.find(x=>x.id===e.target.value); if(t){ quote.terms.legal=t.text; scheduleSave(); render(); } };
+    document.getElementById('tpl-delivery').onchange = e=>{ const t=termTemplates.delivery.find(x=>x.id===e.target.value); if(t){ quote.terms.delivery=tplText(t, qLang(quote)); scheduleSave(); render(); } };
+    document.getElementById('tpl-shipping').onchange = e=>{ const t=termTemplates.shipping.find(x=>x.id===e.target.value); if(t){ quote.terms.shipping=tplText(t, qLang(quote)); scheduleSave(); render(); } };
+    document.getElementById('tpl-legal').onchange = e=>{ const t=termTemplates.legal.find(x=>x.id===e.target.value); if(t){ quote.terms.legal=tplText(t, qLang(quote)); scheduleSave(); render(); } };
   }
 
   if(activeTab==='preview'){
     document.getElementById('f-template').onchange = e=>{ quote.template=e.target.value; scheduleSave(); render(); };
+    document.getElementById('f-lang-prev').onchange = e=>{ const kept = setQuoteLang(e.target.value); scheduleSave(); render(); notifyKeptTerms(kept); };
     document.getElementById('btnBackEdit').onclick = ()=>{ activeTab='items'; render(); };
     document.getElementById('btnPrint').onclick = ()=>{
       const issues = validateQuoteForSend();
@@ -3705,7 +3830,7 @@ function renderSettingsDesign(){
     <div style="background:var(--paper-2);padding:28px;border-radius:6px;">
       <div id="docTplPreviewWrap" style="background:#fff;max-width:900px;margin:0 auto;padding:46px;box-shadow:0 4px 20px rgba(0,0,0,.08);">
         <style id="docTplPreviewStyle">${getSlotCSS(slot)}</style>
-        <div id="docTplPreviewArea">${applyTemplate(getSlotHTML(slot), buildDocTokens())}</div>
+        <div id="docTplPreviewArea">${renderDocHTML(getSlotHTML(slot), buildDocTokens(), qLang(quote))}</div>
       </div>
     </div>
   </div>`;
@@ -3762,7 +3887,8 @@ function openTemplateEditModal(){
   overlay.innerHTML = `<div class="modal-box">
     <h2>${t.id ? 'Şablonu Düzenle' : 'Yeni Şablon'}</h2>
     <div class="field"><label>Şablon Adı</label><input id="tp-name" value="${escapeAttr(t.name)}" placeholder="ör. Peşin, Vadeli, Avanslı"></div>
-    <div class="field"><label>Metin</label><textarea id="tp-text" rows="6">${escapeHtml(t.text)}</textarea></div>
+    <div class="field"><label>Metin (Türkçe)</label><textarea id="tp-text" rows="6">${escapeHtml(t.text)}</textarea></div>
+    <div class="field"><label>Metin (English) — opsiyonel</label><textarea id="tp-text-en" rows="6" placeholder="İngilizce teklifte bu metin kullanılır">${escapeHtml(t.textEN||'')}</textarea></div>
     <div class="actions-row" style="margin-top:6px;">
       <button class="btn btn-primary" id="tp-save">Kaydet</button>
       <button class="btn btn-ghost" id="tp-cancel">Vazgeç</button>
@@ -3772,13 +3898,14 @@ function openTemplateEditModal(){
   overlay.addEventListener('mousedown', e=>{ if(e.target===overlay){ tplEditing=null; overlay.remove(); } });
   overlay.querySelector('#tp-name').oninput = e=>t.name=e.target.value;
   overlay.querySelector('#tp-text').oninput = e=>t.text=e.target.value;
+  overlay.querySelector('#tp-text-en').oninput = e=>t.textEN=e.target.value;
   overlay.querySelector('#tp-cancel').onclick = ()=>{ tplEditing=null; overlay.remove(); };
   overlay.querySelector('#tp-save').onclick = ()=>{
     if(!t.name.trim()){ alert('Şablon adı gerekli.'); return; }
     if(!t.id) t.id = crypto.randomUUID();
     const arr = termTemplates[t.cat];
     const idx = arr.findIndex(x=>x.id===t.id);
-    const record = { id:t.id, name:t.name, text:t.text };
+    const record = { id:t.id, name:t.name, text:t.text, textEN:t.textEN||'' };
     if(idx>=0) arr[idx]=record; else arr.push(record);
     saveTermTemplates();
     tplEditing=null;
