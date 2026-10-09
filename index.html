@@ -436,7 +436,7 @@ function emptyQuote(){
     currency: "€",
     customer: { customerId:null, name:"", address:"", taxOffice:"", taxNo:"", contactId:null, contactName:"", contactPhone:"", contactEmail:"" },
     items: [ blankItem() ],
-    vatEnabled: true,
+    vatEnabled: false,
     vatRate: 20,
     terms: { ...defaultTerms },
     status: "Taslak",
@@ -1132,6 +1132,13 @@ function computeTotals(q){
   const vat = q.vatEnabled ? sub * (parseFloat(q.vatRate)||0)/100 : 0;
   const profit = q.items.reduce((s,it)=>{ const p=lineProfit(it); return s+(p===null?0:p); },0);
   return { sub, vat, grand: sub+vat, profit };
+}
+const VAT_NOTE_TEXT = 'Fatura tarihinde KDV ilave edilerek fatura edilecektir.';
+function paymentTermsWithVat(q){
+  // KDV teklif toplamına eklenmediyse, ödeme planının sonuna faturalamada KDV eklenecek notu düşer
+  let t = (q.terms && q.terms.payment) || '';
+  if(!q.vatEnabled && !/KDV/i.test(t)) t = (t.trim() ? t.replace(/\s+$/,'') + '\n' : '') + VAT_NOTE_TEXT;
+  return t;
 }
 function fmt(n){ return (n||0).toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function parseTRNumber(str){
@@ -2545,6 +2552,7 @@ function renderTerms(){
       <label>Ödeme Planı</label>
       <select id="tpl-payment" style="max-width:280px;margin-bottom:8px;"><option value="">— Şablon Seç —</option>${tplOptions('payment')}</select>
       <textarea id="f-termPayment" rows="4">${escapeHtml(quote.terms.payment)}</textarea>
+      ${!quote.vatEnabled && !/KDV/i.test(quote.terms.payment||'') ? `<p class="hint" style="margin-top:6px;">KDV teklif toplamına eklenmediği için, çıktıda ödeme planının sonuna otomatik olarak şu satır eklenir: <i>${VAT_NOTE_TEXT}</i></p>` : ''}
     </div>
     <div class="field">
       <label>Teslimat Koşulları</label>
@@ -2702,7 +2710,7 @@ function buildDocTokens(){
     VAT_LABEL: quote.vatEnabled ? `KDV (%${quote.vatRate})` : 'KDV',
     VAT_VALUE: quote.vatEnabled ? `${quote.currency} ${fmt(t.vat)}` : 'Hariçtir',
     GRAND_TOTAL: `${quote.currency} ${fmt(t.grand)}`,
-    PAYMENT_TERMS: escapeHtml(quote.terms.payment),
+    PAYMENT_TERMS: escapeHtml(paymentTermsWithVat(quote)),
     DELIVERY_TERMS: escapeHtml(quote.terms.delivery),
     SHIPPING_BLOCK: quote.terms.shipping ? `<div class="blk"><div class="h">Kargo Koşulları</div><div class="t">${escapeHtml(quote.terms.shipping)}</div></div>` : '',
     LEGAL_TERMS: escapeHtml(quote.terms.legal),
