@@ -516,7 +516,7 @@ function emptyCustomer(){
     stage:"", source:"", industry:"", employees:"", linkedin:"", city:"", country:"" };
 }
 function emptyProduct(){
-  return { id:null, code:"", desc:"", delivery:"", listPrice:"", buyDiscount:"", discount:"", category:"", supplierId:"" };
+  return { id:null, code:"", desc:"", delivery:"", listPrice:"", buyDiscount:"", discount:"", category:"", supplierId:"", minStock:"" };
 }
 function emptySupplier(){
   return { id:null, name:"", address:"", taxOffice:"", taxNo:"", website:"", contacts:[], notes:[] };
@@ -888,6 +888,8 @@ async function loadAll(){
   try{ const cs = await stGet('godo:customers'); if(cs && cs.value) customers = JSON.parse(cs.value); }catch(e){}
   try{ const li = await stGet('godo:lastImport'); if(li && li.value) lastImport = JSON.parse(li.value); }catch(e){}
   try{ const ps = await stGet('godo:products'); if(ps && ps.value) products = JSON.parse(ps.value); }catch(e){}
+  try{ const sm = await stGet('godo:stock-moves'); if(sm && sm.value) stockMoves = JSON.parse(sm.value); }catch(e){}
+  try{ const ls = await stGet('godo:last-stock-import'); if(ls && ls.value) lastStockImport = JSON.parse(ls.value); }catch(e){}
   try{ const sp = await stGet('godo:suppliers'); if(sp && sp.value) suppliers = JSON.parse(sp.value); }catch(e){}
   try{ const idx = await stGet('godo:quotes-index'); if(idx && idx.value) quotesIndex = JSON.parse(idx.value); }catch(e){}
   try{ const pidx = await stGet('godo:proposals-index'); if(pidx && pidx.value) proposalsIndex = JSON.parse(pidx.value); }catch(e){}
@@ -1095,7 +1097,7 @@ function scheduleProposalSave(){ clearTimeout(saveTimer); saveTimer = setTimeout
 
 /* ---------------- BACKUP: EXPORT / IMPORT ---------------- */
 async function exportBackup(){
-  const data = { exportedAt: new Date().toISOString(), company, customers, products, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
+  const data = { exportedAt: new Date().toISOString(), company, customers, products, stockMoves, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
   for(const q of quotesIndex){
     const r = await stGet('godo:quote:'+q.id);
     if(r && r.value){ try{ data.quotes[q.id] = JSON.parse(r.value); }catch(e){} }
@@ -1120,6 +1122,7 @@ function importBackupFile(file){
     if(data.company) company = data.company;
     if(data.customers) customers = data.customers;
     if(data.products) products = data.products;
+    if(data.stockMoves) stockMoves = data.stockMoves;
     if(data.suppliers) suppliers = data.suppliers;
     if(data.quotesIndex) quotesIndex = data.quotesIndex;
     if(data.proposalsIndex) proposalsIndex = data.proposalsIndex;
@@ -1128,7 +1131,7 @@ function importBackupFile(file){
     if(data.termTemplates) termTemplates = data.termTemplates;
     if(data.docTemplates) docTemplates = data.docTemplates;
     if(data.defaultTemplate) defaultTemplate = data.defaultTemplate;
-    await saveCompany(); await saveCustomers(); await saveProducts(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
+    await saveCompany(); await saveCustomers(); await saveProducts(); await saveStockMoves(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
     if(data.quotes){ for(const id in data.quotes){ await stSet('godo:quote:'+id, JSON.stringify(data.quotes[id])); } }
     if(data.proposals){ for(const id in data.proposals){ await stSet('godo:proposal:'+id, JSON.stringify(data.proposals[id])); } }
     alert('Yedek başarıyla yüklendi.');
@@ -1311,6 +1314,7 @@ function renderSidebarPrimaryNav(){
       <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler</div>
       <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
       <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
+      <div class="tab ${activeTab==='stock'?'active':''}" data-tab="stock">Stok</div>
       <div class="tab ${activeTab==='suppliers'||activeTab==='supplierDetail'?'active':''}" data-tab="suppliers">Tedarikçiler</div>
       <div class="tab ${activeTab==='reports'?'active':''}" data-tab="reports">Raporlar</div>
       <div class="tab ${settingsActive?'active':''}" data-tab="${settingsTarget}" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;">Ayarlar</div>
@@ -1365,6 +1369,7 @@ function render(){
   if(activeTab==='dashboard'){
     c.innerHTML = renderDashboard();
     ensureReportsData().then(data=>{ if(activeTab==='dashboard'){ const el=document.getElementById('dashProfitKPIs'); if(el) el.innerHTML = renderDashProfitKPIs(data); } });
+    fillStockAlerts();
   }
   else if(activeTab==='list') c.innerHTML = renderQuotesList();
   else if(activeTab==='proposalsList') c.innerHTML = renderProposalsList();
@@ -1383,6 +1388,7 @@ function render(){
   else if(activeTab==='customerDetail') c.innerHTML = renderCustomerDetail();
   else if(activeTab==='customers') c.innerHTML = renderCustomersPage();
   else if(activeTab==='products') c.innerHTML = renderProductsPage();
+  else if(activeTab==='stock') c.innerHTML = renderStockShell();
   else if(activeTab==='suppliers') c.innerHTML = renderSuppliersPage();
   else if(activeTab==='supplierDetail') c.innerHTML = renderSupplierDetail();
   else if(activeTab==='settingsCompany') c.innerHTML = renderSettingsCompany();
@@ -1448,6 +1454,8 @@ function renderDashboard(){
       <div class="kpi-card"><div class="kpi-label">Kârlılık Oranı</div><div class="kpi-value">…</div><div class="kpi-sub">Hesaplanıyor</div></div>
       <div class="kpi-card"><div class="kpi-label">Kârlılık Tutarı</div><div class="kpi-value">…</div><div class="kpi-sub">Hesaplanıyor</div></div>
     </div>
+
+    <div id="stockAlertsWidget"></div>
 
     ${duePayments.length ? `
     <div class="subhead" style="margin-top:0;">Vadesi Yaklaşan / Geçen Ödemeler</div>
@@ -2035,6 +2043,452 @@ function renderProposalPreview(){
       </div>
     </div>
   </div>`;
+}
+
+/* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
+let stockMoves = [];
+let lastStockImport = null;
+let stockSearch = '';
+let stockOnlyAlerts = false;
+let stockReservedCache = null;      // { at, map }
+const STOCK_TYPE_LABEL = { acilis:'Açılış', giris:'Giriş', cikis:'Çıkış', sayim:'Sayım düzeltme' };
+const STOCK_HEADER_RULES = [
+  [/^(urunkodu|stokkodu|malzemekodu|kod|code|sku|partno|partnumber|mlfb|urunno|referans)$/, 'code'],
+  [/^(miktar|adet|stok|stokmiktari|stokadedi|quantity|qty|acilisstoku|bakiye|mevcut)$/, 'qty'],
+  [/^(birimmaliyet|maliyet|alisfiyati|alisbirimfiyati|birimfiyat|cost|unitcost|unitprice|price|fiyat)$/, 'cost'],
+  [/^(parabirimi|doviz|currency|pb|para)$/, 'currency'],
+  [/^(minimum|minstok|minimumstok|minseviye|min|minimumseviye|emniyetstogu)$/, 'min'],
+  [/^(aciklama|description|desc|urunadi|urunaciklamasi|ad|tanim)$/, 'desc']
+];
+const STOCK_FIELDS = [{key:'code',label:'Ürün Kodu'},{key:'qty',label:'Miktar'},{key:'cost',label:'Birim Maliyet'},{key:'currency',label:'Para Birimi'},{key:'min',label:'Minimum Stok'},{key:'desc',label:'Açıklama'}];
+
+async function saveStockMoves(){ await stSet('godo:stock-moves', JSON.stringify(stockMoves)); }
+function parseQty(s){
+  let t = String(s==null?'':s).trim();
+  if(!t) return NaN;
+  if(/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g,'');     // 1.000 → 1000 (Türkçe binlik)
+  const n = parseFloat(parseTRNumber(t));
+  return isNaN(n) ? NaN : n;
+}
+function normCurrency(s, fallback){
+  const k = foldKey(s);
+  if(['eur','euro','e'].includes(k) || String(s).includes('€')) return '€';
+  if(['usd','dolar','dollar'].includes(k) || String(s).includes('$')) return '$';
+  if(['try','tl','trl','lira'].includes(k) || String(s).includes('₺')) return '₺';
+  return fallback || '€';
+}
+function fmtQty(n){ return (Math.round((Number(n)||0)*100)/100).toLocaleString('tr-TR'); }
+function productCodeMap(){
+  const m = new Map();
+  products.forEach(p=>{ const k = foldTR((p.code||'').trim()); if(k && !m.has(k)) m.set(k, p); });
+  return m;
+}
+function isStockTracked(p){ return stockMoves.some(m=>m.productId===p.id) || (parseFloat(p.minStock)||0) > 0; }
+
+// FIFO: girişler katman olur, çıkışlar en eski katmandan düşer; stok eksiye inerse açık kalır
+function fifoState(productId){
+  const moves = stockMoves.filter(m=>m.productId===productId).slice().sort((a,b)=>
+    (a.date||'').localeCompare(b.date||'') || (a.createdAt||'').localeCompare(b.createdAt||''));
+  const layers = []; let shortage = 0;
+  moves.forEach(m=>{
+    let q = Number(m.qty)||0;
+    if(q > 0){
+      if(shortage > 0){ const used = Math.min(shortage, q); shortage -= used; q -= used; }
+      if(q > 0) layers.push({ qty:q, unitCost:Number(m.unitCost)||0, currency:m.currency||'€' });
+    } else if(q < 0){
+      let need = -q;
+      while(need > 1e-9 && layers.length){
+        const L = layers[0]; const take = Math.min(L.qty, need);
+        L.qty -= take; need -= take;
+        if(L.qty <= 1e-9) layers.shift();
+      }
+      if(need > 1e-9) shortage += need;
+    }
+  });
+  const onHand = layers.reduce((s,l)=>s+l.qty,0) - shortage;
+  const value = {};
+  layers.forEach(l=>{ value[l.currency] = (value[l.currency]||0) + l.qty*l.unitCost; });
+  return { onHand, value, layers, shortage };
+}
+function valueText(valueByCur){
+  const parts = Object.entries(valueByCur).filter(([,v])=>Math.abs(v)>0.005).map(([c,v])=>c+' '+fmt(v));
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+// Rezerve: siparişe dönüşmüş, henüz sevk edilmemiş siparişlerin kalem miktarları
+async function computeReservedMap(force){
+  if(!force && stockReservedCache && Date.now()-stockReservedCache.at < 30000) return stockReservedCache.map;
+  const map = {};
+  const codes = productCodeMap();
+  const open = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü' && !['Sevk Edildi','Teslim Edildi'].includes(q.orderStatus));
+  for(const q of open){
+    const r = await stGet('godo:quote:'+q.id);
+    if(!r || !r.value) continue;
+    let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
+    (full.items||[]).forEach(it=>{
+      const p = (it.productId && products.find(x=>x.id===it.productId)) || codes.get(foldTR((it.code||'').trim()));
+      if(p) map[p.id] = (map[p.id]||0) + (parseFloat(it.qty)||0);
+    });
+  }
+  stockReservedCache = { at: Date.now(), map };
+  return map;
+}
+function stockRows(reserved){
+  return products.filter(isStockTracked).map(p=>{
+    const st = fifoState(p.id);
+    const res = reserved ? (reserved[p.id]||0) : null;
+    const free = res===null ? null : st.onHand - res;
+    const min = parseFloat(p.minStock)||0;
+    const level = free===null ? st.onHand : free;
+    return { p, st, res, free, min, alert: min>0 && level < min };
+  }).sort((a,b)=> (b.alert-a.alert) || (a.p.code||'').localeCompare(b.p.code||'','tr'));
+}
+
+/* ---- Stok sayfası ---- */
+function renderStockShell(){
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <div class="subhead-row" style="margin-bottom:4px;">
+      <h2 style="margin:0;">Stok</h2>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="btnStockImport">Excel'den / Yapıştır ile Açılış Stoku</button>
+        <button class="btn btn-primary" id="btnStockEntry">+ Stok Kaydı</button>
+      </div>
+    </div>
+    <p class="hint">Stok ürün koduna göre tutulur ve FIFO ile değerlenir. Giriş/çıkış hareketleri resmi irsaliyeyle devreye girecek; şimdilik açılış stoku ve sayım düzeltmesi girilir.
+      ${lastStockImport ? `<button class="link-btn" id="btnStockUndo" style="margin-left:8px;">Son içe aktarmayı geri al (${formatDate(lastStockImport.at.slice(0,10))} · ${lastStockImport.moveIds.length} kayıt)</button>` : ''}</p>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+      <div class="field" style="max-width:320px;margin:0;"><input id="stockSearch" placeholder="Ürün kodu veya açıklama ara..." value="${escapeAttr(stockSearch)}"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin:0;"><input type="checkbox" id="stockOnlyAlerts" ${stockOnlyAlerts?'checked':''}> Sadece minimum altı</label>
+    </div>
+    <div id="stockBody">${renderStockBody(null)}</div>
+  </div>`;
+}
+function renderStockBody(reserved){
+  let rows = stockRows(reserved);
+  const totalValue = {}; rows.forEach(r=>Object.entries(r.st.value).forEach(([c,v])=>{ totalValue[c]=(totalValue[c]||0)+v; }));
+  const alertCount = rows.filter(r=>r.alert).length;
+  if(stockSearch){ const s = foldTR(stockSearch.trim()); rows = rows.filter(r=>foldTR((r.p.code||'')+' '+(r.p.desc||'')).includes(s)); }
+  if(stockOnlyAlerts) rows = rows.filter(r=>r.alert);
+  const kpis = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin:0 0 20px;">
+      <div class="kpi-card"><div class="kpi-label">Takip Edilen Ürün</div><div class="kpi-value">${products.filter(isStockTracked).length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Minimum Altı</div><div class="kpi-value" style="color:${alertCount?'var(--danger)':'var(--ink)'};">${alertCount}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Stok Değeri (FIFO)</div><div class="kpi-value" style="font-size:18px;">${valueText(totalValue)}</div></div>
+    </div>`;
+  if(!products.some(isStockTracked)) return kpis + '<p class="hint">Henüz stok kaydı yok — "Açılış Stoku" ile ilk sayımı gir. İlk sayım açılış bakiyesi olur.</p>';
+  if(!rows.length) return kpis + '<p class="hint">Filtreyle eşleşen ürün yok.</p>';
+  return kpis + `
+    <table class="items-table">
+      <thead><tr><th>Ürün Kodu</th><th>Açıklama</th><th class="num">Stok</th><th class="num">Rezerve</th><th class="num">Serbest</th><th class="num">Min.</th><th class="num">Değer</th><th></th></tr></thead>
+      <tbody>${rows.map(r=>`
+        <tr style="${r.alert?'background:rgba(180,40,40,.05);':''}">
+          <td class="mono" style="font-size:12px;">${escapeHtml(r.p.code||'—')}</td>
+          <td style="font-size:12px;">${escapeHtml(r.p.desc||'')}</td>
+          <td class="num mono">${fmtQty(r.st.onHand)}</td>
+          <td class="num mono" style="color:var(--gray-500);">${r.res===null?'…':fmtQty(r.res)}</td>
+          <td class="num mono" style="font-weight:700;color:${r.alert?'var(--danger)':'var(--ink)'};">${r.free===null?'…':fmtQty(r.free)}</td>
+          <td class="num"><input class="stock-min mono" data-id="${r.p.id}" type="number" min="0" step="1" value="${escapeAttr(r.p.minStock||'')}" placeholder="—" style="width:64px;text-align:right;padding:4px 6px;font-size:12px;border:1px solid var(--hairline-strong);border-radius:3px;"></td>
+          <td class="num mono" style="font-size:11px;color:var(--gray-500);">${escapeHtml(valueText(r.st.value))}</td>
+          <td style="white-space:nowrap;"><span data-stock-moves="${r.p.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Hareketler</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${r_hasNegative(rows) ? '<p class="hint" style="margin-top:8px;color:var(--danger);">Bazı ürünlerde stok eksiye düşmüş görünüyor — sayım düzeltmesi gir.</p>' : ''}`;
+}
+function r_hasNegative(rows){ return rows.some(r=>r.st.onHand < -1e-9); }
+function refreshStockBody(){
+  const el = document.getElementById('stockBody'); if(!el) return;
+  el.innerHTML = renderStockBody(stockReservedCache ? stockReservedCache.map : null);
+  el.querySelectorAll('.stock-min').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const p = products.find(x=>x.id===inp.dataset.id); if(!p) return;
+      p.minStock = inp.value; await saveProducts(); refreshStockBody();
+    };
+  });
+  el.querySelectorAll('[data-stock-moves]').forEach(b=>{ b.onclick = ()=>openStockMovesModal(b.dataset.stockMoves); });
+}
+function attachStockHandlers(){
+  document.getElementById('btnStockImport').onclick = ()=>openStockImportModal();
+  document.getElementById('btnStockEntry').onclick = ()=>openStockEntryModal();
+  const undo = document.getElementById('btnStockUndo'); if(undo) undo.onclick = ()=>undoLastStockImport();
+  document.getElementById('stockSearch').oninput = e=>{ stockSearch = e.target.value; refreshStockBody(); };
+  document.getElementById('stockOnlyAlerts').onchange = e=>{ stockOnlyAlerts = e.target.checked; refreshStockBody(); };
+  refreshStockBody();
+  computeReservedMap(true).then(()=>{ if(activeTab==='stock') refreshStockBody(); });
+}
+
+/* ---- Pano uyarı kutusu ---- */
+async function fillStockAlerts(){
+  if(!products.some(isStockTracked)) return;
+  const reserved = await computeReservedMap();
+  const el = document.getElementById('stockAlertsWidget'); if(!el) return;
+  const alerts = stockRows(reserved).filter(r=>r.alert).slice(0,6);
+  if(!alerts.length){ el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="subhead" style="margin-top:0;">Stok Uyarıları</div>
+    <div style="margin-bottom:28px;">
+      ${alerts.map(r=>`
+        <div class="dash-quote-row stock-alert-row" style="padding:10px 4px;">
+          <div><div class="dqr-cust mono" style="font-size:12.5px;">${escapeHtml(r.p.code||'—')}</div><div class="dqr-meta">${escapeHtml(r.p.desc||'')}</div></div>
+          <div style="text-align:right;"><div class="mono" style="font-size:12px;color:var(--danger);">Serbest ${fmtQty(r.free)} / Min ${fmtQty(r.min)}</div></div>
+        </div>`).join('')}
+    </div>`;
+  el.querySelectorAll('.stock-alert-row').forEach(row=>{ row.onclick = ()=>{ activeTab='stock'; render(); }; });
+}
+
+/* ---- Hareket geçmişi ---- */
+function openStockMovesModal(productId){
+  const p = products.find(x=>x.id===productId); if(!p) return;
+  const old = document.getElementById('modalOverlay'); if(old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'modalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
+  const draw = ()=>{
+    const moves = stockMoves.filter(m=>m.productId===productId).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
+    const st = fifoState(productId);
+    overlay.innerHTML = `<div class="modal-box" style="width:760px;max-width:94vw;max-height:90vh;overflow-y:auto;">
+      <h2>${escapeHtml(p.code||'')} — Stok Hareketleri</h2>
+      <p class="hint">${escapeHtml(p.desc||'')} · Mevcut stok: <b>${fmtQty(st.onHand)}</b> · Değer: ${escapeHtml(valueText(st.value))}</p>
+      ${moves.length ? `<table class="items-table"><thead><tr><th>Tarih</th><th>Tür</th><th class="num">Miktar</th><th class="num">Birim Maliyet</th><th>Not / Kaynak</th><th></th></tr></thead><tbody>
+        ${moves.map(m=>`<tr>
+          <td class="mono" style="font-size:11.5px;">${formatDate(m.date)}</td>
+          <td style="font-size:12px;">${escapeHtml(STOCK_TYPE_LABEL[m.type]||m.type)}</td>
+          <td class="num mono" style="color:${m.qty<0?'var(--danger)':'var(--ink)'};">${m.qty>0?'+':''}${fmtQty(m.qty)}</td>
+          <td class="num mono" style="font-size:11.5px;">${m.qty>0 && m.unitCost ? escapeHtml((m.currency||'€')+' '+fmt(m.unitCost)) : '—'}</td>
+          <td style="font-size:11.5px;color:var(--gray-500);">${escapeHtml([m.srcDoc,m.note].filter(Boolean).join(' · '))}</td>
+          <td><span class="row-remove" data-del-move="${m.id}" title="Hareketi sil">✕</span></td></tr>`).join('')}
+      </tbody></table>` : '<p class="hint">Bu ürün için hareket yok.</p>'}
+      <div class="actions-row" style="margin-top:14px;"><button class="btn btn-ghost" id="sm-close">Kapat</button></div>
+    </div>`;
+    overlay.querySelector('#sm-close').onclick = ()=>{ overlay.remove(); };
+    overlay.querySelectorAll('[data-del-move]').forEach(b=>{
+      b.onclick = async ()=>{
+        if(!confirm('Bu stok hareketi silinsin mi?')) return;
+        stockMoves = stockMoves.filter(m=>m.id!==b.dataset.delMove);
+        await saveStockMoves(); stockReservedCache = null; draw(); if(activeTab==='stock') refreshStockBody();
+      };
+    });
+  };
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
+  draw();
+}
+
+/* ---- Tek tek stok kaydı: açılış stoku / sayım düzeltme ---- */
+function openStockEntryModal(preProductId){
+  const old = document.getElementById('modalOverlay'); if(old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'modalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
+  const pre = products.find(x=>x.id===preProductId);
+  overlay.innerHTML = `<div class="modal-box" style="width:560px;max-width:94vw;">
+    <h2>Stok Kaydı</h2>
+    <div class="field"><label>Tür</label><select id="se-type"><option value="acilis">Açılış stoku (ilk sayım)</option><option value="sayim">Sayım düzeltme</option></select></div>
+    <div class="field mono"><label>Ürün Kodu</label><input id="se-code" list="se-codes" autocomplete="off" value="${escapeAttr(pre?pre.code:'')}" placeholder="Kod yaz ya da seç">
+      <datalist id="se-codes">${products.slice(0,2000).map(p=>`<option value="${escapeAttr(p.code)}">${escapeHtml(p.code)} — ${escapeHtml(p.desc||'')}</option>`).join('')}</datalist>
+      <div class="hint" id="se-info" style="margin-top:4px;"></div></div>
+    <div class="grid3">
+      <div class="field mono"><label id="se-qty-label">Miktar</label><input id="se-qty" type="number" step="1" min="0"></div>
+      <div class="field mono"><label>Birim Maliyet</label><input id="se-cost" type="number" step="0.01" min="0" placeholder="opsiyonel"></div>
+      <div class="field"><label>Para Birimi</label><select id="se-cur"><option>€</option><option>$</option><option>₺</option></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Tarih</label><input id="se-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="field"><label id="se-note-label">Not (opsiyonel)</label><input id="se-note"></div>
+    </div>
+    <div class="actions-row" style="margin-top:6px;">
+      <button class="btn btn-primary" id="se-save">Kaydet</button>
+      <button class="btn btn-ghost" id="se-cancel">Vazgeç</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
+  const $ = id=>overlay.querySelector('#'+id);
+  const findP = ()=> productCodeMap().get(foldTR($('se-code').value.trim()));
+  function refreshInfo(){
+    const p = findP(), type = $('se-type').value;
+    $('se-qty-label').textContent = type==='sayim' ? 'Sayılan miktar' : 'Miktar';
+    $('se-note-label').textContent = type==='sayim' ? 'Not (zorunlu)' : 'Not (opsiyonel)';
+    if(!$('se-code').value.trim()){ $('se-info').textContent = ''; return; }
+    if(!p){ $('se-info').textContent = 'Bu kodla kayıtlı ürün yok — önce Ürünler\'e ekle.'; return; }
+    const st = fifoState(p.id);
+    const has = stockMoves.some(m=>m.productId===p.id);
+    if(type==='sayim'){
+      const counted = parseQty($('se-qty').value);
+      $('se-info').textContent = 'Sistemde: '+fmtQty(st.onHand)+(isNaN(counted)?'':' · Fark: '+((counted-st.onHand)>0?'+':'')+fmtQty(counted-st.onHand));
+    } else $('se-info').textContent = has ? 'Bu ürünün stok kaydı zaten var — "Sayım düzeltme" kullan.' : (p.desc||'');
+  }
+  ['se-type','se-code','se-qty'].forEach(id=>{ $(id).addEventListener('input', refreshInfo); $(id).addEventListener('change', refreshInfo); });
+  if(pre) refreshInfo();
+  $('se-cancel').onclick = ()=>overlay.remove();
+  $('se-save').onclick = async ()=>{
+    const p = findP(), type = $('se-type').value, date = $('se-date').value || new Date().toISOString().slice(0,10);
+    if(!p){ alert('Bu kodla kayıtlı ürün yok. Önce Ürünler sayfasına ekle.'); return; }
+    const qtyIn = parseQty($('se-qty').value);
+    if(isNaN(qtyIn) || qtyIn < 0){ alert('Geçerli bir miktar gir.'); return; }
+    const cost = parseFloat($('se-cost').value); const cur = $('se-cur').value;
+    const note = $('se-note').value.trim();
+    const st = fifoState(p.id);
+    let move;
+    if(type==='acilis'){
+      if(stockMoves.some(m=>m.productId===p.id)){ alert('Bu ürünün stok kaydı zaten var. Fark için "Sayım düzeltme" kullan.'); return; }
+      if(qtyIn <= 0){ alert('Açılış miktarı 0\'dan büyük olmalı.'); return; }
+      move = { type:'acilis', qty:qtyIn, unitCost: isNaN(cost)?0:cost, currency:cur };
+    } else {
+      const diff = qtyIn - st.onHand;
+      if(Math.abs(diff) < 1e-9){ alert('Sayılan miktar sistemdekiyle aynı, düzeltme gerekmiyor.'); return; }
+      if(!note){ alert('Sayım düzeltmesi için not zorunlu.'); return; }
+      const lastLayer = st.layers[st.layers.length-1];
+      move = { type:'sayim', qty:diff, unitCost: diff>0 ? (isNaN(cost) ? (lastLayer?lastLayer.unitCost:0) : cost) : 0, currency: diff>0 && isNaN(cost) && lastLayer ? lastLayer.currency : cur };
+    }
+    stockMoves.push(Object.assign({ id:crypto.randomUUID(), productId:p.id, code:p.code, date, srcDoc:'', note, createdAt:new Date().toISOString() }, move));
+    await saveStockMoves(); stockReservedCache = null;
+    overlay.remove(); render();
+  };
+}
+
+/* ---- Excel / Sheets'ten açılış stoku ---- */
+function guessStockMap(headers){
+  return headers.map(h=>{ const k = foldKey(h); for(const [re,f] of STOCK_HEADER_RULES){ if(re.test(k)) return f; } return 'skip'; });
+}
+function buildStockImportPlan(rows, map, opts){
+  const codes = productCodeMap(); const byCode = new Map(); let invalid = 0;
+  rows.forEach(cells=>{
+    const rec = {};
+    map.forEach((f,i)=>{ if(f && f!=='skip'){ const v = String(cells[i]==null?'':cells[i]).trim(); if(v && rec[f]===undefined) rec[f] = v; } });
+    const code = (rec.code||'').trim(); if(!code) return;
+    const qty = parseQty(rec.qty);
+    if(!(qty > 0)){ invalid++; return; }
+    const key = foldTR(code);
+    let e = byCode.get(key);
+    if(!e){ e = { code, desc:rec.desc||'', qty:0, costSum:0, costQty:0, min:'', currency:'' }; byCode.set(key, e); }
+    e.qty += qty;
+    const cost = parseQty(rec.cost);
+    if(cost > 0){ e.costSum += cost*qty; e.costQty += qty; e.currency = normCurrency(rec.currency||'', opts.currency); }
+    const mn = parseQty(rec.min); if(!isNaN(mn) && mn >= 0 && rec.min!==undefined) e.min = String(mn);
+  });
+  const entries = [];
+  byCode.forEach((e,key)=>{
+    e.unitCost = e.costQty > 0 ? e.costSum/e.costQty : 0;
+    if(!e.currency) e.currency = opts.currency || '€';
+    const p = codes.get(key);
+    e.product = p || null;
+    if(p) e.status = stockMoves.some(m=>m.productId===p.id) ? 'skip' : 'new';
+    else e.status = opts.createProducts ? 'create' : 'nomatch';
+    entries.push(e);
+  });
+  return { entries, invalid };
+}
+async function applyStockImportPlan(plan, opts){
+  const batchId = crypto.randomUUID(); const moveIds = [], productIds = [], minBefore = {};
+  let n = 0;
+  plan.entries.forEach(e=>{
+    if(e.status!=='new' && e.status!=='create') return;
+    let p = e.product;
+    if(!p){
+      p = Object.assign(emptyProduct(), { id:crypto.randomUUID(), code:e.code, desc:e.desc||'' });
+      products.push(p); productIds.push(p.id);
+    }
+    if(e.min!==''){ minBefore[p.id] = p.minStock||''; p.minStock = e.min; }
+    const m = { id:crypto.randomUUID(), productId:p.id, code:p.code, date:opts.date, type:'acilis', qty:e.qty, unitCost:e.unitCost, currency:e.currency, srcDoc:'', note:'', batchId, createdAt:new Date().toISOString() };
+    stockMoves.push(m); moveIds.push(m.id); n++;
+  });
+  await saveStockMoves(); await saveProducts();
+  lastStockImport = { id:batchId, at:new Date().toISOString(), moveIds, productIds, minBefore };
+  await stSet('godo:last-stock-import', JSON.stringify(lastStockImport));
+  stockReservedCache = null;
+  return { moves:n, createdProducts:productIds.length };
+}
+async function undoLastStockImport(){
+  if(!lastStockImport) return;
+  const li = lastStockImport;
+  if(!confirm(`Son açılış stoku içe aktarması geri alınsın mı?\n\n• ${li.moveIds.length} stok kaydı silinecek\n• ${li.productIds.length} yeni eklenen ürün silinecek`)) return;
+  const mv = new Set(li.moveIds), pr = new Set(li.productIds);
+  stockMoves = stockMoves.filter(m=>!mv.has(m.id));
+  products = products.filter(p=>!pr.has(p.id));
+  products.forEach(p=>{ if(li.minBefore && li.minBefore[p.id]!==undefined) p.minStock = li.minBefore[p.id]; });
+  await saveStockMoves(); await saveProducts();
+  lastStockImport = null; await stSet('godo:last-stock-import', ''); stockReservedCache = null;
+  render();
+}
+function openStockImportModal(){
+  const old = document.getElementById('modalOverlay'); if(old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'modalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
+  overlay.innerHTML = `<div class="modal-box" style="width:880px;max-width:96vw;max-height:92vh;overflow-y:auto;">
+    <h2>Açılış Stoku İçe Aktar</h2>
+    <p class="hint">Sayım listeni (Google Sheets / Excel) başlık satırıyla yapıştır ya da CSV seç. Sütunlar: <b>Ürün Kodu, Miktar</b>, opsiyonel <b>Birim Maliyet, Para Birimi, Minimum Stok, Açıklama</b>. Aynı kod birden çok satırdaysa miktarlar toplanır, maliyet ağırlıklı ortalama olur. Stok kaydı olan ürünler atlanır (fark için Sayım düzeltme).</p>
+    <div class="grid3">
+      <div class="field"><label>Açılış tarihi</label><input id="si-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="field"><label>Maliyet para birimi (dosyada yoksa)</label><select id="si-cur"><option>€</option><option>$</option><option>₺</option></select></div>
+      <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin-top:8px;"><input type="checkbox" id="si-create" checked> Katalogda olmayan kodları yeni ürün olarak ekle</label></div>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <label class="btn btn-ghost" style="cursor:pointer;margin:0;">CSV Dosyası Seç<input id="si-file" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none;"></label>
+      <span id="si-filename" class="hint" style="margin:0;">ya da aşağıya yapıştır</span>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin:0;"><input type="checkbox" id="si-header" checked> İlk satır başlık</label>
+    </div>
+    <textarea id="si-paste" rows="5" class="code-editor" style="width:100%;" placeholder="Ürün Kodu&#9;Miktar&#9;Birim Maliyet&#9;Minimum"></textarea>
+    <div id="si-summary" style="margin-top:12px;"></div>
+    <div id="si-sample" style="max-height:260px;overflow-y:auto;"></div>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="si-import" disabled>İçe Aktar</button>
+      <button class="btn btn-ghost" id="si-cancel">Vazgeç</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
+  const $ = id=>overlay.querySelector('#'+id);
+  let rawText = '', rows = [], map = [], plan = null, timer = null;
+  const STATUS = { new:['Yeni açılış','var(--ink)'], create:['Yeni ürün + açılış','var(--ink)'], skip:['Atlanacak — stok kaydı var','var(--gray-500)'], nomatch:['Katalogda yok — atlanacak','var(--danger)'] };
+  function update(){
+    plan = null; $('si-import').disabled = true; $('si-sample').innerHTML = '';
+    if(!rows.length){ $('si-summary').innerHTML = ''; return; }
+    if(!map.includes('code') || !map.includes('qty')){
+      $('si-summary').innerHTML = '<p class="hint" style="color:var(--danger);">Başlıkta "Ürün Kodu" ve "Miktar" sütunu bulunamadı. Sütun adlarını kontrol et.</p>'; return;
+    }
+    plan = buildStockImportPlan(rows, map, { currency:$('si-cur').value, createProducts:$('si-create').checked });
+    const c = {new:0,create:0,skip:0,nomatch:0}; plan.entries.forEach(e=>c[e.status]++);
+    const willDo = c.new + c.create;
+    $('si-summary').innerHTML = `<div style="font-size:13px;line-height:1.7;"><b>${plan.entries.length}</b> ürün kodu → <b>${willDo}</b> açılış kaydı yapılacak
+      (${c.new} mevcut ürün, ${c.create} yeni ürün) · ${c.skip} atlanacak (stok kaydı var) · ${c.nomatch} katalogda yok
+      ${plan.invalid ? `<br><span style="color:var(--danger);">${plan.invalid} satır miktar eksik/geçersiz olduğu için atlandı.</span>` : ''}</div>`;
+    $('si-sample').innerHTML = `<table class="items-table" style="margin-top:8px;"><thead><tr><th>Kod</th><th class="num">Miktar</th><th class="num">Birim maliyet</th><th class="num">Min.</th><th>Durum</th></tr></thead><tbody>
+      ${plan.entries.slice(0,40).map(e=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(e.code)}</td><td class="num mono">${fmtQty(e.qty)}</td>
+        <td class="num mono" style="font-size:11.5px;">${e.unitCost?escapeHtml(e.currency+' '+fmt(e.unitCost)):'—'}</td><td class="num mono">${e.min!==''?escapeHtml(e.min):'—'}</td>
+        <td style="font-size:11.5px;color:${STATUS[e.status][1]};">${STATUS[e.status][0]}</td></tr>`).join('')}
+      </tbody></table>${plan.entries.length>40?`<p class="hint" style="margin-top:6px;">…ve ${plan.entries.length-40} ürün daha.</p>`:''}`;
+    $('si-import').disabled = willDo === 0;
+  }
+  function recompute(){
+    if(!rawText.trim()){ rows = []; map = []; update(); return; }
+    const parsed = parseDelimited(rawText, detectDelimiter(rawText));
+    const hasHeader = $('si-header').checked;
+    map = hasHeader ? guessStockMap(parsed[0]||[]) : (parsed[0]||[]).map((_,i)=>['code','qty','cost','min'][i]||'skip');
+    rows = hasHeader ? parsed.slice(1) : parsed;
+    update();
+  }
+  $('si-paste').oninput = e=>{ rawText = e.target.value; $('si-filename').textContent = 'ya da aşağıya yapıştır'; clearTimeout(timer); timer = setTimeout(recompute, 250); };
+  $('si-header').onchange = recompute; $('si-cur').onchange = update; $('si-create').onchange = update;
+  $('si-file').onchange = async e=>{
+    const f = e.target.files && e.target.files[0]; if(!f) return;
+    try{
+      rawText = await readImportFile(f);
+      $('si-filename').textContent = f.name+' ('+Math.round(f.size/1024)+' KB)';
+      $('si-paste').value = rawText.length < 200000 ? rawText : '';
+      recompute();
+    }catch(err){ alert('Dosya okunamadı: '+err.message); }
+  };
+  $('si-cancel').onclick = ()=>overlay.remove();
+  $('si-import').onclick = async ()=>{
+    if(!plan) return;
+    const btn = $('si-import'); btn.disabled = true; btn.textContent = 'Aktarılıyor…';
+    const res = await applyStockImportPlan(plan, { date: $('si-date').value || new Date().toISOString().slice(0,10) });
+    overlay.remove(); render();
+    alert(`Açılış stoku tamam:\n• ${res.moves} ürün için açılış kaydı\n• ${res.createdProducts} yeni ürün katalogda oluşturuldu\n\nYanlışsa Stok sayfasındaki "Son içe aktarmayı geri al" bağlantısını kullanabilirsin.`);
+  };
 }
 
 /* ---------------- FİRMA ADI BÜYÜK HARF + CARİ ARAMA KUTUSU ---------------- */
@@ -3374,6 +3828,8 @@ function attachHandlers(){
     };
   }
 
+  if(activeTab==='stock') attachStockHandlers();
+
   if(activeTab==='customers'){
     const s = document.getElementById('custSearch');
     s.oninput = e=>{ customerSearch=e.target.value; customerListLimit=100; render(); const el=document.getElementById('custSearch'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } };
@@ -4696,6 +5152,7 @@ function productEditHtml(){
     <div class="field"><label>Açıklama</label><input id="pr-desc" value="${escapeAttr(p.desc)}"></div>
     <div class="field"><label>Varsayılan Teslim Süresi</label><input id="pr-delivery" value="${escapeAttr(p.delivery)}" placeholder="Stoktan / 6 hafta"></div>
     <div class="field"><label>Kategori</label><input id="pr-category" value="${escapeAttr(p.category||'')}" placeholder="ör. PLC, Sürücü, HMI"></div>
+    <div class="field mono" style="max-width:220px;"><label>Minimum Stok</label><input id="pr-minstock" type="number" min="0" step="1" value="${escapeAttr(p.minStock||'')}" placeholder="boşsa stok takibi yok"></div>
     <div class="field"><label>Tedarikçi</label>
       <select id="pr-supplier"><option value="">— Seçilmedi —</option>${suppliers.map(sp=>`<option value="${sp.id}" ${p.supplierId===sp.id?'selected':''}>${escapeHtml(sp.name)}</option>`).join('')}</select>
     </div>
@@ -4716,6 +5173,7 @@ function attachProductEditHandlers(overlay){
   overlay.querySelector('#pr-desc').oninput = e=>p.desc=e.target.value;
   overlay.querySelector('#pr-delivery').oninput = e=>p.delivery=e.target.value;
   overlay.querySelector('#pr-category').oninput = e=>p.category=e.target.value;
+  overlay.querySelector('#pr-minstock').oninput = e=>p.minStock=e.target.value;
   overlay.querySelector('#pr-supplier').onchange = e=>p.supplierId=e.target.value;
   overlay.querySelector('#pr-list').oninput = e=>p.listPrice=e.target.value;
   overlay.querySelector('#pr-buydisc').oninput = e=>p.buyDiscount=e.target.value;
