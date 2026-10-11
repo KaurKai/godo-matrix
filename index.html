@@ -2044,7 +2044,7 @@ function emptyPO(){
   return { id:null, poNo:'', date:new Date().toISOString().slice(0,10), supplierId:'', status:'Taslak', currency:'€', paymentTermDays:'', lang:'tr',
            salesOrderId:'', salesOrderNo:'', salesOrderCustomer:'', notes:'', items:[] };
 }
-function blankPoItem(){ return { id:crypto.randomUUID(), productId:null, code:'', desc:'', qty:'1', unitCost:'', quoteItemId:'' }; }
+function blankPoItem(){ return { id:crypto.randomUUID(), productId:null, code:'', desc:'', qty:'1', unitCost:'', listPrice:'', buyDiscount:'', salePrice:'', saleDiscount:'', quoteItemId:'' }; }
 async function savePurchaseOrders(){ await stSet('godo:purchase-orders', JSON.stringify(purchaseOrders)); }
 function nextPoNo(){
   const year = new Date().getFullYear();
@@ -2072,6 +2072,19 @@ function actualCostForQuoteItem(quoteId, itemId, currency){
 }
 
 /* ---- Siparişten SAS oluşturma ---- */
+// Fiyat yardımcıları: liste fiyatı sabitken alış iskontosu ↔ alış birim fiyatı çift yönlü (teklif ekranıyla aynı mantık)
+function poCalcCost(list, bd){ const lp = parseFloat(list), d = parseFloat(bd); return (lp > 0 && !isNaN(d)) ? Math.round(lp*(1-d/100)*100)/100 : null; }
+function poCalcDisc(list, cost){ const lp = parseFloat(list), c = parseFloat(cost); return (lp > 0 && !isNaN(c)) ? Math.round((1 - c/lp)*10000)/100 : null; }
+function poMarginPct(sale, cost){ const s = parseFloat(sale), c = parseFloat(cost); return (s > 0 && !isNaN(c) && String(cost)!=='') ? ((s-c)/s)*100 : null; }   // satış fiyatı üzerinden, tekliftekiyle aynı
+function poNum(v){ return v==null ? '' : String(v); }
+// Teklif kaleminden (yoksa ürün kartından) liste fiyatı ve alış iskontosu; satış bilgisi yalnızca referans
+function poPriceInfo(it, p){
+  let list = '', bd = '';
+  if(it.useCalc && parseFloat(it.listPrice) > 0){ list = poNum(it.listPrice); if(it.buyDiscount!=='' && it.buyDiscount!=null) bd = poNum(it.buyDiscount); }
+  else if(p && parseFloat(p.listPrice) > 0){ list = poNum(p.listPrice); }
+  if(list && bd==='' && p && p.buyDiscount!=='' && p.buyDiscount!=null) bd = poNum(p.buyDiscount);
+  return { listPrice:list, buyDiscount:bd, salePrice:String(round2(lineUnitPrice(it))), saleDiscount: (it.useCalc && it.discount!=='' && it.discount!=null) ? poNum(it.discount) : '' };
+}
 async function buildPoPlanFromOrder(quoteId){
   const r = await stGet('godo:quote:'+quoteId);
   if(!r || !r.value) return null;
@@ -2086,10 +2099,8 @@ async function buildPoPlanFromOrder(quoteId){
     const p = (it.productId && products.find(x=>x.id===it.productId)) || codes.get(foldTR((it.code||'').trim()));
     const remaining = (parseFloat(it.qty)||0) - (ordered[it.id]||0);
     if(remaining <= 1e-9) return;
-    let cost = lineBuyPrice(it);
-    if(cost===null && p && parseFloat(p.listPrice)>0 && p.buyDiscount!=='' && p.buyDiscount!==undefined) cost = parseFloat(p.listPrice)*(1-(parseFloat(p.buyDiscount)||0)/100);
-    lines.push({ quoteItemId:it.id, productId:p?p.id:(it.productId||null), code:it.code||'', desc:it.desc||'', qty:remaining,
-      unitCost: cost===null ? '' : String(Math.round(cost*100)/100) });
+    const info = poPriceInfo(it, p), c = (info.listPrice && info.buyDiscount!=='') ? poCalcCost(info.listPrice, info.buyDiscount) : null;
+    lines.push(Object.assign({ quoteItemId:it.id, productId:p?p.id:(it.productId||null), code:it.code||'', desc:it.desc||'', qty:remaining, unitCost: c===null ? '' : String(c) }, info));
   });
   return { full, currency: full.currency||'€', lines };
 }
@@ -2104,21 +2115,29 @@ async function openPoFromOrderModal(quoteId){
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
   const full = plan.full, cur = plan.currency;
   const supOptions = suppliers.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr')).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-  overlay.innerHTML = `<div class="modal-box" style="width:960px;max-width:96vw;max-height:92vh;overflow-y:auto;">
+  const numIn = (cls, val, w, ph)=>`<input class="${cls} mono" type="number" min="0" step="0.01" value="${escapeAttr(val)}" ${ph?`placeholder="${ph}"`:''} style="width:${w}px;text-align:right;font-size:12px;">`;
+  overlay.innerHTML = `<div class="modal-box" style="width:1260px;max-width:98vw;max-height:92vh;overflow-y:auto;">
     <h2>Satın Alma Siparişi Oluştur</h2>
-    <p class="hint"><b>${escapeHtml(full.quoteNo||'')}</b> · ${escapeHtml(upperCompanyName(full.customer.name||''))}. Her kalem için tedarikçiyi seç; aynı tedarikçiye giden kalemler tek SAS'ta toplanır. Alınmayacak kalemin (stoktan karşılanan gibi) işaretini kaldır. Birim maliyet tekliftek alış iskontosundan gelir, düzeltebilirsin.</p>
+    <p class="hint"><b>${escapeHtml(full.quoteNo||'')}</b> · ${escapeHtml(upperCompanyName(full.customer.name||''))}. Liste fiyatı ve alış iskontosu tekliften gelir. Tedarikçiyle yeniden pazarlık yaptıysan <b>alış iskontosunu</b> ya da <b>alış birim fiyatını</b> değiştir: biri değişince diğeri hesaplanır (liste fiyatı sabit kalır). Satış sütunları yalnızca bilgi içindir. Aynı tedarikçiye giden kalemler tek SAS'ta toplanır.</p>
     <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px;">
       <label style="font-size:12px;font-weight:700;color:var(--gray-500);margin:0;">Tüm kalemler için tedarikçi:</label>
       <select id="pl-bulk" style="padding:6px 8px;font-size:12px;min-width:240px;"><option value="">— Seç —</option>${supOptions}</select>
     </div>
-    <table class="items-table"><thead><tr><th style="width:28px;"></th><th>Ürün Kodu</th><th>Açıklama</th><th class="num" style="width:80px;">Adet</th><th class="num" style="width:120px;">Birim Maliyet (${escapeHtml(cur)})</th><th style="width:230px;">Tedarikçi</th></tr></thead><tbody>
+    <table class="items-table"><thead><tr><th style="width:26px;"></th><th>Ürün</th><th class="num">Adet</th><th class="num">Liste Fiyatı</th><th class="num">Alış İsk. %</th><th class="num">Alış Birim Fiyatı (${escapeHtml(cur)})</th>
+      <th class="num" style="color:var(--gray-500);">Satış İsk. %</th><th class="num" style="color:var(--gray-500);">Satış Birim Fiyatı</th><th class="num">Kâr %</th><th style="width:210px;">Tedarikçi</th></tr></thead><tbody>
       ${plan.lines.map((l,i)=>`<tr data-i="${i}">
         <td><input type="checkbox" class="pl-on" checked></td>
-        <td class="mono" style="font-size:12px;">${escapeHtml(l.code)}</td><td style="font-size:12px;">${escapeHtml(l.desc)}</td>
-        <td class="num"><input class="pl-qty mono" type="number" min="0" step="1" value="${escapeAttr(String(l.qty))}" style="width:70px;text-align:right;font-size:12px;"></td>
-        <td class="num"><input class="pl-cost mono" type="number" min="0" step="0.01" value="${escapeAttr(String(l.unitCost))}" placeholder="girilmedi" style="width:100px;text-align:right;font-size:12px;${l.unitCost===''?'border-color:var(--danger);':''}"></td>
+        <td><div class="mono" style="font-size:12px;">${escapeHtml(l.code)}</div><div style="font-size:11px;color:var(--gray-500);max-width:240px;">${escapeHtml(l.desc)}</div></td>
+        <td class="num">${numIn('pl-qty', String(l.qty), 62)}</td>
+        <td class="num">${numIn('pl-list', l.listPrice, 92)}</td>
+        <td class="num">${numIn('pl-bd', l.buyDiscount, 70)}</td>
+        <td class="num">${numIn('pl-cost', l.unitCost, 96, 'girilmedi')}</td>
+        <td class="num mono" style="font-size:12px;color:var(--gray-500);">${l.saleDiscount!==''?escapeHtml(l.saleDiscount)+' %':'—'}</td>
+        <td class="num mono" style="font-size:12px;color:var(--gray-500);">${escapeHtml(cur)} ${fmt(parseFloat(l.salePrice)||0)}</td>
+        <td class="num mono pl-margin" style="font-size:12px;font-weight:700;">—</td>
         <td><select class="pl-sup" style="width:100%;padding:5px 6px;font-size:12px;"><option value="">— Seç —</option>${supOptions}</select></td></tr>`).join('')}
     </tbody></table>
+    <div id="pl-sum" style="margin-top:12px;font-size:12.5px;background:var(--paper-2);padding:10px 14px;border-radius:4px;"></div>
     <div class="actions-row" style="margin-top:18px;">
       <button class="btn btn-primary" id="pg-create">SAS Oluştur</button>
       <button class="btn btn-ghost" id="pg-cancel">Vazgeç</button>
@@ -2127,19 +2146,42 @@ async function openPoFromOrderModal(quoteId){
   document.body.appendChild(overlay);
   overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#pg-cancel').onclick = ()=>overlay.remove();
+  const rows = [...overlay.querySelectorAll('tbody tr')], q = (tr,sel)=>tr.querySelector(sel);
+  const refresh = ()=>{
+    let buy = 0, sell = 0;
+    rows.forEach(tr=>{
+      const l = plan.lines[+tr.dataset.i], cost = q(tr,'.pl-cost').value, m = poMarginPct(l.salePrice, cost), el = q(tr,'.pl-margin');
+      el.textContent = m===null ? '—' : m.toFixed(1)+' %'; el.style.color = (m!==null && m<0) ? 'var(--danger)' : '';
+      q(tr,'.pl-cost').style.borderColor = cost==='' ? 'var(--danger)' : '';
+      if(q(tr,'.pl-on').checked){ const qty = parseFloat(q(tr,'.pl-qty').value)||0; buy += qty*(parseFloat(cost)||0); sell += qty*(parseFloat(l.salePrice)||0); }
+    });
+    const profit = sell - buy;
+    overlay.querySelector('#pl-sum').innerHTML = `İşaretli kalemler: toplam alış <b class="mono">${cur} ${fmt(buy)}</b> · satış tutarı <b class="mono">${cur} ${fmt(sell)}</b> · kâr <b class="mono" style="${profit<0?'color:var(--danger);':''}">${cur} ${fmt(profit)}</b>${sell>0?' (%'+((profit/sell)*100).toFixed(1)+')':''}`;
+  };
+  rows.forEach(tr=>{
+    q(tr,'.pl-list').oninput = ()=>{
+      const list = q(tr,'.pl-list').value;
+      if(q(tr,'.pl-bd').value!==''){ const c = poCalcCost(list, q(tr,'.pl-bd').value); if(c!==null) q(tr,'.pl-cost').value = c; }
+      else { const d = poCalcDisc(list, q(tr,'.pl-cost').value); if(d!==null) q(tr,'.pl-bd').value = d; }
+      refresh();
+    };
+    q(tr,'.pl-bd').oninput = ()=>{ const c = poCalcCost(q(tr,'.pl-list').value, q(tr,'.pl-bd').value); if(c!==null) q(tr,'.pl-cost').value = c; refresh(); };
+    q(tr,'.pl-cost').oninput = ()=>{ const d = poCalcDisc(q(tr,'.pl-list').value, q(tr,'.pl-cost').value); if(d!==null) q(tr,'.pl-bd').value = d; refresh(); };
+    q(tr,'.pl-qty').oninput = refresh; q(tr,'.pl-on').onchange = refresh;
+  });
+  refresh();
   overlay.querySelector('#pl-bulk').onchange = e=>{ if(e.target.value) overlay.querySelectorAll('.pl-sup').forEach(s=>s.value = e.target.value); };
   overlay.querySelector('#pg-create').onclick = async ()=>{
     const bySupplier = new Map();
-    const rows = [...overlay.querySelectorAll('tbody tr')];
     for(const tr of rows){
-      if(!tr.querySelector('.pl-on').checked) continue;
+      if(!q(tr,'.pl-on').checked) continue;
       const l = plan.lines[+tr.dataset.i];
-      const sid = tr.querySelector('.pl-sup').value;
-      const qty = parseFloat(tr.querySelector('.pl-qty').value);
+      const sid = q(tr,'.pl-sup').value, qty = parseFloat(q(tr,'.pl-qty').value);
       if(!sid){ alert('İşaretli her kalem için bir tedarikçi seç ya da kalemin işaretini kaldır.'); return; }
       if(!(qty > 0)){ alert('Adet 0\'dan büyük olmalı: '+l.code); return; }
       if(!bySupplier.has(sid)) bySupplier.set(sid, []);
-      bySupplier.get(sid).push({ id:crypto.randomUUID(), productId:l.productId, code:l.code, desc:l.desc, qty:String(qty), unitCost:tr.querySelector('.pl-cost').value, quoteItemId:l.quoteItemId });
+      bySupplier.get(sid).push({ id:crypto.randomUUID(), productId:l.productId, code:l.code, desc:l.desc, qty:String(qty), unitCost:q(tr,'.pl-cost').value,
+        listPrice:q(tr,'.pl-list').value, buyDiscount:q(tr,'.pl-bd').value, salePrice:l.salePrice, saleDiscount:l.saleDiscount, quoteItemId:l.quoteItemId });
     }
     if(!bySupplier.size){ alert('Oluşturulacak kalem seçilmedi.'); return; }
     const created = [];
@@ -2225,10 +2267,28 @@ function attachPurchaseHandlers(){
     };
   });
 }
+async function enrichPoFromOrder(po){
+  if(!po.salesOrderId) return false;
+  const need = po.items.some(it=>it.quoteItemId && (it.salePrice===undefined || it.listPrice===undefined));
+  if(!need) return false;
+  const r = await stGet('godo:quote:'+po.salesOrderId); if(!(r && r.value)) return false;
+  let full; try{ full = JSON.parse(r.value); }catch(e){ return false; }
+  const codes = productCodeMap(); let changed = false;
+  po.items.forEach(it=>{
+    if(!it.quoteItemId || (it.salePrice!==undefined && it.listPrice!==undefined)) return;
+    const qi = (full.items||[]).find(x=>x.id===it.quoteItemId); if(!qi) return;
+    const p = (qi.productId && products.find(x=>x.id===qi.productId)) || codes.get(foldTR((qi.code||'').trim())), info = poPriceInfo(qi, p);
+    it.salePrice = info.salePrice; it.saleDiscount = info.saleDiscount; it.listPrice = info.listPrice; it.buyDiscount = info.buyDiscount;
+    if(it.listPrice!=='' && poNum(it.unitCost)!==''){ const d = poCalcDisc(it.listPrice, it.unitCost); if(d!==null) it.buyDiscount = String(d); }   // kayıtlı alış fiyatı esastır (pazarlık sonrası değişmiş olabilir); iskonto ona göre hesaplanır
+    changed = true;
+  });
+  return changed;
+}
 function openPoEditor(id){
   const po = purchaseOrders.find(p=>p.id===id); if(!po) return;
   poEditing = JSON.parse(JSON.stringify(po)); if(!poEditing.items.length) poEditing.items = [blankPoItem()];
   activeTab = 'poEditor'; render();
+  enrichPoFromOrder(poEditing).then(ch=>{ if(ch && poEditing && poEditing.id===id && activeTab==='poEditor') render(); });
 }
 
 /* ---- Düzenleme sayfası ---- */
@@ -2237,7 +2297,7 @@ function renderPoEditor(){
   const isNew = !purchaseOrders.some(p=>p.id===po.id);
   const sorted = suppliers.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr'));
   return `
-  <div class="panel" style="max-width:1120px;">
+  <div class="panel" style="max-width:1320px;">
     <button class="link-btn" id="po-back" style="margin-bottom:14px;">← Satın Alma Siparişleri</button>
     <h2>${escapeHtml(po.poNo||'Yeni Satın Alma Siparişi')} ${isNew?'<span class="hint" style="font-weight:400;">(kaydedilmedi)</span>':''}</h2>
     ${po.salesOrderNo ? `<p class="hint">Bağlı satış siparişi: <b>${escapeHtml(po.salesOrderNo)}</b>${po.salesOrderCustomer?' · '+escapeHtml(po.salesOrderCustomer):''}</p>` : ''}
@@ -2256,15 +2316,20 @@ function renderPoEditor(){
     </div>
     <div class="subhead" style="margin-top:8px;">Kalemler</div>
     <datalist id="po-codes">${products.slice(0,2000).map(p=>`<option value="${escapeAttr(p.code)}">${escapeHtml(p.code)} — ${escapeHtml(p.desc||'')}</option>`).join('')}</datalist>
-    <table class="items-table"><thead><tr><th>Ürün Kodu</th><th>Açıklama</th><th class="num" style="width:90px;">Adet</th><th class="num" style="width:130px;">Birim Maliyet</th><th class="num" style="width:130px;">Toplam</th><th style="width:30px;"></th></tr></thead>
+    <table class="items-table"><thead><tr><th>Ürün Kodu</th><th>Açıklama</th><th class="num" style="width:70px;">Adet</th><th class="num" style="width:104px;">Liste Fiyatı</th><th class="num" style="width:80px;">Alış İsk. %</th><th class="num" style="width:110px;">Alış Birim Fiyatı</th><th class="num" style="width:78px;color:var(--gray-500);">Satış İsk. %</th><th class="num" style="width:104px;color:var(--gray-500);">Satış Birim F.</th><th class="num" style="width:70px;">Kâr %</th><th class="num" style="width:110px;">Toplam</th><th style="width:30px;"></th></tr></thead>
       <tbody id="poItemsBody">
-      ${po.items.map((it,i)=>`<tr data-i="${i}">
-        <td><input class="po-code mono" list="po-codes" value="${escapeAttr(it.code)}" style="width:150px;font-size:12px;"></td>
-        <td><input class="po-desc" value="${escapeAttr(it.desc)}" style="width:100%;font-size:12px;"></td>
-        <td class="num"><input class="po-qty mono" type="number" min="0" step="1" value="${escapeAttr(String(it.qty))}" style="width:80px;text-align:right;font-size:12px;"></td>
-        <td class="num"><input class="po-cost mono" type="number" min="0" step="0.01" value="${escapeAttr(String(it.unitCost))}" style="width:110px;text-align:right;font-size:12px;${it.unitCost===''?'border-color:var(--danger);':''}"></td>
+      ${po.items.map((it,i)=>{ const mg = poMarginPct(it.salePrice, it.unitCost); return `<tr data-i="${i}">
+        <td><input class="po-code mono" list="po-codes" value="${escapeAttr(it.code)}" style="width:140px;font-size:12px;"></td>
+        <td><input class="po-desc" value="${escapeAttr(it.desc)}" style="width:100%;min-width:140px;font-size:12px;"></td>
+        <td class="num"><input class="po-qty mono" type="number" min="0" step="1" value="${escapeAttr(String(it.qty))}" style="width:62px;text-align:right;font-size:12px;"></td>
+        <td class="num"><input class="po-list mono" type="number" min="0" step="0.01" value="${escapeAttr(poNum(it.listPrice))}" style="width:92px;text-align:right;font-size:12px;"></td>
+        <td class="num"><input class="po-bd mono" type="number" min="0" step="0.01" value="${escapeAttr(poNum(it.buyDiscount))}" style="width:68px;text-align:right;font-size:12px;"></td>
+        <td class="num"><input class="po-cost mono" type="number" min="0" step="0.01" value="${escapeAttr(poNum(it.unitCost))}" style="width:98px;text-align:right;font-size:12px;${poNum(it.unitCost)===''?'border-color:var(--danger);':''}"></td>
+        <td class="num mono po-sdisc" style="font-size:12px;color:var(--gray-500);">${poNum(it.saleDiscount)!==''?escapeHtml(poNum(it.saleDiscount))+' %':'—'}</td>
+        <td class="num mono po-sprice" style="font-size:12px;color:var(--gray-500);">${poNum(it.salePrice)!==''?fmt(parseFloat(it.salePrice)||0):'—'}</td>
+        <td class="num mono po-margin" style="font-size:12px;font-weight:700;${mg!==null&&mg<0?'color:var(--danger);':''}">${mg===null?'—':mg.toFixed(1)+' %'}</td>
         <td class="num mono po-line-total" style="font-size:12px;">${fmt((parseFloat(it.qty)||0)*(parseFloat(it.unitCost)||0))}</td>
-        <td class="row-remove po-del-row" data-i="${i}">✕</td></tr>`).join('')}
+        <td class="row-remove po-del-row" data-i="${i}">✕</td></tr>`; }).join('')}
       </tbody></table>
     <button class="add-row-btn" id="po-add-row">+ Kalem Ekle</button>
     <div class="totals-box"><div class="totals-row grand"><span>Ara Toplam (KDV hariç)</span><span id="poSubtotal">${escapeHtml(po.currency)} ${fmt(poTotal(po))}</span></div></div>
@@ -2313,25 +2378,36 @@ function attachPoEditorHandlers(){
     document.querySelectorAll('#poItemsBody tr').forEach(tr=>{
       const it = po.items[+tr.dataset.i]; if(!it) return;
       tr.querySelector('.po-line-total').textContent = fmt((parseFloat(it.qty)||0)*(parseFloat(it.unitCost)||0));
-      tr.querySelector('.po-cost').style.borderColor = it.unitCost==='' ? 'var(--danger)' : '';
+      tr.querySelector('.po-cost').style.borderColor = poNum(it.unitCost)==='' ? 'var(--danger)' : '';
+      const mg = poMarginPct(it.salePrice, it.unitCost), el = tr.querySelector('.po-margin');
+      el.textContent = mg===null ? '—' : mg.toFixed(1)+' %'; el.style.color = (mg!==null && mg<0) ? 'var(--danger)' : '';
     });
     $('poSubtotal').textContent = po.currency+' '+fmt(poTotal(po));
   };
   document.querySelectorAll('#poItemsBody tr').forEach(tr=>{
-    const i = +tr.dataset.i, it = po.items[i];
-    tr.querySelector('.po-desc').oninput = e=>it.desc = e.target.value;
-    tr.querySelector('.po-qty').oninput = e=>{ it.qty = e.target.value; refreshTotals(); };
-    tr.querySelector('.po-cost').oninput = e=>{ it.unitCost = e.target.value; refreshTotals(); };
-    tr.querySelector('.po-code').onchange = e=>{
+    const i = +tr.dataset.i, it = po.items[i], q = sel=>tr.querySelector(sel);
+    q('.po-desc').oninput = e=>it.desc = e.target.value;
+    q('.po-qty').oninput = e=>{ it.qty = e.target.value; refreshTotals(); };
+    q('.po-list').oninput = e=>{
+      it.listPrice = e.target.value;
+      if(poNum(it.buyDiscount)!==''){ const c = poCalcCost(it.listPrice, it.buyDiscount); if(c!==null){ it.unitCost = String(c); q('.po-cost').value = it.unitCost; } }
+      else { const d = poCalcDisc(it.listPrice, it.unitCost); if(d!==null){ it.buyDiscount = String(d); q('.po-bd').value = it.buyDiscount; } }
+      refreshTotals();
+    };
+    q('.po-bd').oninput = e=>{ it.buyDiscount = e.target.value; const c = poCalcCost(it.listPrice, it.buyDiscount); if(c!==null){ it.unitCost = String(c); q('.po-cost').value = it.unitCost; } refreshTotals(); };
+    q('.po-cost').oninput = e=>{ it.unitCost = e.target.value; const d = poCalcDisc(it.listPrice, it.unitCost); if(d!==null){ it.buyDiscount = String(d); q('.po-bd').value = it.buyDiscount; } refreshTotals(); };
+    q('.po-code').onchange = e=>{
       it.code = e.target.value;
       const p = productCodeMap().get(foldTR(it.code.trim()));
       if(p){
         it.productId = p.id; if(!it.desc) it.desc = p.desc||'';
-        if(it.unitCost==='' && parseFloat(p.listPrice)>0 && p.buyDiscount!=='' && p.buyDiscount!==undefined) it.unitCost = String(Math.round(parseFloat(p.listPrice)*(1-(parseFloat(p.buyDiscount)||0)/100)*100)/100);
+        if(poNum(it.listPrice)==='' && parseFloat(p.listPrice)>0) it.listPrice = poNum(p.listPrice);
+        if(poNum(it.buyDiscount)==='' && p.buyDiscount!=='' && p.buyDiscount!=null) it.buyDiscount = poNum(p.buyDiscount);
+        if(poNum(it.unitCost)===''){ const c = poCalcCost(it.listPrice, it.buyDiscount); if(c!==null) it.unitCost = String(c); }
       }
       render();
     };
-    tr.querySelector('.po-del-row').onclick = ()=>{ po.items.splice(i,1); if(!po.items.length) po.items.push(blankPoItem()); render(); };
+    q('.po-del-row').onclick = ()=>{ po.items.splice(i,1); if(!po.items.length) po.items.push(blankPoItem()); render(); };
   });
   $('po-add-row').onclick = ()=>{ po.items.push(blankPoItem()); render(); };
   $('po-save').onclick = async ()=>{ if(await savePoEditing()){ poEditing = null; activeTab='purchase'; render(); } };
