@@ -1335,7 +1335,9 @@ function renderSidebarPrimaryNav(){
       <div class="tab ${activeTab==='list'||editorActive?'active':''}" data-tab="list">Teklifler</div>
       <div class="tab ${activeTab==='proposalsList'||isProposalTab(activeTab)?'active':''}" data-tab="proposalsList">Proje Teklifleri</div>
       <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler ${(()=>{ const n = readyOrders().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
+      <div class="tab ${activeTab==='shipments'?'active':''}" data-tab="shipments">Sevkiyatlar ${(()=>{ const n = uninvoicedShipments().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
       <div class="tab ${activeTab==='purchase'||activeTab==='poEditor'||activeTab==='poPrint'?'active':''}" data-tab="purchase">Satın Alma</div>
+      <div class="tab ${activeTab==='invoices'?'active':''}" data-tab="invoices">Faturalar</div>
       <div class="tab ${activeTab==='finance'?'active':''}" data-tab="finance">Alacak / Borç</div>
       <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
       <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
@@ -1420,6 +1422,8 @@ function render(){
   else if(activeTab==='purchase') c.innerHTML = renderPurchasePage();
   else if(activeTab==='poEditor') c.innerHTML = renderPoEditor();
   else if(activeTab==='poPrint') c.innerHTML = renderPoPrint();
+  else if(activeTab==='shipments') c.innerHTML = renderShipmentsPage();
+  else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
   else if(activeTab==='finance') c.innerHTML = renderFinancePage();
   else if(activeTab==='accounting') c.innerHTML = renderAccountingPage();
   else if(activeTab==='suppliers') c.innerHTML = renderSuppliersPage();
@@ -3762,6 +3766,150 @@ function attachAccountingHandlers(){
   };
 }
 
+/* ---------------- SEVKİYATLAR · FATURALAR (belge listeleri ve vade takibi) ---------------- */
+let shipFilter = 'faturalanacak', shipSearch = '';
+let invView = 'sale', invFilter = 'open', invSearch = '';
+
+function uninvoicedShipments(){ return shipments.filter(s=>!shipIsInvoiced(s)); }
+function shipInvoiceInfoHtml(s){
+  const inv = shipIsInvoiced(s), ps = shipPayState(s), total = shipTotal(s), paid = shipPaid(s), cur = s.currency||'€';
+  if(!inv){
+    const days = diffDaysStr(todayStr(), s.date||todayStr());
+    return `<div style="font-size:12px;"><b>Fatura bekliyor</b> · <span class="mono">${cur} ${fmt(shipNet(s))}</span> <span style="color:var(--gray-500);">(KDV hariç)</span></div>
+      <div style="font-size:11px;color:${days>3?'var(--danger)':'var(--gray-500)'};font-weight:${days>3?'700':'400'};">${days<=0?'bugün sevk edildi':days+' gündür faturalanmadı'}</div>`;
+  }
+  return `<div style="font-size:12px;"><b>Fatura ${escapeHtml(s.invoiceNo||'—')}</b> <span class="mono">· ${cur} ${fmt(total)}</span> <span style="color:var(--gray-500);">(${formatDate(s.invoiceDate)})</span></div>
+    <div style="font-size:11px;">${PAY_STATE_LABEL[ps]}${paid>0?' · tahsil '+cur+' '+fmt(paid):''} ${dueBadgeHtml(shipDueDate(s), ps==='paid')}${shipDueDate(s)?' <span style="color:var(--gray-300);">· vade '+formatDate(shipDueDate(s))+'</span>':''}</div>`;
+}
+
+/* ---- Sevkiyatlar ---- */
+function renderShipmentsPage(){
+  const rows = shipments.map(s=>({ s, inv:shipIsInvoiced(s), ps:shipPayState(s) }));
+  const cnt = { '':rows.length, faturalanacak:rows.filter(r=>!r.inv).length, acik:rows.filter(r=>r.inv && r.ps!=='paid').length, odendi:rows.filter(r=>r.ps==='paid').length };
+  let list = rows.filter(r=> shipFilter==='' ? true : shipFilter==='faturalanacak' ? !r.inv : shipFilter==='acik' ? (r.inv && r.ps!=='paid') : r.ps==='paid');
+  if(shipSearch){
+    const q = foldTR(shipSearch.trim());
+    list = list.filter(r=>foldTR([r.s.customer.name, r.s.orderNo, r.s.irsaliyeNo, r.s.officialIrsaliyeNo, r.s.invoiceNo].concat((r.s.lines||[]).map(l=>l.code)).join(' ')).includes(q));
+  }
+  list.sort((a,b)=> (a.inv - b.inv) || (a.inv ? (b.s.date||'').localeCompare(a.s.date||'') : (a.s.date||'').localeCompare(b.s.date||'')));
+  const waiting = uninvoicedShipments(), oldest = waiting.length ? Math.max(...waiting.map(s=>diffDaysStr(todayStr(), s.date||todayStr()))) : 0;
+  const invoiced = shipments.filter(shipIsInvoiced);
+  const FILTERS = [['faturalanacak','Faturalanacak'],['acik','Faturalı · tahsilat bekleyen'],['odendi','Tahsil edilen'],['','Tümü']];
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <h2>Sevkiyatlar</h2>
+    <p class="hint">Kestiğin her irsaliye burada. Faturalanmamış olanlar en üstte, en uzun bekleyen ilk sırada; "Fatura Gir" ile faturaya çevirirsin, vade ve alacak takibi otomatik başlar.</p>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:16px 0 22px;">
+      <div class="kpi-card"><div class="kpi-label">Faturalanacak Sevkiyat</div><div class="kpi-value" style="color:${waiting.length?'var(--ink)':'var(--gray-300)'};">${waiting.length}</div><div class="kpi-sub">${waiting.length ? 'en eskisi '+oldest+' gün' : 'hepsi faturalı'}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Faturalanacak Tutar</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(waiting, s=>shipNet(s)))}</div><div class="kpi-sub">KDV hariç</div></div>
+      <div class="kpi-card"><div class="kpi-label">Faturalanan (KDV dahil)</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>shipTotal(s)))}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>Math.max(0, shipTotal(s)-shipPaid(s))))}</div></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <div class="field" style="max-width:300px;margin:0;"><input id="shipSearch" placeholder="Firma, irsaliye/fatura no, ürün kodu ara..." value="${escapeAttr(shipSearch)}"></div>
+      ${FILTERS.map(([k,l])=>`<span class="version-pill ${shipFilter===k?'active':''}" data-ship-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}
+    </div>
+    ${list.length ? `<div class="ship-list">${list.map(({s,inv})=>`
+      <div class="ship-row" style="${!inv?'border-left:3px solid var(--ink);':''}">
+        <div style="min-width:250px;flex:1;">
+          <div class="mono" style="font-size:12.5px;font-weight:700;">${escapeHtml(s.irsaliyeNo||'irsaliyesiz')} <span style="font-weight:400;color:var(--gray-500);">· ${formatDate(s.date)}</span></div>
+          <div style="font-size:12.5px;font-weight:600;">${escapeHtml(upperCompanyName(s.customer.name||'İsimsiz'))} <span class="mono" style="font-weight:400;color:var(--gray-500);font-size:11px;">· ${escapeHtml(s.orderNo||'')}</span></div>
+          <div style="font-size:11px;color:var(--gray-500);">${(s.lines||[]).length} kalem · ${fmtQty(shipQty(s))} adet · ${escapeHtml((s.lines||[]).slice(0,2).map(l=>l.code).join(', '))}${(s.lines||[]).length>2?' +'+((s.lines||[]).length-2):''}${s.officialIrsaliyeNo?' · e-irsaliye '+escapeHtml(s.officialIrsaliyeNo):''}</div>
+        </div>
+        <div style="flex:1.2;min-width:240px;">${shipInvoiceInfoHtml(s)}</div>
+        <div class="order-actions" style="margin:0;">
+          <span data-ship-print="${s.id}">İrsaliye</span>
+          <span data-ship-invoice="${s.id}" style="color:var(--ink);">${inv?'Fatura':'Fatura Gir'}</span>
+          ${inv ? `<span data-ship-pay="${s.id}" style="color:var(--ink);">Tahsilat${(s.payments||[]).length?' ('+s.payments.length+')':''}</span>` : ''}
+          <span data-ship-edit="${s.id}">Düzenle</span>
+          <span data-ship-order="${s.orderId}">Sipariş</span>
+        </div>
+      </div>`).join('')}</div>` : `<p class="hint">${(shipSearch||shipFilter) ? 'Filtreyle eşleşen sevkiyat yok.' : 'Henüz sevkiyat yok. Siparişler sayfasından "Sevkiyat Oluştur" ile başla.'}</p>`}
+  </div>`;
+}
+function attachShipmentsHandlers(){
+  document.querySelectorAll('[data-ship-filter]').forEach(el=>{ el.onclick = ()=>{ shipFilter = el.dataset.shipFilter; render(); }; });
+  const s = document.getElementById('shipSearch');
+  if(s) s.oninput = e=>{ shipSearch = e.target.value; render(); const el = document.getElementById('shipSearch'); if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; } };
+  document.querySelectorAll('[data-ship-print]').forEach(el=>{ el.onclick = ()=>{ shipPrintId = el.dataset.shipPrint; activeTab='irsaliyePrint'; render(); }; });
+  document.querySelectorAll('[data-ship-invoice]').forEach(el=>{ el.onclick = ()=>openShipmentInvoiceModal(el.dataset.shipInvoice); });
+  document.querySelectorAll('[data-ship-pay]').forEach(el=>{ el.onclick = ()=>openShipmentPaymentsModal(el.dataset.shipPay); });
+  document.querySelectorAll('[data-ship-edit]').forEach(el=>{ el.onclick = ()=>openShipmentEditModal(el.dataset.shipEdit); });
+  document.querySelectorAll('[data-ship-order]').forEach(el=>{ el.onclick = async ()=>{ await openQuote(el.dataset.shipOrder); activeTab='info'; render(); }; });
+}
+
+/* ---- Faturalar (satış + alış, vade takvimi) ---- */
+function uninvoicedReceipts(){
+  return purchaseOrders.filter(po=>po.status!=='İptal').map(po=>{
+    const done = {}; purchaseInvoices.filter(x=>x.poId===po.id).forEach(x=>(x.lines||[]).forEach(l=>{ done[l.poItemId] = (done[l.poItemId]||0) + (parseFloat(l.qty)||0); }));
+    const lines = (po.items||[]).map(it=>({ it, qty:(parseFloat(it.receivedQty)||0) - (done[it.id]||0) })).filter(l=>l.qty > 1e-9);
+    return lines.length ? { po, lines } : null;
+  }).filter(Boolean);
+}
+function invoiceStateLabel(kind, st){ return kind==='sale' ? PAY_STATE_LABEL[st] : ({ waiting:'Ödeme yapılacak', partial:'Kısmi ödendi', overdue:'Vadesi geçti', paid:'Ödendi' }[st] || ''); }
+function renderInvoicesPage(){
+  const kind = invView==='purchase' ? 'purchase' : 'sale';
+  const items = kind==='sale' ? saleItems() : purchaseItems();
+  const today = todayStr(), isOpen = i=>i.remaining > 0.005;
+  const d7 = addDaysStr(today, 6), d14 = addDaysStr(today, 13);
+  const bucket = {
+    overdue: items.filter(i=>isOpen(i) && i.due && i.due < today),
+    week:    items.filter(i=>isOpen(i) && i.due && i.due >= today && i.due <= d7),
+    next:    items.filter(i=>isOpen(i) && i.due && i.due > d7 && i.due <= d14),
+    later:   items.filter(i=>isOpen(i) && (!i.due || i.due > d14))
+  };
+  const amt = arr=>curText(sumByCur(arr.map(i=>({ currency:i.cur, v:i.remaining })), x=>x.v));
+  const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, paid:items.filter(i=>!isOpen(i)).length };
+  let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : !isOpen(i));
+  if(invSearch){ const q = foldTR(invSearch.trim()); list = list.filter(i=>foldTR(i.partyName+' '+i.docNo+' '+((i.obj.poNo)||(i.obj.orderNo)||'')).includes(q)); }
+  list.sort((a,b)=> (isOpen(b)-isOpen(a)) || (isOpen(a) ? (a.due||'9999-99-99').localeCompare(b.due||'9999-99-99') : (b.date||'').localeCompare(a.date||'')));
+  const word = kind==='sale' ? { open:'Tahsilat', paid:'Tahsil edilen', party:'Müşteri', pay:'Tahsilat' } : { open:'Ödeme', paid:'Ödenen', party:'Tedarikçi', pay:'Ödeme' };
+  const FILTERS = [['open','Açık'],['overdue','Vadesi geçmiş'],['week','Bu hafta'],['paid',kind==='sale'?'Tahsil edilen':'Ödenen'],['','Tümü']];
+  const waitingShips = uninvoicedShipments(), recs = kind==='purchase' ? uninvoicedReceipts() : [];
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Faturalar</h2>
+      <div style="display:flex;gap:8px;"><span class="version-pill ${invView==='sale'?'active':''}" data-inv-view="sale">Satış Faturaları</span><span class="version-pill ${invView==='purchase'?'active':''}" data-inv-view="purchase">Alış Faturaları</span></div></div>
+    <p class="hint">${kind==='sale' ? 'Kestiğin faturalar ve tahsilat vadeleri.' : 'Girdiğin tedarikçi faturaları ve ödeme tarihlerin.'} Vade, fatura tarihi + ödeme vadesi olarak otomatik hesaplanır.</p>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:16px 0 22px;">
+      <div class="kpi-card"><div class="kpi-label">Vadesi Geçmiş</div><div class="kpi-value" style="font-size:17px;color:${bucket.overdue.length?'var(--danger)':'var(--ink)'};">${amt(bucket.overdue)}</div><div class="kpi-sub">${bucket.overdue.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Bu Hafta (7 gün)</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.week)}</div><div class="kpi-sub">${bucket.week.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Gelecek Hafta</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.next)}</div><div class="kpi-sub">${bucket.next.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Daha Sonra / Vadesiz</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.later)}</div><div class="kpi-sub">${bucket.later.length} fatura</div></div>
+    </div>
+    ${kind==='sale' && waitingShips.length ? `<div class="ready-note" style="margin-bottom:14px;"><b>${waitingShips.length} sevkiyat faturalanmayı bekliyor.</b> <span class="link-btn" data-go-ship="1" style="margin-left:8px;cursor:pointer;">Sevkiyatlar sayfasında faturaya çevir →</span></div>` : ''}
+    ${kind==='purchase' && recs.length ? `<div class="subhead" style="margin-top:0;">Faturası Girilmemiş Mal Kabuller</div>
+      <div style="margin-bottom:22px;">${recs.map(r=>`<div class="dash-quote-row" style="padding:10px 4px;cursor:default;"><div><div class="dqr-cust" style="font-size:12.5px;"><span class="mono">${escapeHtml(r.po.poNo)}</span> · ${escapeHtml(supplierName(r.po.supplierId))}</div>
+        <div class="dqr-meta">${r.lines.map(l=>escapeHtml(l.it.code||'')+' ×'+fmtQty(l.qty)).join(', ')} teslim alındı, fatura girilmedi</div></div>
+        <span data-recv-invoice="${r.po.id}" style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Fatura Gir</span></div>`).join('')}</div>` : ''}
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <div class="field" style="max-width:300px;margin:0;"><input id="invSearch" placeholder="${word.party}, fatura no ara..." value="${escapeAttr(invSearch)}"></div>
+      ${FILTERS.map(([k,l])=>`<span class="version-pill ${invFilter===k?'active':''}" data-inv-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}
+    </div>
+    ${list.length ? `<table class="items-table"><thead><tr><th>Fatura</th><th>${word.party}</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th>Vade</th><th>Durum</th><th></th></tr></thead><tbody>
+      ${list.map(i=>`<tr>
+        <td><div class="mono" style="font-size:12px;font-weight:700;">${escapeHtml(i.docNo||'—')}</div><div style="font-size:10.5px;color:var(--gray-500);">${formatDate(i.date)}</div></td>
+        <td style="font-size:12px;">${escapeHtml(i.partyName)}<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${escapeHtml(kind==='sale'?(i.obj.orderNo||''):(i.obj.poNo||''))}</div></td>
+        <td class="num mono" style="font-size:12px;">${i.cur} ${fmt(i.total)}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${i.paid>0.005?i.cur+' '+fmt(i.paid):'—'}</td>
+        <td class="num mono" style="font-size:12px;font-weight:700;">${isOpen(i)?i.cur+' '+fmt(i.remaining):'—'}</td>
+        <td style="font-size:11.5px;">${i.due?formatDate(i.due):'<span style="color:var(--gray-300);">tanımsız</span>'}<div>${dueBadgeHtml(i.due, !isOpen(i))}</div></td>
+        <td style="font-size:11.5px;color:${i.state==='overdue'?'var(--danger)':'var(--gray-500)'};font-weight:${i.state==='overdue'?'700':'400'};">${invoiceStateLabel(kind, i.state)}</td>
+        <td style="white-space:nowrap;"><span data-inv-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">${word.pay}</span>
+          <span data-inv-edit="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:10px;">Fatura</span></td></tr>`).join('')}
+    </tbody></table>` : `<p class="hint">${(invSearch||invFilter) ? 'Filtreyle eşleşen fatura yok.' : (kind==='sale'?'Henüz faturalanmış sevkiyat yok.':'Henüz tedarikçi faturası yok.')}</p>`}
+  </div>`;
+}
+function attachInvoicesHandlers(){
+  document.querySelectorAll('[data-inv-view]').forEach(el=>{ el.onclick = ()=>{ invView = el.dataset.invView; invFilter = 'open'; invSearch = ''; render(); }; });
+  document.querySelectorAll('[data-inv-filter]').forEach(el=>{ el.onclick = ()=>{ invFilter = el.dataset.invFilter; render(); }; });
+  const s = document.getElementById('invSearch');
+  if(s) s.oninput = e=>{ invSearch = e.target.value; render(); const el = document.getElementById('invSearch'); if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; } };
+  document.querySelectorAll('[data-inv-pay]').forEach(el=>{ el.onclick = ()=>{ const [k,id] = el.dataset.invPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else openPurchasePaymentsModal(id); }; });
+  document.querySelectorAll('[data-inv-edit]').forEach(el=>{ el.onclick = ()=>{ const [k,id] = el.dataset.invEdit.split('|'); if(k==='sale') openShipmentInvoiceModal(id); else { const pi = purchaseInvoices.find(x=>x.id===id); if(pi) openPurchaseInvoiceModal(pi.poId, pi.id); } }; });
+  document.querySelectorAll('[data-recv-invoice]').forEach(el=>{ el.onclick = ()=>openPurchaseInvoiceModal(el.dataset.recvInvoice); });
+  document.querySelectorAll('[data-go-ship]').forEach(el=>{ el.onclick = ()=>{ shipFilter = 'faturalanacak'; activeTab = 'shipments'; render(); }; });
+}
+
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
 let stockMoves = [];
 let lastStockImport = null;
@@ -5427,6 +5575,8 @@ function attachHandlers(){
   if(activeTab==='purchase') attachPurchaseHandlers();
   if(activeTab==='poEditor') attachPoEditorHandlers();
   if(activeTab==='poPrint') attachPoPrintHandlers();
+  if(activeTab==='shipments') attachShipmentsHandlers();
+  if(activeTab==='invoices'){ autoSyncFxRates(); attachInvoicesHandlers(); }
   if(activeTab==='finance') attachFinanceHandlers();
   if(activeTab==='accounting') attachAccountingHandlers();
 
