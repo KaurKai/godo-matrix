@@ -1156,6 +1156,7 @@ async function exportBackup(){
   a.href = url; a.download = 'godo-yedek-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+  try{ await markBackupDownloaded(); }catch(e){}
 }
 function importBackupFile(file){
   const reader = new FileReader();
@@ -1341,7 +1342,7 @@ function validateQuoteForSend(){
 
 /* ---------------- RENDER: MAIN ---------------- */
 function isEditorTab(t){ return t==='info' || t==='items' || t==='terms' || t==='preview'; }
-function isSettingsTab(t){ return t==='settingsCompany' || t==='settingsTemplates' || t==='settingsDesign' || t==='settingsTrash' || t==='settingsSecurity'; }
+function isSettingsTab(t){ return t==='settingsCompany' || t==='settingsTemplates' || t==='settingsDesign' || t==='settingsTrash' || t==='settingsSecurity' || t==='settingsBackups'; }
 
 
 function renderSidebarPrimaryNav(){
@@ -1407,6 +1408,7 @@ function renderTabsBar(){
         <div class="tab ${activeTab==='settingsTemplates'?'active':''}" data-tab="settingsTemplates">Şablonlar</div>
         <div class="tab ${activeTab==='settingsDesign'?'active':''}" data-tab="settingsDesign">PDF Tasarımı</div>
         <div class="tab ${activeTab==='settingsSecurity'?'active':''}" data-tab="settingsSecurity">Güvenlik</div>
+        <div class="tab ${activeTab==='settingsBackups'?'active':''}" data-tab="settingsBackups">Yedekler</div>
         <div class="tab ${activeTab==='settingsTrash'?'active':''}" data-tab="settingsTrash">Çöp Kutusu ${trash.length?`<span class="nav-badge">${trash.length}</span>`:''}</div>
       </div>`;
   }
@@ -1423,6 +1425,7 @@ function render(){
     fillStockAlerts();
     fillReadyWidget();
     fillPayablesWidget();
+    fillBackupReminder();
   }
   else if(activeTab==='list') c.innerHTML = renderQuotesList();
   else if(activeTab==='proposalsList') c.innerHTML = renderProposalsList();
@@ -1457,6 +1460,7 @@ function render(){
   else if(activeTab==='settingsDesign') c.innerHTML = renderSettingsDesign();
   else if(activeTab==='settingsTrash') c.innerHTML = renderSettingsTrash();
   else if(activeTab==='settingsSecurity') c.innerHTML = renderSettingsSecurity();
+  else if(activeTab==='settingsBackups') c.innerHTML = renderSettingsBackups();
   else if(activeTab==='info') c.innerHTML = renderInfo();
   else if(activeTab==='items') c.innerHTML = renderItems();
   else if(activeTab==='terms') c.innerHTML = renderTerms();
@@ -1519,6 +1523,7 @@ function renderDashboard(){
 
     <div id="readyShipWidget"></div>
     <div id="payablesWidget"></div>
+    <div id="backupReminder"></div>
     <div id="stockAlertsWidget"></div>
 
     ${duePayments.length ? `
@@ -4110,6 +4115,117 @@ function attachOpenOrdersShell(){
   if(s) s.oninput = e=>{ openSearch = e.target.value; refreshOpenBody(); };
 }
 
+/* ---------------- AYARLAR · YEDEKLER (Supabase'te otomatik günlük yedek + bilgisayara kopya) ---------------- */
+let backupState = { loading:true, list:[], err:'', msg:'', ok:true, meta:null, busy:false };
+const BACKUP_KIND = { daily:'Günlük (otomatik)', manual:'Elle', 'pre-restore':'Geri yükleme öncesi' };
+const BACKUP_REMIND_DAYS = 7;
+function fmtBytes(n){ n = Number(n)||0; return n < 1024 ? n+' B' : n < 1048576 ? Math.round(n/1024)+' kB' : (n/1048576).toFixed(1)+' MB'; }
+function fmtDateTimeTR(iso){ try{ return new Date(iso).toLocaleString('tr-TR', { timeZone:'Europe/Istanbul', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }catch(e){ return String(iso||''); } }
+function daysSince(iso){ if(!iso) return null; const t = new Date(iso).getTime(); return isNaN(t) ? null : Math.floor((Date.now() - t)/86400000); }
+async function loadBackupMeta(){ try{ const r = await stGet('godo:backup-meta'); return (r && r.value) ? JSON.parse(r.value) : {}; }catch(e){ return {}; } }
+async function markBackupDownloaded(){
+  const meta = Object.assign({}, backupState.meta || await loadBackupMeta(), { lastDownloadAt:new Date().toISOString() });
+  backupState.meta = meta;
+  try{ await stSet('godo:backup-meta', JSON.stringify(meta)); }catch(e){}
+}
+function downloadJsonFile(name, obj){
+  const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+function backupFileName(iso){ const d = new Date(iso||Date.now()), p = n=>String(n).padStart(2,'0'); return `godo-matrix-yedek-${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`; }
+function confirmRestore(what){
+  const v = prompt(what+'\n\nMevcut verinin tamamı bu yedekle DEĞİŞTİRİLECEK. Değiştirilmeden önce mevcut hâlin ayrıca yedeği alınır.\nDevam etmek için GERİ YÜKLE yaz:');
+  return v!==null && v.trim().toLocaleUpperCase('tr-TR') === 'GERİ YÜKLE';
+}
+async function finishRestore(){
+  alert('Geri yükleme tamamlandı. Önceki durum "Geri yükleme öncesi" yedeği olarak saklandı. Sayfa yenileniyor.');
+  clearLocalCaches(); location.reload();
+}
+function renderSettingsBackups(){
+  return `<div class="panel" style="max-width:860px;"><h2>Yedekler</h2>
+    <p class="hint">Tüm verinin tam kopyası her gece <b>02:00</b>'de otomatik alınır. Son 30 gün günlük, her ayın ilk yedeği 12 ay, elle alınanlar 90 gün saklanır. Yedekler uygulamadan değiştirilemez ya da silinemez. Supabase hesabına bir şey olursa diye haftada bir bilgisayarına da indir.</p>
+    <div id="bkBody"><p class="hint">Yükleniyor…</p></div></div>`;
+}
+function renderBackupBody(){
+  const s = backupState, last = s.list[0], dd = daysSince(s.meta && s.meta.lastDownloadAt);
+  const msg = s.msg ? `<div class="ready-note" style="margin-bottom:14px;${s.ok?'':'border-left-color:var(--danger);'}">${escapeHtml(s.msg)}</div>` : '';
+  const remind = (dd===null || dd >= BACKUP_REMIND_DAYS);
+  return `${msg}
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin:6px 0 18px;">
+      <div class="kpi-card"><div class="kpi-label">Son Yedek</div><div class="kpi-value" style="font-size:16px;">${last ? escapeHtml(fmtDateTimeTR(last.created_at)) : '—'}</div><div class="kpi-sub">${last ? escapeHtml(BACKUP_KIND[last.kind]||last.kind)+' · '+last.row_count+' kayıt' : 'henüz yok'}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Saklanan Yedek</div><div class="kpi-value">${s.list.length}</div><div class="kpi-sub">${fmtBytes(s.list.reduce((t,b)=>t+(Number(b.size_bytes)||0),0))} toplam</div></div>
+      <div class="kpi-card"><div class="kpi-label">Bilgisayara Son İndirme</div><div class="kpi-value" style="font-size:16px;color:${remind?'var(--danger)':'var(--ink)'};">${dd===null ? 'hiç' : dd===0 ? 'bugün' : dd+' gün önce'}</div><div class="kpi-sub">${remind ? 'haftalık indirme önerilir' : 'güncel'}</div></div>
+    </div>
+    <div class="actions-row" style="margin-bottom:18px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="bk-now" ${s.busy?'disabled':''}>Şimdi Yedek Al</button>
+      ${last ? `<button class="btn btn-ghost" data-bk-dl="${last.id}" ${s.busy?'disabled':''}>Son Yedeği Bilgisayara İndir</button>` : ''}
+      <label class="btn btn-ghost" style="cursor:pointer;margin:0;">Dosyadan Geri Yükle<input type="file" id="bk-file" accept=".json,application/json" style="display:none;"></label>
+    </div>
+    ${s.err ? `<p class="hint" style="color:var(--danger);">Yedek listesi alınamadı: ${escapeHtml(s.err)}</p>` : s.loading ? '<p class="hint">Yükleniyor…</p>' :
+      s.list.length ? `<table class="items-table"><thead><tr><th>Tarih</th><th>Tür</th><th class="num">Kayıt</th><th class="num">Boyut</th><th></th></tr></thead><tbody>
+      ${s.list.map(b=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(fmtDateTimeTR(b.created_at))}</td><td style="font-size:12px;">${escapeHtml(BACKUP_KIND[b.kind]||b.kind)}</td>
+        <td class="num mono">${b.row_count}</td><td class="num mono" style="font-size:12px;">${fmtBytes(b.size_bytes)}</td>
+        <td style="white-space:nowrap;text-align:right;"><span data-bk-dl="${b.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">İndir</span>
+          <span data-bk-restore="${b.id}" data-bk-when="${escapeAttr(fmtDateTimeTR(b.created_at))}" style="font-size:10.5px;font-weight:700;color:var(--danger);text-transform:uppercase;cursor:pointer;margin-left:14px;">Geri Yükle</span></td></tr>`).join('')}
+      </tbody></table>` : '<p class="hint">Henüz yedek yok. İlk otomatik yedek bu gece alınacak; istersen şimdi elle al.</p>'}`;
+}
+function refreshBackupBody(){
+  const el = document.getElementById('bkBody'); if(!el) return;
+  el.innerHTML = renderBackupBody();
+  const setMsg = (m, ok)=>{ backupState.msg = m; backupState.ok = ok; };
+  const nowBtn = document.getElementById('bk-now');
+  if(nowBtn) nowBtn.onclick = async ()=>{
+    backupState.busy = true; refreshBackupBody();
+    const { error } = await sb.rpc('backup_now');
+    backupState.busy = false;
+    setMsg(error ? 'Yedek alınamadı: '+error.message : 'Yedek alındı.', !error);
+    await loadBackups();
+  };
+  el.querySelectorAll('[data-bk-dl]').forEach(b=>{ b.onclick = async ()=>{
+    const id = Number(b.dataset.bkDl), info = backupState.list.find(x=>Number(x.id)===id) || {};
+    const { data, error } = await sb.rpc('backup_get', { p_id:id });
+    if(error || !data){ setMsg('İndirilemedi: '+((error&&error.message)||'boş yanıt'), false); refreshBackupBody(); return; }
+    downloadJsonFile(backupFileName(info.created_at), { format:'godo-matrix-backup', version:1, createdAt:info.created_at||null, kind:info.kind||null, rowCount:Object.keys(data).length, data });
+    await markBackupDownloaded();
+    setMsg('Yedek bilgisayarına indirildi. Dosyayı güvenli bir yerde (ör. iCloud / Google Drive) sakla; içinde tüm iş verin var.', true); refreshBackupBody();
+  }; });
+  el.querySelectorAll('[data-bk-restore]').forEach(b=>{ b.onclick = async ()=>{
+    if(!confirmRestore(b.dataset.bkWhen+' tarihli yedek geri yüklenecek.')) return;
+    const { error } = await sb.rpc('backup_restore', { p_id:Number(b.dataset.bkRestore) });
+    if(error){ setMsg('Geri yüklenemedi: '+error.message, false); refreshBackupBody(); return; }
+    await finishRestore();
+  }; });
+  const file = document.getElementById('bk-file');
+  if(file) file.onchange = e=>{
+    const f = e.target.files && e.target.files[0]; if(!f) return;
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      let obj; try{ obj = JSON.parse(reader.result); }catch(err){ setMsg('Dosya okunamadı: geçerli bir yedek dosyası değil.', false); refreshBackupBody(); return; }
+      if(!obj || obj.format!=='godo-matrix-backup' || !obj.data || typeof obj.data!=='object'){ setMsg('Bu dosya Yedekler sayfasından indirilmiş bir Godo Matrix yedeği değil. (Kenar çubuğundaki eski "Yedek Al" dosyaları o menüdeki "Geri Yükle" ile açılır.)', false); refreshBackupBody(); return; }
+      const n = Object.keys(obj.data).length;
+      if(!confirmRestore('Dosya: '+f.name+'\nYedek tarihi: '+(obj.createdAt ? fmtDateTimeTR(obj.createdAt) : 'bilinmiyor')+' · '+n+' kayıt')) return;
+      const { error } = await sb.rpc('backup_restore_json', { p_data:obj.data });
+      if(error){ setMsg('Geri yüklenemedi: '+error.message, false); refreshBackupBody(); return; }
+      await finishRestore();
+    };
+    reader.readAsText(f);
+  };
+}
+async function loadBackups(){
+  backupState.loading = true;
+  try{ const { data, error } = await sb.rpc('backup_list'); if(error) throw error; backupState.list = data || []; backupState.err = ''; }
+  catch(e){ backupState.err = (e && e.message) || 'bilinmeyen hata'; }
+  backupState.meta = await loadBackupMeta();
+  backupState.loading = false; refreshBackupBody();
+}
+async function fillBackupReminder(){
+  const el = document.getElementById('backupReminder'); if(!el) return;
+  const meta = await loadBackupMeta(), dd = daysSince(meta.lastDownloadAt);
+  if(dd!==null && dd < BACKUP_REMIND_DAYS){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="ready-note" style="margin-bottom:22px;">${dd===null ? 'Henüz bilgisayarına hiç yedek indirmedin.' : 'Bilgisayarına en son <b>'+dd+' gün önce</b> yedek indirdin.'} Otomatik yedekler Supabase'te duruyor; hesap sorunlarına karşı haftada bir kopya indir. <span class="link-btn" id="backupReminderGo" style="margin-left:8px;cursor:pointer;">Yedekler →</span></div>`;
+  const go = document.getElementById('backupReminderGo'); if(go) go.onclick = ()=>{ activeTab = 'settingsBackups'; render(); };
+}
+
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
 let stockMoves = [];
 let lastStockImport = null;
@@ -5971,6 +6087,7 @@ function attachHandlers(){
   }
 
   if(activeTab==='settingsSecurity') loadSecurityState();
+  if(activeTab==='settingsBackups') loadBackups();
 
   if(activeTab==='settingsTrash'){
     document.querySelectorAll('[data-trash-restore]').forEach(el=>{
