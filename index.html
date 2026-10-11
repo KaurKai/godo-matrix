@@ -2,6 +2,16 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<style id="antiFrame">html{display:none !important}</style>
+<script>
+(function(){
+  // Eski Netlify adresine gelen herkes yeni adrese taşınır (oturumlar adres bazlıdır; yeni adreste bir kez yeniden giriş gerekir).
+  if(/(^|\.)netlify\.app$/i.test(location.hostname)){ location.replace('https://kaurkai.github.io/godo-matrix/'); return; }
+  // Tıklama-hırsızlığı (clickjacking) koruması: sayfa bir iframe içindeyse gizli kalır ve en üst pencereye çıkar.
+  if(window.top === window.self){ var s = document.getElementById('antiFrame'); if(s) s.remove(); }
+  else { try{ window.top.location = window.self.location; }catch(e){} }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://laopdoxuxvcwgcjghdim.supabase.co wss://laopdoxuxvcwgcjghdim.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="robots" content="noindex, nofollow">
