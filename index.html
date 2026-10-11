@@ -953,6 +953,7 @@ async function loadAll(){
   }
   await normalizeCustomerNames();
   try{ await backfillOrderQty(); await migrateOrdersToShipments(); for(const oid of [...new Set(shipments.map(s=>s.orderId))]) await syncOrderPipelineStatus(oid); }catch(e){ console.error('Sipariş taşıma hatası', e); }
+  try{ autoSyncFxRates(); }catch(e){}
   if(backfillEnglishTerms()) await saveTermTemplates();
   document.getElementById('storageModeLabel').textContent = storageModeLabel();
   updateSyncStatusLabel();
@@ -3158,13 +3159,79 @@ function parseTcmbXml(text){
   });
   return out;
 }
-async function fetchTcmbRates(dateStr){
+async function fetchTcmbRatesDirect(dateStr){
   const res = await fetch(tcmbUrl(dateStr));
   if(!res.ok) throw new Error('HTTP '+res.status);
   const rates = parseTcmbXml(await res.text());
   if(!rates.USD && !rates.EUR) throw new Error('Kur bulunamadı (resmi tatil olabilir)');
   return rates;
 }
+// Sunucu tarafı (Supabase edge function "tcmb-rates"): tarayıcı TCMB'ye doğrudan erişemese de çalışır
+async function fetchTcmbRange(from, to){
+  if(typeof sb !== 'undefined' && sb && sb.functions){
+    const { data, error } = await sb.functions.invoke('tcmb-rates', { body:{ from, to } });
+    if(error) throw new Error(error.message || 'Kur servisi hatası');
+    if(data && data.error) throw new Error(data.error);
+    return { rates:data.rates||{}, missing:data.missing||[], skipped:data.skipped||[], failed:data.failed||[] };
+  }
+  const r = await fetchTcmbRatesDirect(from);
+  return { rates:{ [from]:r }, missing:[], skipped:[], failed:[] };
+}
+async function fetchTcmbRates(dateStr){
+  const d = await fetchTcmbRange(dateStr, dateStr);
+  if(d.rates[dateStr]) return d.rates[dateStr];
+  if(d.skipped.includes(dateStr)) throw new Error('hafta sonu: TCMB kur yayımlamaz, önceki iş günü kuru kullanılır');
+  if(d.missing.includes(dateStr)) throw new Error('bu tarih için TCMB kuru yok (resmi tatil ya da henüz yayımlanmadı)');
+  throw new Error('kur alınamadı, daha sonra tekrar dene');
+}
+
+/* ---- Otomatik kur güncelleme: belgelerin ihtiyaç duyduğu iş günlerinin kurlarını TCMB'den tamamlar ---- */
+let fxSync = { running:false, at:0, ok:null, msg:'', added:0 };
+function foreignDocDates(){
+  const set = new Set(), add = (cur, d)=>{ if(cur && cur!=='₺' && d) set.add(d); };
+  shipments.forEach(s=>{ add(s.currency||'€', s.date); if(shipIsInvoiced(s)) add(s.currency||'€', s.invoiceDate); (s.payments||[]).forEach(p=>add(s.currency||'€', p.date)); });
+  purchaseInvoices.forEach(pi=>{ add(pi.currency||'€', pi.date); (pi.payments||[]).forEach(p=>add(pi.currency||'€', p.date)); });
+  stockMoves.forEach(m=>{ if((Number(m.qty)||0) > 0) add(m.currency||'€', m.date); });
+  return [...set].sort();
+}
+function neededRateDays(){
+  const docs = foreignDocDates(); if(!docs.length) return [];
+  const noRate = new Set((acctSettings && acctSettings.fxNoRate) || []), end = todayStr(), days = [];
+  for(let d = addDaysStr(docs[0], -7); d <= end; d = addDaysStr(d, 1)){
+    const wd = new Date(d+'T00:00:00Z').getUTCDay();
+    if(wd===0 || wd===6 || noRate.has(d)) continue;
+    const r = fxRates[d]; if(r && r.USD && r.EUR) continue;
+    days.push(d);
+  }
+  return days.slice(-400);
+}
+async function autoSyncFxRates(force){
+  if(fxSync.running) return;
+  if(!force && fxSync.at && Date.now() - fxSync.at < 10*60*1000) return;
+  if(!acctSettings) acctSettings = defaultAcctSettings();
+  const days = neededRateDays();
+  if(!days.length){ fxSync = { running:false, at:Date.now(), ok:true, msg:'Tüm kurlar güncel', added:0 }; return; }
+  fxSync = { running:true, at:Date.now(), ok:null, msg:'', added:0 };
+  let added = 0, failed = 0;
+  try{
+    let i = 0; const noRate = new Set(acctSettings.fxNoRate || []);
+    while(i < days.length){
+      const from = days[i], limit = addDaysStr(from, 45); let j = i; while(j < days.length && days[j] <= limit) j++;
+      const res = await fetchTcmbRange(from, days[j-1]);
+      Object.keys(res.rates).forEach(d=>{ fxRates[d] = Object.assign({}, res.rates[d], fxRates[d]||{}); added++; });   // elle girilmiş kur varsa o kalır
+      res.missing.forEach(d=>{ if(d < todayStr()) noRate.add(d); });                                                 // yalnız geçmiş tatiller kalıcı işaretlenir
+      failed += res.failed.length; i = j;
+    }
+    acctSettings.fxNoRate = [...noRate].sort().slice(-800);
+    await saveFxRates(); await saveAcctSettings();
+    fxSync = { running:false, at:Date.now(), ok:failed===0, added,
+      msg:(added ? added+' günün kuru TCMB\'den alındı' : 'Yeni kur yok')+(failed ? ' · '+failed+' gün geçici olarak alınamadı, sonra tekrar denenecek' : '') };
+  }catch(e){
+    fxSync = { running:false, at:Date.now(), ok:false, added, msg:'Kur servisine ulaşılamadı: '+e.message };
+  }
+  if(activeTab==='accounting' || activeTab==='finance') render();
+}
+
 function parseRatesPaste(text){
   const rows = parseDelimited(text, detectDelimiter(text)), out = {}; let bad = 0;
   rows.forEach(r=>{
@@ -3388,7 +3455,7 @@ function renderFinancePage(){
       <div class="kpi-card"><div class="kpi-label">30 Gün İçinde</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.soon)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Sonrası${tot.none>0.005?' · vade tanımsız '+fmtTL(tot.none):''}</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.later)}</div></div>
     </div>
-    ${tot.missing ? `<p class="hint" style="color:var(--danger);">${tot.missing} belgede belge tarihi için TCMB kuru kayıtlı değil; bu belgeler TL toplamlara girmiyor. Muhasebe sayfasındaki "Kurlar" bölümünden ekle.</p>` : ''}
+    ${tot.missing ? `<p class="hint" style="color:var(--danger);">${tot.missing} belgede belge tarihi için TCMB kuru kayıtlı değil; bu belgeler TL toplamlara girmiyor. Kurlar TCMB'den otomatik alınır; alınamadıysa Muhasebe sayfasındaki "Kurlar" bölümünden elle ekle.</p>` : ''}
     ${groups.length ? `<table class="items-table"><thead><tr><th>${word.party}</th><th class="num">Fatura</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th class="num">Vadesi geçmiş</th><th class="num">30 gün içinde</th><th class="num">Sonrası</th><th></th></tr></thead><tbody>
       ${groups.map(g=>{
         const openItems = g.items.filter(i=>i.remaining>0.005).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
@@ -3411,6 +3478,7 @@ function renderFinancePage(){
   </div>`;
 }
 function attachFinanceHandlers(){
+  autoSyncFxRates();
   document.querySelectorAll('[data-fin-view]').forEach(el=>{ el.onclick = ()=>{ financeView = el.dataset.finView; render(); }; });
   document.querySelectorAll('[data-bulk]').forEach(el=>{ el.onclick = ()=>{ const [k, key] = el.dataset.bulk.split('|'); openBulkPaymentModal(k, key); }; });
   document.querySelectorAll('[data-fin-pay]').forEach(el=>{ el.onclick = ()=>{ const [k, id] = el.dataset.finPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else openPurchasePaymentsModal(id); }; });
@@ -3632,7 +3700,10 @@ function renderAccountingPage(){
 
     <div class="section-div"></div>
     <div class="subhead">Kurlar (TCMB)</div>
-    <p class="hint">Döviz belgeleri, belge tarihindeki TCMB kuruyla TL'ye çevrilir. Kuru yayımlanmayan günlerde (hafta sonu, tatil) bir önceki iş gününün kuru alınır. Alacaklar döviz alış, borçlar döviz satış kuruyla çevrilir (aşağıdan değiştirilebilir; müşavirle teyit edilecek).</p>
+    <p class="hint">Kurlar TCMB'den otomatik alınır (uygulama açılışında ve bu sayfalar açıldığında, belgelerin ihtiyaç duyduğu iş günleri için). Döviz belgeleri belge tarihindeki kurla TL'ye çevrilir; kur yayımlanmayan günlerde (hafta sonu, tatil) önceki iş gününün kuru kullanılır. Alacaklar döviz alış, borçlar döviz satış kuruyla çevrilir (aşağıdan değiştirilebilir; müşavirle teyit edilecek).</p>
+    ${(()=>{ const st = fxSync, pend = neededRateDays().length;
+      return `<div class="ready-note" style="margin-bottom:12px;${st.ok===false?'border-left-color:var(--danger);':''}">${st.running ? 'Kurlar TCMB\'den alınıyor…' : (st.ok===false ? '⚠ '+escapeHtml(st.msg) : (st.msg ? '✓ '+escapeHtml(st.msg) : 'Kurlar otomatik güncellenir'))}${pend && !st.running ? ' · '+pend+' iş günü için kur bekleniyor' : ''} <button class="link-btn" id="fx-sync-now" style="margin-left:8px;">Şimdi güncelle</button></div>`; })()}
+    <p class="hint" style="margin-bottom:6px;">Elle giriş (kur servisi çalışmazsa ya da bir kuru düzeltmek istersen):</p>
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
       <div class="field" style="margin:0;"><label>Tarih</label><input id="fx-date" type="date" value="${todayStr()}"></div>
       <div class="field mono" style="margin:0;width:100px;"><label>USD alış</label><input id="fx-usdb" type="text"></div><div class="field mono" style="margin:0;width:100px;"><label>USD satış</label><input id="fx-usds" type="text"></div>
@@ -3654,6 +3725,7 @@ function renderAccountingPage(){
   </div>`;
 }
 function attachAccountingHandlers(){
+  autoSyncFxRates();
   const $ = id=>document.getElementById(id);
   $('ac-period').onchange = e=>{ acctPeriod = e.target.value; if(acctPeriod==='custom'){ const [f,t] = periodRange('year'); acctFrom = acctFrom||f; acctTo = acctTo||t; } render(); };
   ['ac-from','ac-to'].forEach(id=>{ $(id).onchange = e=>{ if(id==='ac-from') acctFrom = e.target.value; else acctTo = e.target.value; render(); }; });
@@ -3669,11 +3741,12 @@ function attachAccountingHandlers(){
     if(!Object.keys(e).length){ alert('En az bir para biriminin alış ve satış kurunu gir (ör. 41,2010).'); return; }
     fxRates[d] = Object.assign(fxRates[d]||{}, e); await saveFxRates(); render();
   };
+  $('fx-sync-now').onclick = ()=>{ autoSyncFxRates(true); render(); };
   $('fx-fetch').onclick = async ()=>{
     const d = $('fx-date').value; if(!d){ alert('Tarih seç.'); return; }
     const btn = $('fx-fetch'); btn.disabled = true; btn.textContent = 'Çekiliyor…';
     try{ const r = await fetchTcmbRates(d); fxRates[d] = Object.assign(fxRates[d]||{}, r); await saveFxRates(); render(); }
-    catch(err){ btn.disabled = false; btn.textContent = "TCMB'den Çek"; alert("TCMB'den kur çekilemedi ("+err.message+"). Tarayıcılar TCMB sitesine doğrudan erişimi engelleyebilir; kuru elle gir ya da aşağıdaki toplu yapıştırmayı kullan."); }
+    catch(err){ btn.disabled = false; btn.textContent = "TCMB'den Çek"; alert("Kur alınamadı: "+err.message+". Gerekirse kuru elle gir ya da toplu yapıştırmayı kullan."); }
   };
   $('fx-paste-go').onclick = async ()=>{
     const { rates, bad } = parseRatesPaste($('fx-paste').value); const n = Object.keys(rates).length;
