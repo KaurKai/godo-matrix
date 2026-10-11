@@ -402,6 +402,8 @@
   .empty-state{display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;color:var(--gray-500);}
   .empty-state .word{font-family:var(--font-display);font-size:24px;margin-bottom:8px;letter-spacing:.05em;}
   .empty-state p{font-size:13px;max-width:340px;text-align:center;line-height:1.6;}
+.camp-act{font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:12px;}
+.camp-act:hover{color:var(--ink);}
 </style>
 <style id="userDocStyle"></style>
 </head>
@@ -1363,6 +1365,7 @@ function renderSidebarPrimaryNav(){
       <div class="tab ${activeTab==='invoices'?'active':''}" data-tab="invoices">Faturalar</div>
       <div class="tab ${activeTab==='finance'?'active':''}" data-tab="finance">Alacak / Borç</div>
       <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
+      <div class="tab ${activeTab==='campaign'?'active':''}" data-tab="campaign">Kampanya</div>
       <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
       <div class="tab ${activeTab==='stock'?'active':''}" data-tab="stock">Stok</div>
       <div class="tab ${activeTab==='suppliers'||activeTab==='supplierDetail'?'active':''}" data-tab="suppliers">Tedarikçiler</div>
@@ -1448,6 +1451,7 @@ function render(){
   else if(activeTab==='purchase') c.innerHTML = renderPurchasePage();
   else if(activeTab==='poEditor') c.innerHTML = renderPoEditor();
   else if(activeTab==='poPrint') c.innerHTML = renderPoPrint();
+  else if(activeTab==='campaign'){ c.innerHTML = renderCampaignShell(); loadOutreach().then(()=>{ if(activeTab==='campaign') refreshCampBody(); }); }
   else if(activeTab==='openOrders'){ c.innerHTML = renderOpenOrdersShell(); loadOpenOrderBodies(true).then(()=>{ if(activeTab==='openOrders') refreshOpenBody(); }); }
   else if(activeTab==='shipments') c.innerHTML = renderShipmentsPage();
   else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
@@ -4226,6 +4230,123 @@ async function fillBackupReminder(){
   const go = document.getElementById('backupReminderGo'); if(go) go.onclick = ()=>{ activeTab = 'settingsBackups'; render(); };
 }
 
+/* ---------------- KAMPANYA (tanıtım maili dizisi: 0 → 3 → 7 → 15 → 35. gün, 42. gün cevap yoksa pasif) ---------------- */
+let outreachRows = [], outreachErr = '', campFilter = 'aktif', campSearch = '';
+const CAMP_STEP_LABEL = ['Henüz gönderilmedi','Tanıtım gönderildi','1. hatırlatma gönderildi','2. hatırlatma gönderildi','3. hatırlatma gönderildi','Son hatırlatma gönderildi'];
+const CAMP_NEXT_LABEL = ['Tanıtım maili','1. hatırlatma (3. gün)','2. hatırlatma (7. gün)','3. hatırlatma (15. gün)','Son hatırlatma (35. gün)','Pasife alınacak (42. gün)'];
+const CAMP_STATUS = { aktif:'Dizide', yanit:'Yanıt verdi', pasif:'Pasif · cevap vermiyor', cikis:'Çıkış istedi', iptal:'İptal' };
+const CAMP_HIST = { tanitim:'Tanıtım maili', hatirlatma1:'1. hatırlatma', hatirlatma2:'2. hatırlatma', hatirlatma3:'3. hatırlatma', son_hatirlatma:'Son hatırlatma', cevap:'Cevap geldi', pasif:'Pasife alındı', cikis:'Çıkış istedi', aktif:'Yeniden aktif', not:'Not' };
+
+function campIsDue(r){ return r.status==='aktif' && (r.step===0 || (r.next_due_at && r.next_due_at <= todayStr())); }
+async function loadOutreach(){
+  try{ const { data, error } = await sb.from('outreach').select('*').order('created_at', { ascending:false }); if(error) throw error; outreachRows = data || []; outreachErr = ''; }
+  catch(e){ outreachErr = (e && e.message) || 'okunamadı'; }
+  if(!outreachErr) await syncOutreachCustomers();
+}
+// Kampanya kaydı ↔ Matrix carisi: aday cariyi aç/bağla, aşamayı ve son temas tarihini güncel tut
+async function syncOutreachCustomers(){
+  let changed = false; const links = [];
+  const byEmail = new Map(); customers.forEach(c=>(c.contacts||[]).forEach(ct=>{ if(ct.email) byEmail.set(String(ct.email).toLowerCase(), c); }));
+  for(const r of outreachRows){
+    let c = r.customer_id ? customers.find(x=>x.id===r.customer_id) : null;
+    if(!c) c = byEmail.get(String(r.email).toLowerCase()) || customers.find(x=>foldTR(x.name||'')===foldTR(r.company||''));
+    if(!c){
+      c = Object.assign(emptyCustomer(), { id:crypto.randomUUID(), name:upperCompanyName(r.company||''), stage:'Aday', source:'Apollo · Kampanya', tags:['Kampanya'], contacts:[] });
+      customers.push(c); changed = true;
+    }
+    if(!(c.contacts||[]).some(ct=>String(ct.email||'').toLowerCase()===String(r.email).toLowerCase())){
+      c.contacts = (c.contacts||[]).concat([{ id:crypto.randomUUID(), name:r.name||'', title:r.title||'', phone:r.phone||'', email:r.email, linkedin:r.linkedin||'' }]); changed = true;
+    }
+    const want = r.status==='cikis' ? 'Aranmayacak' : r.status==='yanit' ? 'İletişimde' : r.status==='pasif' ? 'Pasif' : 'Aday';
+    const soft = ['', 'Aday', 'Pasif'];                                   // ileri aşamadaki (İlgili, Teklif, Müşteri…) cari geri çekilmez
+    if(c.stage!==want && (r.status==='cikis' || soft.includes(c.stage||''))){ c.stage = want; changed = true; }
+    const last = r.last_sent_at ? String(r.last_sent_at).slice(0,10) : '';
+    if(last && (!c.lastContactDate || c.lastContactDate < last)){ c.lastContactDate = last; changed = true; }
+    if(r.customer_id!==c.id){ r.customer_id = c.id; links.push(r); }
+  }
+  if(changed) await saveCustomers();
+  for(const r of links){ try{ await sb.from('outreach').update({ customer_id:r.customer_id, updated_at:new Date().toISOString() }).eq('id', r.id); }catch(e){} }
+}
+async function campUpdate(r, patch, hist){
+  const history = (r.history||[]).concat(hist ? [Object.assign({ at:new Date().toISOString() }, hist)] : []);
+  const { error } = await sb.from('outreach').update(Object.assign({}, patch, { history, updated_at:new Date().toISOString() })).eq('id', r.id);
+  if(error){ alert('Kaydedilemedi: '+error.message); return false; }
+  await loadOutreach(); refreshCampBody(); return true;
+}
+function renderCampaignShell(){
+  return `<div class="panel" style="max-width:1220px;">
+    <h2>Kampanya</h2>
+    <p class="hint">Tanıtım maili dizisi: ilk mail → <b>3.</b>, <b>7.</b>, <b>15.</b> ve <b>35. gün</b> aynı mail dizisinde hatırlatma → <b>42. gün</b> cevap yoksa pasif. Cevap gelince dizi durur. Hafta sonuna denk gelen adım pazartesiye kayar. Kişiler kampanya sohbetinde eklenir, burada aday cari olarak açılır.</p>
+    <div class="field" style="max-width:340px;margin:12px 0 16px;"><input id="campSearch" placeholder="Kişi, firma, e-posta ara..." value="${escapeAttr(campSearch)}"></div>
+    <div id="campBody"><p class="hint">Yükleniyor…</p></div></div>`;
+}
+function renderCampaignBody(){
+  if(outreachErr) return `<p class="hint" style="color:var(--danger);">Kampanya kayıtları okunamadı: ${escapeHtml(outreachErr)}</p>`;
+  const all = outreachRows, sent = all.filter(r=>r.step>=1), cnt = {
+    aktif:all.filter(r=>r.status==='aktif').length, vade:all.filter(campIsDue).length, yanit:all.filter(r=>r.status==='yanit').length,
+    pasif:all.filter(r=>r.status==='pasif').length, cikis:all.filter(r=>r.status==='cikis').length, '':all.length };
+  const rate = sent.length ? Math.round(cnt.yanit / sent.length * 100) : 0;
+  let list = all.filter(r=> campFilter==='' ? true : campFilter==='vade' ? campIsDue(r) : r.status===campFilter);
+  if(campSearch){ const q = foldTR(campSearch.trim()); list = list.filter(r=>foldTR([r.name,r.company,r.email,r.title].join(' ')).includes(q)); }
+  list = list.slice().sort((a,b)=> (campIsDue(b)-campIsDue(a)) || String(a.next_due_at||'9999').localeCompare(String(b.next_due_at||'9999')) || String(b.created_at).localeCompare(String(a.created_at)));
+  const funnel = [1,2,3,4,5].map(s=>all.filter(r=>r.status==='aktif' && r.step===s).length);
+  const FILTERS = [['aktif','Dizide'],['vade','Bugün vadesi gelen'],['yanit','Yanıt verdi'],['pasif','Pasif'],['cikis','Çıkış istedi'],['','Tümü']];
+  const chip = st=>`<span class="stage-chip st-${st==='yanit'?'hazir':st==='aktif'?'sevk':'tedarik'}">${escapeHtml(CAMP_STATUS[st]||st)}</span>`;
+  return `
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:0 0 16px;">
+      <div class="kpi-card"><div class="kpi-label">Dizide</div><div class="kpi-value">${cnt.aktif}</div><div class="kpi-sub">aktif kişi</div></div>
+      <div class="kpi-card"><div class="kpi-label">Bugün Vadesi Gelen</div><div class="kpi-value" style="color:${cnt.vade?'var(--danger)':'var(--ink)'};">${cnt.vade}</div><div class="kpi-sub">gönderim / pasife alma</div></div>
+      <div class="kpi-card"><div class="kpi-label">Yanıt Verdi</div><div class="kpi-value">${cnt.yanit}</div><div class="kpi-sub">yanıt oranı %${rate} (${sent.length} kişiye mail gitti)</div></div>
+      <div class="kpi-card"><div class="kpi-label">Pasif / Çıkış</div><div class="kpi-value">${cnt.pasif} / ${cnt.cikis}</div><div class="kpi-sub">cevap vermiyor / almak istemiyor</div></div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;font-size:11.5px;color:var(--gray-500);">Dizideki dağılım:
+      ${['Tanıtım','1. hatırlatma','2. hatırlatma','3. hatırlatma','Son hatırlatma'].map((l,i)=>`<span class="mono" style="padding:2px 8px;border:1px solid var(--hairline-strong);border-radius:10px;">${l}: <b>${funnel[i]}</b></span>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">${FILTERS.map(([k,l])=>`<span class="version-pill ${campFilter===k?'active':''}" data-camp-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}</div>
+    ${list.length ? `<table class="items-table"><thead><tr><th>Kişi</th><th>Firma</th><th>E-posta</th><th>Aşama</th><th>Sonraki adım</th><th>Durum</th><th></th></tr></thead><tbody>
+      ${list.map(r=>`<tr>
+        <td><b style="font-size:12.5px;">${escapeHtml(r.name||'')}</b><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(r.title||'')}</div></td>
+        <td style="font-size:12px;">${escapeHtml(upperCompanyName(r.company||''))}</td>
+        <td class="mono" style="font-size:11.5px;">${escapeHtml(r.email||'')}</td>
+        <td style="font-size:11.5px;">${escapeHtml(CAMP_STEP_LABEL[r.step]||'')}${r.first_sent_at?`<div style="font-size:10.5px;color:var(--gray-500);">ilk mail ${escapeHtml(formatDate(String(r.first_sent_at).slice(0,10)))}</div>`:''}</td>
+        <td style="font-size:11.5px;">${r.status==='aktif' ? `${escapeHtml(CAMP_NEXT_LABEL[r.step]||'')}${r.next_due_at?`<div style="font-size:10.5px;">${escapeHtml(formatDate(r.next_due_at))} ${dueBadgeHtml(r.next_due_at,false)}</div>`:'<div style="font-size:10.5px;color:var(--danger);">gönderilmeyi bekliyor</div>'}` : '<span style="color:var(--gray-300);">—</span>'}</td>
+        <td>${chip(r.status)}</td>
+        <td style="white-space:nowrap;text-align:right;">
+          <span data-camp-hist="${r.id}" class="camp-act">Geçmiş</span>
+          ${r.status==='aktif' ? `<span data-camp-reply="${r.id}" class="camp-act">Cevap geldi</span>` : ''}
+          ${r.status==='aktif' ? `<span data-camp-passive="${r.id}" class="camp-act">Pasife al</span>` : r.status==='pasif' ? `<span data-camp-reactivate="${r.id}" class="camp-act">Aktife al</span>` : ''}
+          ${r.status!=='cikis' ? `<span data-camp-optout="${r.id}" class="camp-act" style="color:var(--danger);">Çıkış</span>` : ''}
+          ${r.customer_id ? `<span data-camp-cust="${escapeAttr(r.customer_id)}" class="camp-act" style="color:var(--ink);">Cari</span>` : ''}
+        </td></tr>`).join('')}
+    </tbody></table>` : `<p class="hint">${(campSearch||campFilter) ? 'Filtreyle eşleşen kayıt yok.' : 'Henüz kampanyaya eklenmiş kişi yok. Kişiler kampanya sohbetinde Apollo\'dan bulunup eklenir.'}</p>`}`;
+}
+function refreshCampBody(){
+  const el = document.getElementById('campBody'); if(!el) return;
+  el.innerHTML = renderCampaignBody();
+  const byId = id=>outreachRows.find(r=>r.id===id);
+  el.querySelectorAll('[data-camp-filter]').forEach(p=>{ p.onclick = ()=>{ campFilter = p.dataset.campFilter; refreshCampBody(); }; });
+  el.querySelectorAll('[data-camp-hist]').forEach(b=>{ b.onclick = ()=>openCampHistory(byId(b.dataset.campHist)); });
+  el.querySelectorAll('[data-camp-reply]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campReply); if(!confirm(r.name+' cevap verdi olarak işaretlensin mi? Dizi durur.')) return; await campUpdate(r, { status:'yanit', replied_at:new Date().toISOString(), next_due_at:null }, { kind:'cevap', note:'Elle işaretlendi' }); }; });
+  el.querySelectorAll('[data-camp-passive]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campPassive); if(!confirm(r.name+' pasife alınsın mı? Hatırlatmalar durur.')) return; await campUpdate(r, { status:'pasif', next_due_at:null }, { kind:'pasif', note:'Elle pasife alındı' }); }; });
+  el.querySelectorAll('[data-camp-reactivate]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campReactivate); if(!confirm(r.name+' yeniden diziye alınsın mı? Sıradaki adım bugün vadeli olur.')) return; await campUpdate(r, { status:'aktif', next_due_at:todayStr() }, { kind:'aktif' }); }; });
+  el.querySelectorAll('[data-camp-optout]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campOptout); if(!confirm(r.name+' bir daha mail almak istemiyor olarak işaretlensin mi? Bu kişiye kampanyadan mail gitmez, cari "Aranmayacak" olur.')) return; await campUpdate(r, { status:'cikis', next_due_at:null }, { kind:'cikis' }); }; });
+  el.querySelectorAll('[data-camp-cust]').forEach(b=>{ b.onclick = ()=>{ selectedCustomerId = b.dataset.campCust; activeTab = 'customerDetail'; render(); }; });
+}
+function openCampHistory(r){
+  if(!r) return;
+  const h = (r.history||[]).slice().reverse();
+  const ov = openSimpleModal(`<h2>${escapeHtml(r.name||'')} — ${escapeHtml(upperCompanyName(r.company||''))}</h2>
+    <p class="hint">${escapeHtml(r.email||'')} · ${escapeHtml(CAMP_STATUS[r.status]||r.status)} · ${escapeHtml(CAMP_STEP_LABEL[r.step]||'')}</p>
+    ${h.length ? `<table class="items-table"><thead><tr><th>Tarih</th><th>Olay</th><th>Ayrıntı</th></tr></thead><tbody>
+      ${h.map(e=>`<tr><td class="mono" style="font-size:11.5px;white-space:nowrap;">${escapeHtml(fmtDateTimeTR(e.at))}</td><td style="font-size:12px;">${escapeHtml(CAMP_HIST[e.kind]||e.kind||'')}</td><td style="font-size:11.5px;color:var(--gray-500);">${escapeHtml(e.subject||e.snippet||e.note||'')}</td></tr>`).join('')}
+    </tbody></table>` : '<p class="hint">Henüz gönderim yok.</p>'}
+    <div class="actions-row" style="margin-top:14px;"><button class="btn btn-ghost" id="ch-close">Kapat</button></div>`, 760);
+  ov.querySelector('#ch-close').onclick = ()=>ov.remove();
+}
+function attachCampaignShell(){
+  const s = document.getElementById('campSearch');
+  if(s) s.oninput = e=>{ campSearch = e.target.value; refreshCampBody(); };
+}
+
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
 let stockMoves = [];
 let lastStockImport = null;
@@ -5892,6 +6013,7 @@ function attachHandlers(){
   if(activeTab==='poEditor') attachPoEditorHandlers();
   if(activeTab==='poPrint') attachPoPrintHandlers();
   if(activeTab==='openOrders') attachOpenOrdersShell();
+  if(activeTab==='campaign') attachCampaignShell();
   if(activeTab==='shipments') attachShipmentsHandlers();
   if(activeTab==='invoices'){ autoSyncFxRates(); attachInvoicesHandlers(); }
   if(activeTab==='finance') attachFinanceHandlers();
@@ -6757,7 +6879,7 @@ function attachCustomerEditHandlers(overlay){
 let prodEditing = null;
 /* ---------------- BULK PRODUCT IMPORT (Excel / Paste) ---------------- */
 /* ---------------- MÜŞTERİ İÇE AKTARMA (Apollo / Sheets / CSV) ---------------- */
-const CUSTOMER_STAGES = ['Aday','İletişimde','İlgili','Teklif','Müşteri','Kaybedildi','Aranmayacak'];
+const CUSTOMER_STAGES = ['Aday','İletişimde','İlgili','Teklif','Müşteri','Pasif','Kaybedildi','Aranmayacak'];
 const STAGE_CLASS = {'Aday':'st-lead','İletişimde':'st-contacted','İlgili':'st-interested','Teklif':'st-quote','Müşteri':'st-customer','Kaybedildi':'st-lost','Aranmayacak':'st-dnc'};
 const IMPORT_FIELDS = [
   {key:'company', label:'Firma Adı'}, {key:'website', label:'Web Sitesi'}, {key:'address', label:'Adres'},
