@@ -3,10 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://laopdoxuxvcwgcjghdim.supabase.co wss://laopdoxuxvcwgcjghdim.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
 <title>Godo Matrix</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="vendor/supabase-js-2.117.3.umd.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
 <style>
   :root{
     --ink:#0E0E0E;
@@ -400,14 +403,22 @@
     <div style="font-size:11px;color:#8B8A82;letter-spacing:1.5px;margin-bottom:28px;text-transform:uppercase;">Teklif &amp; CRM Sistemi</div>
 
     <div id="authError" style="display:none;background:rgba(220,60,60,.12);border:1px solid rgba(220,60,60,.4);color:#ff8a8a;font-size:12px;padding:9px 11px;border-radius:4px;margin-bottom:14px;"></div>
+    <div id="authInfo" style="display:none;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#d8d7cf;font-size:12px;padding:9px 11px;border-radius:4px;margin-bottom:14px;line-height:1.5;"></div>
 
-    <input id="authEmail" type="email" placeholder="E-posta" autocomplete="username" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;margin-bottom:10px;box-sizing:border-box;">
-    <input id="authPassword" type="password" placeholder="Şifre" autocomplete="current-password" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;margin-bottom:16px;box-sizing:border-box;">
+    <form id="authForm" method="post" action="#" onsubmit="return false;" novalidate>
+      <input id="authEmail" name="email" type="email" placeholder="E-posta" autocomplete="username" autocapitalize="off" spellcheck="false" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;box-sizing:border-box;margin-bottom:10px;">
+      <input id="authPassword" name="password" type="password" placeholder="Şifre" autocomplete="current-password" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;box-sizing:border-box;margin-bottom:16px;">
+      <button id="btnAuthSignIn" type="submit" style="width:100%;background:#F4F4F2;color:#0E0E0E;border:none;font-size:13px;font-weight:700;padding:11px;border-radius:4px;cursor:pointer;">Giriş Yap</button>
+    </form>
 
-    <button id="btnAuthSignIn" style="width:100%;background:#F4F4F2;color:#0E0E0E;border:none;font-size:13px;font-weight:700;padding:11px;border-radius:4px;cursor:pointer;margin-bottom:10px;">Giriş Yap</button>
-    <button id="btnAuthSignUp" style="width:100%;background:transparent;color:#F4F4F2;border:1px dashed rgba(255,255,255,.3);font-size:12.5px;font-weight:600;padding:10px;border-radius:4px;cursor:pointer;">Hesap Oluştur</button>
+    <form id="mfaForm" method="post" action="#" onsubmit="return false;" novalidate style="display:none;">
+      <div style="font-size:12px;color:#B8B7AE;margin-bottom:12px;line-height:1.6;">Doğrulama uygulamandaki (Google Authenticator, Microsoft Authenticator vb.) 6 haneli kodu gir.</div>
+      <input id="authCode" name="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);color:#F4F4F2;font-size:13px;padding:11px 12px;border-radius:4px;box-sizing:border-box;margin-bottom:14px;text-align:center;letter-spacing:8px;font-family:'JetBrains Mono',monospace;font-size:18px;">
+      <button id="btnAuthVerify" type="submit" style="width:100%;background:#F4F4F2;color:#0E0E0E;border:none;font-size:13px;font-weight:700;padding:11px;border-radius:4px;cursor:pointer;margin-bottom:10px;">Doğrula</button>
+      <button id="btnAuthBack" type="button" style="width:100%;background:transparent;color:#B8B7AE;border:none;font-size:12px;padding:8px;cursor:pointer;">Farklı hesapla giriş yap</button>
+    </form>
 
-    <div id="authHint" style="font-size:10.5px;color:#8B8A82;margin-top:16px;line-height:1.6;">İlk girişte "Hesap Oluştur"a basıp aynı bilgilerle kayıt ol; e-postana gelen onay linkine tıkladıktan sonra buradan giriş yapabilirsin.</div>
+    <div id="authHint" style="font-size:10.5px;color:#8B8A82;margin-top:18px;line-height:1.6;">Bu sistem yalnızca yetkili kullanıcılar içindir.</div>
   </div>
 </div>
 
@@ -663,7 +674,7 @@ let saveTimer = null;
 const SUPABASE_URL = 'https://laopdoxuxvcwgcjghdim.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_1nISfnWk7beTCi0DDnquYA_IALD-58G';
 const sb = (typeof window.supabase !== 'undefined')
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false, flowType:'pkce' } })
   : null;
 let currentUser = null;       // { id, email } — giriş yapan kullanıcı
 let pendingSync = [];         // ağ hatası sırasında biriken, gönderilemeyen yazımlar: {key, value|null(=delete)}
@@ -1320,7 +1331,7 @@ function validateQuoteForSend(){
 
 /* ---------------- RENDER: MAIN ---------------- */
 function isEditorTab(t){ return t==='info' || t==='items' || t==='terms' || t==='preview'; }
-function isSettingsTab(t){ return t==='settingsCompany' || t==='settingsTemplates' || t==='settingsDesign' || t==='settingsTrash'; }
+function isSettingsTab(t){ return t==='settingsCompany' || t==='settingsTemplates' || t==='settingsDesign' || t==='settingsTrash' || t==='settingsSecurity'; }
 
 
 function renderSidebarPrimaryNav(){
@@ -1385,6 +1396,7 @@ function renderTabsBar(){
         <div class="tab ${activeTab==='settingsCompany'?'active':''}" data-tab="settingsCompany">Şirket Profili</div>
         <div class="tab ${activeTab==='settingsTemplates'?'active':''}" data-tab="settingsTemplates">Şablonlar</div>
         <div class="tab ${activeTab==='settingsDesign'?'active':''}" data-tab="settingsDesign">PDF Tasarımı</div>
+        <div class="tab ${activeTab==='settingsSecurity'?'active':''}" data-tab="settingsSecurity">Güvenlik</div>
         <div class="tab ${activeTab==='settingsTrash'?'active':''}" data-tab="settingsTrash">Çöp Kutusu ${trash.length?`<span class="nav-badge">${trash.length}</span>`:''}</div>
       </div>`;
   }
@@ -1434,6 +1446,7 @@ function render(){
   else if(activeTab==='settingsTemplates') c.innerHTML = renderSettingsTemplates();
   else if(activeTab==='settingsDesign') c.innerHTML = renderSettingsDesign();
   else if(activeTab==='settingsTrash') c.innerHTML = renderSettingsTrash();
+  else if(activeTab==='settingsSecurity') c.innerHTML = renderSettingsSecurity();
   else if(activeTab==='info') c.innerHTML = renderInfo();
   else if(activeTab==='items') c.innerHTML = renderItems();
   else if(activeTab==='terms') c.innerHTML = renderTerms();
@@ -1550,7 +1563,7 @@ function renderDashboard(){
           <div class="dash-quote-row" data-id="${q.id}">
             <div>
               <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
-              <div class="dqr-meta">${q.quoteNo||''} · ${q.date||''}</div>
+              <div class="dqr-meta">${escapeHtml(q.quoteNo||'')} · ${escapeHtml(q.date||'')}</div>
             </div>
             <div style="text-align:right;">
               <div class="mono dqr-total">${q.currency||'€'} ${fmt(q.total)}</div>
@@ -1593,7 +1606,7 @@ function renderQuotesList(){
     </div>
     ${quotesViewMode==='kanban' ? renderQuotesKanban(rows) : (rows.length ? rows.map(q=>`
       <div class="dash-quote-row" data-id="${q.id}">
-        <div><div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="dqr-meta">${q.quoteNo||''} · ${q.date||''}</div></div>
+        <div><div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="dqr-meta">${escapeHtml(q.quoteNo||'')} · ${escapeHtml(q.date||'')}</div></div>
         <div style="text-align:right;"><div class="mono dqr-total">${q.currency||'€'} ${fmt(q.total)}</div><div class="dqr-status status-${(q.status||'').replace(/\s/g,'')}">${q.status||''}</div></div>
       </div>`).join('') : '<p class="hint">Filtreyle eşleşen teklif yok.</p>')}
   </div>`;
@@ -1620,7 +1633,7 @@ function renderQuotesKanban(rows){
                 <div class="kc-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
                 <span class="kc-drag-handle" title="Sürükle">⠿</span>
               </div>
-              <div class="kc-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''}</div>
+              <div class="kc-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''}</div>
               <div class="kc-total mono">${q.currency||'€'} ${fmt(q.total)}</div>
             </div>`).join('')}
         </div>
@@ -3153,35 +3166,12 @@ function normDateInput(s){
   if((m = t.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/))) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
   return '';
 }
-function tcmbUrl(dateStr){ const [y,m,d] = dateStr.split('-'); return `https://www.tcmb.gov.tr/kurlar/${y}${m}/${d}${m}${y}.xml`; }
-function parseTcmbXml(text){
-  const doc = new DOMParser().parseFromString(text, 'text/xml'), out = {};
-  doc.querySelectorAll('Currency').forEach(el=>{
-    const code = el.getAttribute('CurrencyCode') || el.getAttribute('Kod');
-    if(code!=='USD' && code!=='EUR') return;
-    const num = tag=>{ const n = el.querySelector(tag); return n ? parseFloat(n.textContent) : NaN; };
-    const unit = num('Unit') || 1, buy = num('ForexBuying')/unit, sell = num('ForexSelling')/unit;
-    if(buy > 0 && sell > 0) out[code] = { buy, sell };
-  });
-  return out;
-}
-async function fetchTcmbRatesDirect(dateStr){
-  const res = await fetch(tcmbUrl(dateStr));
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  const rates = parseTcmbXml(await res.text());
-  if(!rates.USD && !rates.EUR) throw new Error('Kur bulunamadı (resmi tatil olabilir)');
-  return rates;
-}
-// Sunucu tarafı (Supabase edge function "tcmb-rates"): tarayıcı TCMB'ye doğrudan erişemese de çalışır
 async function fetchTcmbRange(from, to){
-  if(typeof sb !== 'undefined' && sb && sb.functions){
-    const { data, error } = await sb.functions.invoke('tcmb-rates', { body:{ from, to } });
-    if(error) throw new Error(error.message || 'Kur servisi hatası');
-    if(data && data.error) throw new Error(data.error);
-    return { rates:data.rates||{}, missing:data.missing||[], skipped:data.skipped||[], failed:data.failed||[] };
-  }
-  const r = await fetchTcmbRatesDirect(from);
-  return { rates:{ [from]:r }, missing:[], skipped:[], failed:[] };
+  if(typeof sb === 'undefined' || !sb || !sb.functions) throw new Error('kur servisi kullanılamıyor (oturum yok)');
+  const { data, error } = await sb.functions.invoke('tcmb-rates', { body:{ from, to } });
+  if(error) throw new Error(error.message || 'kur servisi hatası');
+  if(data && data.error) throw new Error(data.error);
+  return { rates:data.rates||{}, missing:data.missing||[], skipped:data.skipped||[], failed:data.failed||[] };
 }
 async function fetchTcmbRates(dateStr){
   const d = await fetchTcmbRange(dateStr, dateStr);
@@ -5894,6 +5884,8 @@ function attachHandlers(){
     };
   }
 
+  if(activeTab==='settingsSecurity') loadSecurityState();
+
   if(activeTab==='settingsTrash'){
     document.querySelectorAll('[data-trash-restore]').forEach(el=>{
       el.onclick = async ()=>{ await restoreFromTrash(el.dataset.trashRestore); render(); };
@@ -7136,50 +7128,213 @@ function showAuthError(msg){
 function hideAuthError(){
   document.getElementById('authError').style.display = 'none';
 }
+/* ---------------- GİRİŞ GÜVENLİĞİ: oturum, iki adımlı doğrulama, hareketsizlik, çıkışta temizlik ---------------- */
+const ACT_KEY = 'godo-last-activity', IDLE_KEY = 'godo-idle-min', LOCK_KEY = 'godo-auth-lock', REASON_KEY = 'godo-signout-reason';
+let mfaFactorId = null, mfaUser = null, idleTimer = null, lastMark = 0, signingOut = false;
+
+function authBusy(on){ ['btnAuthSignIn','btnAuthVerify'].forEach(id=>{ const b = document.getElementById(id); if(b){ b.disabled = on; b.style.opacity = on ? '.6' : '1'; } }); }
+function showAuthInfo(msg){ const el = document.getElementById('authInfo'); if(el){ el.textContent = msg; el.style.display = 'block'; } }
+function authLockState(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)||'{}'); }catch(e){ return {}; } }
+function authLockRemaining(){ return Math.max(0, Math.ceil(((authLockState().until||0) - Date.now())/1000)); }
+function registerAuthFailure(){
+  const n = (authLockState().n||0) + 1, secs = n >= 5 ? Math.min(300, 15*Math.pow(2, n-5)) : 0;   // 5. hatadan sonra 15, 30, 60… sn (en çok 5 dk)
+  try{ localStorage.setItem(LOCK_KEY, JSON.stringify({ n, until: secs ? Date.now()+secs*1000 : 0 })); }catch(e){}
+}
+function clearAuthFailures(){ try{ localStorage.removeItem(LOCK_KEY); }catch(e){} }
+function authErrorText(error){
+  const m = String((error && error.message) || '').toLowerCase(), st = error && error.status;
+  if(st===429 || m.includes('rate limit') || m.includes('too many')) return 'Çok fazla deneme yapıldı. Birkaç dakika bekleyip tekrar dene.';
+  if((error && error.name==='AuthRetryableFetchError') || m.includes('fetch') || m.includes('network')) return 'Sunucuya ulaşılamıyor. Bağlantını kontrol edip tekrar dene.';
+  return 'E-posta veya şifre hatalı.';          // hesap var/yok bilgisini sızdırmayan tek genel mesaj
+}
+
+/* ---- Hareketsizlik: süre dolunca oturum kapanır ---- */
+function idleMinutes(){ const v = parseInt(localStorage.getItem(IDLE_KEY)); return [15,30,60,120].includes(v) ? v : 30; }
+function touchActivity(force){ const now = Date.now(); if(force || now - lastMark > 5000){ lastMark = now; try{ localStorage.setItem(ACT_KEY, String(now)); }catch(e){} } }
+function idleExpired(){ const t = parseInt(localStorage.getItem(ACT_KEY)); return !!t && (Date.now() - t) > idleMinutes()*60000; }
+function startIdleWatcher(){
+  if(idleTimer) return;
+  touchActivity(true);
+  ['pointerdown','keydown','scroll','touchstart','mousemove'].forEach(ev=>window.addEventListener(ev, ()=>touchActivity(false), { passive:true }));
+  idleTimer = setInterval(()=>{ if(idleExpired()) secureSignOut('idle'); }, 20000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && idleExpired()) secureSignOut('idle'); });
+}
+
+/* ---- Çıkış: oturumu kapat, bu cihazdaki iş verisi kopyasını sil ---- */
+function clearLocalCaches(){
+  try{ Object.keys(localStorage).filter(k=>k.startsWith('godo::') || k===ACT_KEY).forEach(k=>localStorage.removeItem(k)); }catch(e){}
+  try{ sessionStorage.clear(); }catch(e){}
+}
+async function secureSignOut(reason, opts){
+  if(signingOut) return; signingOut = true; opts = opts || {};
+  try{ if(!opts.skipFlush && pendingSync && pendingSync.length) await Promise.race([ retryPendingSync(), new Promise(r=>setTimeout(r, 4000)) ]); }catch(e){}
+  try{ if(sb) await sb.auth.signOut(opts.global ? { scope:'global' } : undefined); }catch(e){}
+  clearLocalCaches();
+  if(reason){ try{ sessionStorage.setItem(REASON_KEY, reason); }catch(e){} }
+  location.reload();
+}
+async function manualSignOut(){
+  if(pendingSync && pendingSync.length){
+    try{ await Promise.race([ retryPendingSync(), new Promise(r=>setTimeout(r, 4000)) ]); }catch(e){}
+    if(pendingSync.length && !confirm('Sunucuya gönderilmemiş değişiklikler var. Çıkarsan bu cihazdaki kopya silinecek ve bu değişiklikler kaybolur. Yine de çıkılsın mı?')) return;
+  }
+  secureSignOut('', { skipFlush:true });
+}
+
+/* ---- Giriş akışı ---- */
+async function proceedAfterAuth(user){
+  let aal;
+  try{ const r = await sb.auth.mfa.getAuthenticatorAssuranceLevel(); if(r.error) throw r.error; aal = r.data; }
+  catch(e){ showAuthError('Güvenlik düzeyi doğrulanamadı. Bağlantını kontrol edip tekrar dene.'); return; }
+  if(aal.nextLevel==='aal2' && aal.currentLevel!=='aal2'){ await showMfaStep(user); return; }
+  await enterApp(user);
+}
+async function showMfaStep(user){
+  let factor = null;
+  try{ const { data, error } = await sb.auth.mfa.listFactors(); if(error) throw error; factor = (data.totp||[])[0]; }catch(e){}
+  if(!factor){ showAuthError('İki adımlı doğrulama bilgisi alınamadı. Tekrar giriş yap.'); try{ await sb.auth.signOut(); }catch(e){} return; }
+  mfaFactorId = factor.id; mfaUser = user;
+  document.getElementById('authForm').style.display = 'none';
+  document.getElementById('mfaForm').style.display = 'block';
+  hideAuthError(); const c = document.getElementById('authCode'); c.value = ''; c.focus();
+}
+async function onAuthSubmit(e){
+  e.preventDefault(); hideAuthError();
+  if(!sb) return;
+  const rem = authLockRemaining();
+  if(rem > 0){ showAuthError('Çok fazla hatalı deneme. '+rem+' sn sonra tekrar dene.'); return; }
+  const email = document.getElementById('authEmail').value.trim(), pw = document.getElementById('authPassword');
+  if(!email || !pw.value){ showAuthError('E-posta ve şifre gerekli.'); return; }
+  authBusy(true);
+  let res; try{ res = await sb.auth.signInWithPassword({ email, password:pw.value }); }catch(err){ res = { error:err }; }
+  authBusy(false); pw.value = '';
+  if(res.error){ registerAuthFailure(); showAuthError(authErrorText(res.error)); return; }
+  clearAuthFailures();
+  await proceedAfterAuth(res.data.user);
+}
+async function onMfaSubmit(e){
+  e.preventDefault(); hideAuthError();
+  const rem = authLockRemaining();
+  if(rem > 0){ showAuthError('Çok fazla hatalı deneme. '+rem+' sn sonra tekrar dene.'); return; }
+  const input = document.getElementById('authCode'), code = input.value.replace(/\D/g,'');
+  if(code.length !== 6){ showAuthError('6 haneli kodu gir.'); return; }
+  authBusy(true);
+  let res; try{ res = await sb.auth.mfa.challengeAndVerify({ factorId:mfaFactorId, code }); }catch(err){ res = { error:err }; }
+  authBusy(false); input.value = '';
+  if(res.error){ registerAuthFailure(); showAuthError('Kod hatalı ya da süresi dolmuş. Yeni kodla tekrar dene.'); return; }
+  clearAuthFailures();
+  await enterApp(mfaUser);
+}
 async function enterApp(user){
   currentUser = user;
   storageMode = 'supabase';
   document.getElementById('authGate').style.display = 'none';
   document.getElementById('app').style.display = '';
+  startIdleWatcher();
   await loadAll();
 }
 async function boot(){
-  if(!sb){
-    // Supabase istemcisi yüklenemedi (CDN'e erişilemedi vb.) — yerel moda düş, giriş ekranını atla
-    document.getElementById('authGate').style.display = 'none';
-    document.getElementById('app').style.display = '';
-    storageMode = 'local';
-    await loadAll();
+  // Varsayılan durum "kilitli": giriş ekranı görünür, uygulama gizli. Yalnızca doğrulanmış oturum uygulamayı açar.
+  document.getElementById('authForm').addEventListener('submit', onAuthSubmit);
+  document.getElementById('mfaForm').addEventListener('submit', onMfaSubmit);
+  document.getElementById('btnAuthBack').onclick = ()=>secureSignOut('', { skipFlush:true });
+  let why = ''; try{ why = sessionStorage.getItem(REASON_KEY) || ''; sessionStorage.removeItem(REASON_KEY); }catch(e){}
+  if(why==='idle') showAuthInfo('Güvenlik için, hareketsizlik nedeniyle oturum kapatıldı. Tekrar giriş yap.');
+  if(why==='global') showAuthInfo('Tüm cihazlardaki oturumlar kapatıldı.');
+  if(!sb){ showAuthError('Giriş servisi yüklenemedi. Bağlantını kontrol edip sayfayı yenile.'); authBusy(true); return; }
+  let session = null;
+  try{ const r = await sb.auth.getSession(); session = r.data && r.data.session; }catch(e){}
+  if(session && session.user){
+    if(idleExpired()){ await secureSignOut('idle', { skipFlush:true }); return; }
+    await proceedAfterAuth(session.user);
     return;
   }
-  const { data: { session } } = await sb.auth.getSession();
-  if(session && session.user){ await enterApp(session.user); return; }
-  // Giriş ekranı zaten görünür durumda; buton olaylarını bağla
-  document.getElementById('btnAuthSignIn').onclick = async ()=>{
-    hideAuthError();
-    const email = document.getElementById('authEmail').value.trim();
-    const password = document.getElementById('authPassword').value;
-    if(!email || !password){ showAuthError('E-posta ve şifre gerekli.'); return; }
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if(error){ showAuthError(error.message==='Invalid login credentials' ? 'E-posta veya şifre hatalı.' : error.message); return; }
-    await enterApp(data.user);
-  };
-  document.getElementById('btnAuthSignUp').onclick = async ()=>{
-    hideAuthError();
-    const email = document.getElementById('authEmail').value.trim();
-    const password = document.getElementById('authPassword').value;
-    if(!email || !password){ showAuthError('E-posta ve şifre gerekli.'); return; }
-    if(password.length < 6){ showAuthError('Şifre en az 6 karakter olmalı.'); return; }
-    const { data, error } = await sb.auth.signUp({ email, password });
-    if(error){ showAuthError(error.message); return; }
-    if(data.session){ await enterApp(data.user); }
-    else { document.getElementById('authHint').textContent = 'Kayıt oluşturuldu. E-postana gelen onay linkine tıkladıktan sonra "Giriş Yap" ile devam edebilirsin.'; document.getElementById('authHint').style.color = '#9be89b'; }
-  };
+  if(navigator.onLine) clearLocalCaches();    // oturum yoksa bu cihazda iş verisi kopyası tutma
 }
-document.getElementById('btnSignOut').onclick = async ()=>{
-  if(sb) await sb.auth.signOut();
-  location.reload();
-};
+
+/* ---------------- AYARLAR · GÜVENLİK ---------------- */
+let secState = { loading:true, verified:null, unverified:[], enroll:null, msg:'', ok:true, err:'' };
+function renderSettingsSecurity(){
+  return `<div class="panel" style="max-width:760px;"><h2>Güvenlik</h2><p class="hint">Hesap, iki adımlı doğrulama, şifre ve oturum ayarları.</p><div id="secBody"><p class="hint">Yükleniyor…</p></div></div>`;
+}
+async function loadSecurityState(){
+  secState.loading = true;
+  try{
+    const { data, error } = await sb.auth.mfa.listFactors(); if(error) throw error;
+    secState.verified = (data.totp||[])[0] || null;
+    secState.unverified = (data.all||[]).filter(f=>f.status==='unverified');
+    secState.err = '';
+  }catch(e){ secState.err = e.message || 'Bilgi alınamadı'; }
+  secState.loading = false; refreshSecurityBody();
+}
+function renderSecurityBody(){
+  const u = currentUser || {}, e = secState.enroll;
+  const msg = secState.msg ? `<div class="ready-note" style="margin-bottom:14px;${secState.ok?'':'border-left-color:var(--danger);'}">${escapeHtml(secState.msg)}</div>` : '';
+  return `${msg}
+    <div class="subhead" style="margin-top:6px;">Hesap</div>
+    <p style="font-size:13px;margin:6px 0 18px;"><b>${escapeHtml(u.email||'—')}</b>${u.last_sign_in_at?` <span style="color:var(--gray-500);font-size:12px;">· son giriş ${escapeHtml(new Date(u.last_sign_in_at).toLocaleString('tr-TR'))}</span>`:''}</p>
+
+    <div class="subhead">İki Adımlı Doğrulama (TOTP)</div>
+    ${secState.err ? `<p class="hint" style="color:var(--danger);">Durum alınamadı: ${escapeHtml(secState.err)}</p>` : secState.loading ? '<p class="hint">Yükleniyor…</p>' :
+      secState.verified ? `<p style="font-size:13px;margin:6px 0 10px;">✓ <b>Etkin.</b> Girişte parolana ek olarak doğrulama uygulamasındaki 6 haneli kod istenir; veritabanı da kodsuz oturumlara kapalıdır.</p>
+        <button class="btn btn-ghost" id="sec-mfa-off">Devre Dışı Bırak</button>`
+      : e ? `<p class="hint" style="margin-bottom:10px;">Authenticator uygulamasıyla (Google Authenticator, Microsoft Authenticator, 1Password…) QR kodu tara, çıkan 6 haneli kodu gir.</p>
+        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-bottom:12px;"><img src="${escapeAttr(e.qr)}" alt="QR" width="170" height="170" style="background:#fff;padding:6px;border-radius:4px;">
+          <div><div style="font-size:11px;color:var(--gray-500);margin-bottom:4px;">QR okunmazsa bu anahtarı elle gir:</div><div class="mono" style="font-size:12px;word-break:break-all;max-width:300px;user-select:all;">${escapeHtml(e.secret)}</div>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:10px;max-width:300px;">Bu anahtarı güvenli bir yerde sakla: telefonu kaybedersen hesaba girmek için gerekir.</div></div></div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;"><div class="field mono" style="margin:0;width:150px;"><label>6 haneli kod</label><input id="sec-mfa-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>
+          <button class="btn btn-primary" id="sec-mfa-confirm">Doğrula ve Etkinleştir</button><button class="btn btn-ghost" id="sec-mfa-cancel">Vazgeç</button></div>`
+      : `<p style="font-size:13px;margin:6px 0 10px;">Kapalı. Etkinleştirirsen parola tek başına yetmez; telefonundaki kod da gerekir.</p><button class="btn btn-primary" id="sec-mfa-on">Etkinleştir</button>`}
+
+    <div class="section-div"></div>
+    <div class="subhead">Şifre Değiştir</div>
+    <div class="grid2"><div class="field"><label>Yeni şifre</label><input id="sec-pw1" type="password" autocomplete="new-password"></div><div class="field"><label>Yeni şifre (tekrar)</label><input id="sec-pw2" type="password" autocomplete="new-password"></div></div>
+    <p class="hint" style="margin-top:-4px;">En az 12 karakter; harf ve rakam içermeli, e-postan olmamalı.</p>
+    <button class="btn btn-ghost" id="sec-pw-save">Şifreyi Güncelle</button>
+
+    <div class="section-div"></div>
+    <div class="subhead">Oturum</div>
+    <div class="field" style="max-width:300px;"><label>Hareketsizlikte otomatik çıkış</label>
+      <select id="sec-idle">${[15,30,60,120].map(m=>`<option value="${m}" ${idleMinutes()===m?'selected':''}>${m} dakika</option>`).join('')}</select></div>
+    <button class="btn btn-ghost" id="sec-signout-all">Tüm Cihazlardan Çıkış Yap</button>`;
+}
+function refreshSecurityBody(){
+  const el = document.getElementById('secBody'); if(!el) return;
+  el.innerHTML = renderSecurityBody();
+  const $ = id=>document.getElementById(id), setMsg = (m,ok)=>{ secState.msg = m; secState.ok = ok; };
+  if($('sec-mfa-on')) $('sec-mfa-on').onclick = async ()=>{
+    for(const f of secState.unverified){ try{ await sb.auth.mfa.unenroll({ factorId:f.id }); }catch(e){} }     // yarım kalmış eski kayıtları temizle
+    const { data, error } = await sb.auth.mfa.enroll({ factorType:'totp', friendlyName:'Godo Matrix '+todayStr(), issuer:'Godo Matrix' });
+    if(error){ setMsg('Etkinleştirilemedi: '+error.message+' (Supabase panelinde iki adımlı doğrulama kapalı olabilir).', false); }
+    else { secState.enroll = { id:data.id, qr:data.totp.qr_code, secret:data.totp.secret }; setMsg('', true); }
+    refreshSecurityBody();
+  };
+  if($('sec-mfa-cancel')) $('sec-mfa-cancel').onclick = async ()=>{ try{ await sb.auth.mfa.unenroll({ factorId:secState.enroll.id }); }catch(e){} secState.enroll = null; setMsg('', true); await loadSecurityState(); };
+  if($('sec-mfa-confirm')) $('sec-mfa-confirm').onclick = async ()=>{
+    const code = $('sec-mfa-code').value.replace(/\D/g,'');
+    if(code.length !== 6){ setMsg('6 haneli kodu gir.', false); refreshSecurityBody(); return; }
+    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId:secState.enroll.id, code });
+    if(error){ setMsg('Kod hatalı ya da süresi dolmuş, yenisiyle tekrar dene.', false); refreshSecurityBody(); return; }
+    secState.enroll = null; setMsg('İki adımlı doğrulama etkinleştirildi. Bir sonraki girişte kod istenecek.', true); await loadSecurityState();
+  };
+  if($('sec-mfa-off')) $('sec-mfa-off').onclick = async ()=>{
+    if(!confirm('İki adımlı doğrulama kapatılsın mı? Hesap yalnızca parolayla korunur.')) return;
+    const { error } = await sb.auth.mfa.unenroll({ factorId:secState.verified.id });
+    setMsg(error ? 'Kapatılamadı: '+error.message : 'İki adımlı doğrulama kapatıldı.', !error); await loadSecurityState();
+  };
+  $('sec-pw-save').onclick = async ()=>{
+    const p1 = $('sec-pw1').value, p2 = $('sec-pw2').value, email = ((currentUser||{}).email||'').toLowerCase();
+    if(p1.length < 12 || !/[A-Za-z]/.test(p1) || !/\d/.test(p1)) setMsg('Şifre en az 12 karakter olmalı ve harf ile rakam içermeli.', false);
+    else if(p1.toLowerCase().includes(email.split('@')[0]) && email) setMsg('Şifre e-postanı içermemeli.', false);
+    else if(p1 !== p2) setMsg('Şifreler aynı değil.', false);
+    else { const { error } = await sb.auth.updateUser({ password:p1 }); setMsg(error ? 'Şifre güncellenemedi: '+error.message : 'Şifre güncellendi.', !error); }
+    refreshSecurityBody();
+  };
+  $('sec-idle').onchange = e=>{ try{ localStorage.setItem(IDLE_KEY, e.target.value); }catch(err){} touchActivity(true); };
+  $('sec-signout-all').onclick = ()=>{ if(confirm('Bu cihaz dahil tüm cihazlardaki oturumlar kapatılsın mı?')) secureSignOut('global', { global:true }); };
+}
+
+document.getElementById('btnSignOut').onclick = manualSignOut;
 boot();
 </script>
 
