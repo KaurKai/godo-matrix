@@ -357,6 +357,14 @@
   .list-row .icons span.del:hover{color:var(--danger);}
   .contact-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center;}
   .contact-row.has-title{grid-template-columns:1.1fr .9fr 1fr 1fr auto;}
+  .cust-picker{position:relative;}
+  .cust-picker-list{position:absolute;left:0;right:0;top:100%;margin-top:2px;z-index:30;background:#fff;border:1px solid var(--hairline-strong);border-radius:4px;box-shadow:0 10px 28px rgba(0,0,0,.14);max-height:340px;overflow:auto;}
+  .cust-picker-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--hairline);}
+  .cust-picker-item:last-child{border-bottom:none;}
+  .cust-picker-item.active,.cust-picker-item:hover{background:var(--paper-2);}
+  .cp-name{font-size:12.5px;font-weight:700;color:var(--ink);}
+  .cp-meta{font-size:10.5px;color:var(--gray-500);margin-top:1px;}
+  .cust-picker-empty{padding:12px;font-size:12px;color:var(--gray-500);}
   .stage-pill{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:10px;border:1px solid var(--hairline-strong);color:var(--gray-700);background:var(--white);}
   .stage-pill.st-interested,.stage-pill.st-quote{border-color:var(--ink);color:var(--ink);}
   .stage-pill.st-customer{background:var(--ink);border-color:var(--ink);color:#fff;}
@@ -920,6 +928,7 @@ async function loadAll(){
     }));
     await saveTermTemplates();
   }
+  await normalizeCustomerNames();
   if(backfillEnglishTerms()) await saveTermTemplates();
   document.getElementById('storageModeLabel').textContent = storageModeLabel();
   updateSyncStatusLabel();
@@ -1414,7 +1423,7 @@ function renderDashboard(){
   const recent = quotesIndex.slice(0,6);
 
   const byCustomer = {};
-  quotesIndex.forEach(q=>{ const name=q.customerName||'İsimsiz'; byCustomer[name]=(byCustomer[name]||0)+(q.total||0); });
+  quotesIndex.forEach(q=>{ const name=upperCompanyName(q.customerName||'')||'İSİMSİZ'; byCustomer[name]=(byCustomer[name]||0)+(q.total||0); });
   const topCustomers = Object.entries(byCustomer).sort((a,b)=>b[1]-a[1]).slice(0,5);
 
   const today = new Date().toISOString().slice(0,10);
@@ -1446,7 +1455,7 @@ function renderDashboard(){
       ${duePayments.map(q=>`
         <div class="dash-quote-row payment-due-row" data-id="${q.id}" style="padding:10px 4px;">
           <div>
-            <div class="dqr-cust" style="font-size:12.5px;">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
+            <div class="dqr-cust" style="font-size:12.5px;">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
             <div class="dqr-meta">${q.quoteNo||''}${q.invoiceNo?' · Fatura: '+escapeHtml(q.invoiceNo):''}</div>
           </div>
           <div style="text-align:right;">
@@ -1491,7 +1500,7 @@ function renderDashboard(){
         ${recent.length ? recent.map(q=>`
           <div class="dash-quote-row" data-id="${q.id}">
             <div>
-              <div class="dqr-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
+              <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
               <div class="dqr-meta">${q.quoteNo||''} · ${q.date||''}</div>
             </div>
             <div style="text-align:right;">
@@ -1508,8 +1517,8 @@ function renderDashboard(){
 function renderQuotesList(){
   let rows = quotesIndex.slice();
   if(listFilters.search){
-    const s = listFilters.search.toLowerCase();
-    rows = rows.filter(q => (q.customerName||'').toLowerCase().includes(s) || (q.quoteNo||'').toLowerCase().includes(s));
+    const s = foldTR(listFilters.search.trim());
+    rows = rows.filter(q => foldTR(q.customerName||'').includes(s) || foldTR(q.quoteNo||'').includes(s));
   }
   if(listFilters.status) rows = rows.filter(q=>q.status===listFilters.status);
   if(listFilters.from) rows = rows.filter(q=>(q.date||'') >= listFilters.from);
@@ -1535,7 +1544,7 @@ function renderQuotesList(){
     </div>
     ${quotesViewMode==='kanban' ? renderQuotesKanban(rows) : (rows.length ? rows.map(q=>`
       <div class="dash-quote-row" data-id="${q.id}">
-        <div><div class="dqr-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div><div class="dqr-meta">${q.quoteNo||''} · ${q.date||''}</div></div>
+        <div><div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="dqr-meta">${q.quoteNo||''} · ${q.date||''}</div></div>
         <div style="text-align:right;"><div class="mono dqr-total">${q.currency||'€'} ${fmt(q.total)}</div><div class="dqr-status status-${(q.status||'').replace(/\s/g,'')}">${q.status||''}</div></div>
       </div>`).join('') : '<p class="hint">Filtreyle eşleşen teklif yok.</p>')}
   </div>`;
@@ -1559,7 +1568,7 @@ function renderQuotesKanban(rows){
           ${col.map(q=>`
             <div class="kanban-card" draggable="true" data-id="${q.id}">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                <div class="kc-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
+                <div class="kc-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
                 <span class="kc-drag-handle" title="Sürükle">⠿</span>
               </div>
               <div class="kc-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''}</div>
@@ -1615,7 +1624,7 @@ function renderOrdersPage(){
       <div class="dash-quote-row" style="cursor:default;flex-direction:column;align-items:stretch;gap:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div style="cursor:pointer;" data-open="${q.id}">
-            <div class="dqr-cust">${escapeHtml(q.customerName||'İsimsiz Müşteri')}</div>
+            <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
             <div class="dqr-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''} · ${q.date||''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:16px;">
@@ -1669,7 +1678,6 @@ function renderProposalsList(){
 }
 
 function renderProposalInfo(){
-  const custOptions = selectableCustomers(proposal.customer.customerId).map(c=>`<option value="${c.id}" ${proposal.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
   return `
   <div class="panel">
     <h2>Proje Teklifi Bilgileri</h2>
@@ -1693,7 +1701,7 @@ function renderProposalInfo(){
     <div class="section-div"></div>
     <div class="subhead-row"><div class="subhead">Müşteri</div><button class="link-btn" id="p-btnManageCustomers">Cari Kayıtlarını Yönet</button></div>
     <div class="grid2">
-      <div class="field"><label>Cari Seç</label><select id="p-custSelect"><option value="">— Manuel / Kayıtsız —</option>${custOptions}</select></div>
+      <div class="field"><label>Cari Seç</label>${customerPickerHtml('p-custSearch', proposal.customer.customerId)}</div>
       <div class="field"><label>Yetkili | Unvan</label><input id="p-contactName" placeholder="Cafer Usta | Genel Müdür" value="${escapeAttr(proposal.customer.contactName)}"></div>
     </div>
     <div class="field"><label>Firma Adı</label><input id="p-custName" value="${escapeAttr(proposal.customer.name)}"></div>
@@ -2029,10 +2037,90 @@ function renderProposalPreview(){
   </div>`;
 }
 
-function selectableCustomers(selectedId){
-  // Soğuk adaylar (Aday / Aranmayacak) teklif listesini şişirmesin; seçili olan her zaman görünür
-  return customers.filter(c=>c.id===selectedId || (c.stage!=='Aday' && c.stage!=='Aranmayacak')).slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr'));
+/* ---------------- FİRMA ADI BÜYÜK HARF + CARİ ARAMA KUTUSU ---------------- */
+function upperCompanyName(name){
+  // Firma adı hep büyük harf. Türkçe (i→İ) varsayılan; yabancı yasal ek (Inc, GmbH, AG...) varsa İngilizce kuralı (i→I).
+  const s = String(name==null?'':name).replace(/\s+/g,' ').trim();
+  if(!s) return '';
+  const folded = foldTR(s);
+  const turkish = /[çğıöşüÇĞİÖŞÜ]/.test(s) ||
+    /\b(a\.?\s?s|sti|san|tic|sanayi|ticaret|sirketi|anonim|ve|otomasyon|makina|makine|elektrik|elektronik|insaat|gida|tekstil|muhendislik|pazarlama|danismanlik|ithalat|ihracat|mobilya|plastik|kimya|metal)\b/.test(folded);
+  const foreign = /\b(inc|llc|gmbh|corp|corporation|plc|pty|bv|srl|spa|kg|ag|co|company)\b/.test(folded);
+  return s.toLocaleUpperCase(!turkish && foreign ? 'en-US' : 'tr-TR');
 }
+async function normalizeCustomerNames(){
+  // Mevcut cari adlarını bir kez büyük harfe çevirir; bağlı tekliflerin ve görevlerin ad kopyalarını da eşitler
+  const renamed = new Map();
+  customers.forEach(c=>{ const n = upperCompanyName(c.name); if(n && n!==c.name){ renamed.set(c.id, n); c.name = n; } });
+  if(!renamed.size) return;
+  await saveCustomers();
+  let idxChanged = false;
+  quotesIndex.forEach(q=>{ if(q.customerId && renamed.has(q.customerId) && q.customerName!==renamed.get(q.customerId)){ q.customerName = renamed.get(q.customerId); idxChanged = true; } });
+  if(idxChanged) await saveIndex();
+  let tasksChanged = false;
+  tasks.forEach(t=>{ if(t.customerId && renamed.has(t.customerId) && t.customerName!==renamed.get(t.customerId)){ t.customerName = renamed.get(t.customerId); tasksChanged = true; } });
+  if(tasksChanged) await saveTasks();
+}
+
+function customerPickerHtml(inputId, selectedId){
+  const sel = customers.find(c=>c.id===selectedId);
+  return `<div class="cust-picker">
+      <input id="${inputId}" autocomplete="off" placeholder="Firma adını yaz, ara…" value="${escapeAttr(sel?sel.name:'')}">
+      <div class="cust-picker-list" id="${inputId}-list" style="display:none;"></div>
+    </div>
+    ${sel ? `<button class="link-btn" id="${inputId}-clear" style="margin-top:4px;font-size:10.5px;">Seçimi kaldır (kayıtsız / manuel)</button>`
+          : `<p class="hint" style="margin:4px 0 0;font-size:10.5px;">${customers.length} cari içinde ara · seçmezsen aşağıya elle girebilirsin.</p>`}`;
+}
+function attachCustomerPicker(inputId, getSelectedId, onPick){
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(inputId+'-list');
+  const clearBtn = document.getElementById(inputId+'-clear');
+  if(!input || !list) return;
+  let items = [], active = 0;
+  const selectedName = ()=>{ const c = customers.find(x=>x.id===getSelectedId()); return c ? c.name : ''; };
+  function find(q){
+    const s = foldTR(q.trim());
+    const cold = c=>(c.stage==='Aday'||c.stage==='Aranmayacak')?1:0;
+    const starts = c=> s && foldTR(c.name||'').startsWith(s) ? 0 : 1;
+    return customers.filter(c=>!s || customerMatchesSearch(c, s))
+      .sort((a,b)=> starts(a)-starts(b) || cold(a)-cold(b) || (a.name||'').localeCompare(b.name||'','tr'))
+      .slice(0, 8);
+  }
+  function show(q){
+    items = find(q); active = 0;
+    list.innerHTML = items.length ? items.map((c,i)=>{
+      const meta = [(c.contacts||[]).length+' yetkili', [c.city,c.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+      return `<div class="cust-picker-item ${i===0?'active':''}" data-id="${escapeAttr(c.id)}">
+        <div class="cp-name">${escapeHtml(c.name)}${c.stage?` <span class="stage-pill ${STAGE_CLASS[c.stage]||''}">${escapeHtml(c.stage)}</span>`:''}</div>
+        <div class="cp-meta">${escapeHtml(meta)}</div></div>`;
+    }).join('') : `<div class="cust-picker-empty">Eşleşen firma yok — Cariler'den ekleyebilirsin.</div>`;
+    list.style.display = 'block';
+  }
+  function hide(){ list.style.display = 'none'; }
+  function pick(id){ hide(); onPick(id); }
+  input.addEventListener('focus', ()=>{ input.select(); if(!input.value) show(''); else if(input.value!==selectedName()) show(input.value); });
+  input.addEventListener('input', ()=>show(input.value));
+  input.addEventListener('keydown', e=>{
+    if(e.key==='ArrowDown' || e.key==='ArrowUp'){
+      e.preventDefault();
+      if(list.style.display==='none'){ show(input.value); return; }
+      active = (active + (e.key==='ArrowDown'?1:-1) + items.length) % Math.max(items.length,1);
+      [...list.children].forEach((el,i)=>el.classList.toggle('active', i===active));
+    } else if(e.key==='Enter'){
+      e.preventDefault();
+      if(list.style.display!=='none' && items[active]) pick(items[active].id);
+    } else if(e.key==='Escape'){
+      hide(); input.value = selectedName(); input.blur();
+    }
+  });
+  input.addEventListener('blur', ()=>{ setTimeout(()=>{ hide(); input.value = selectedName(); }, 150); });
+  list.addEventListener('mousedown', e=>{
+    const it = e.target.closest('.cust-picker-item');
+    if(it){ e.preventDefault(); pick(it.dataset.id); }
+  });
+  if(clearBtn) clearBtn.onclick = ()=>onPick('');
+}
+
 function customerMatchesSearch(c, s){
   const hay = [c.name,c.taxOffice,c.website,c.city,c.country,c.industry].concat((c.contacts||[]).flatMap(ct=>[ct.name,ct.email,ct.title])).join(' ');
   return foldTR(hay).includes(s);
@@ -2215,7 +2303,7 @@ function renderProductsPage(){
 function renderCustomerDetail(){
   const c = customers.find(x=>x.id===selectedCustomerId);
   if(!c) return '<div class="panel"><p class="hint">Cari bulunamadı.</p></div>';
-  const custQuotes = quotesIndex.filter(q=> q.customerId===c.id || (!q.customerId && q.customerName===c.name)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const custQuotes = quotesIndex.filter(q=> q.customerId===c.id || (!q.customerId && foldTR(q.customerName)===foldTR(c.name))).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const totalRevenue = custQuotes.filter(q=>isOrderStatus(q.status)).reduce((s,q)=>s+(q.total||0),0);
   const openTotal = custQuotes.filter(q=>q.status==='Taslak'||q.status==='Gönderildi').reduce((s,q)=>s+(q.total||0),0);
   const notes = (c.notes||[]).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -2337,7 +2425,8 @@ async function ensureReportsData(){
       }
     });
     if(isOrder){
-      const custKey = full.customer.name || 'İsimsiz Müşteri';
+      const linked = customers.find(x=>x.id===(full.customer||{}).customerId);
+      const custKey = linked ? linked.name : (upperCompanyName(full.customer.name||'') || 'İSİMSİZ MÜŞTERİ');
       if(!customerAgg[custKey]) customerAgg[custKey] = { name:custKey, revenue:0, cost:0, profit:0, hasCost:false, orders:0 };
       const c = customerAgg[custKey];
       c.revenue += quoteRevenue;
@@ -2524,7 +2613,6 @@ function openItemBulkImportModal(){
 }
 
 function renderInfo(){
-  const custOptions = selectableCustomers(quote.customer.customerId).map(c=>`<option value="${c.id}" ${quote.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
   const selectedCust = customers.find(c=>c.id===quote.customer.customerId);
   const contactOptions = selectedCust ? selectedCust.contacts.map(ct=>`<option value="${ct.id}" ${quote.customer.contactId===ct.id?'selected':''}>${escapeHtml(ct.name)}</option>`).join('') : '';
   const siblings = quote.rootId ? quotesIndex.filter(q=>q.rootId===quote.rootId).sort((a,b)=>(a.version||1)-(b.version||1)) : [];
@@ -2579,11 +2667,7 @@ function renderInfo(){
     <div class="grid2">
       <div class="field">
         <label>Cari Seç</label>
-        <select id="f-custSelect">
-          <option value="">— Manuel / Kayıtsız —</option>
-          ${custOptions}
-        </select>
-        <p class="hint" style="margin:4px 0 0;font-size:10.5px;">"Aday" ve "Aranmayacak" aşamasındaki firmalar bu listede görünmez; teklif vermeden önce Cariler'den aşamayı "İlgili"ye çek.</p>
+        ${customerPickerHtml('f-custSearch', quote.customer.customerId)}
       </div>
       <div class="field">
         <label>Yetkili Seç</label>
@@ -3116,8 +3200,8 @@ function attachHandlers(){
     document.getElementById('p-currency').onchange = e=>{ proposal.currency=e.target.value; scheduleProposalSave(); };
     document.getElementById('p-status').onchange = e=>{ proposal.status=e.target.value; scheduleProposalSave(); render(); };
     document.getElementById('p-btnManageCustomers').onclick = ()=>{ activeTab='customers'; render(); };
-    document.getElementById('p-custSelect').onchange = e=>{
-      const c = customers.find(x=>x.id===e.target.value);
+    attachCustomerPicker('p-custSearch', ()=>proposal.customer.customerId, id=>{
+      const c = customers.find(x=>x.id===id);
       if(c){
         proposal.customer.customerId = c.id; proposal.customer.name = c.name; proposal.customer.address = c.address||'';
         proposal.customer.taxOffice = c.taxOffice||''; proposal.customer.taxNo = c.taxNo||''; proposal.customer.website = c.website||'';
@@ -3127,7 +3211,7 @@ function attachHandlers(){
         proposal.customer.customerId = null;
       }
       scheduleProposalSave(); render();
-    };
+    });
     const bindC = (id, key)=>{ const el=document.getElementById(id); if(el) el.oninput = ()=>{ proposal.customer[key]=el.value; scheduleProposalSave(); }; };
     bindC('p-contactName','contactName'); bindC('p-custName','name'); bindC('p-custPhone','phone');
     bindC('p-custEmail','email'); bindC('p-custTaxOffice','taxOffice'); bindC('p-custTaxNo','taxNo'); bindC('p-custAddr','address');
@@ -3567,8 +3651,8 @@ function attachHandlers(){
       p.onclick = async ()=>{ await openQuote(p.dataset.id); };
     });
 
-    document.getElementById('f-custSelect').onchange = e=>{
-      const cust = customers.find(c=>c.id===e.target.value);
+    attachCustomerPicker('f-custSearch', ()=>quote.customer.customerId, id=>{
+      const cust = customers.find(c=>c.id===id);
       if(cust){
         quote.customer.customerId = cust.id;
         quote.customer.name = cust.name;
@@ -3581,7 +3665,7 @@ function attachHandlers(){
         quote.customer.customerId = null;
       }
       scheduleSave(); render();
-    };
+    });
     const refreshShipBtn = document.getElementById('btnRefreshShipping');
     if(refreshShipBtn) refreshShipBtn.onclick = ()=>{
       const cust = customers.find(c=>c.id===quote.customer.customerId);
@@ -4096,6 +4180,7 @@ function customerEditHtml(){
 function attachCustomerEditHandlers(overlay){
   const c = custEditing;
   overlay.querySelector('#cu-name').oninput = e=>c.name=e.target.value;
+  overlay.querySelector('#cu-name').onchange = e=>{ c.name = upperCompanyName(e.target.value); e.target.value = c.name; };
   overlay.querySelector('#cu-address').oninput = e=>c.address=e.target.value;
   overlay.querySelector('#cu-taxOffice').oninput = e=>c.taxOffice=e.target.value;
   overlay.querySelector('#cu-taxNo').oninput = e=>c.taxNo=e.target.value;
@@ -4129,6 +4214,7 @@ function attachCustomerEditHandlers(overlay){
   });
   overlay.querySelector('#cu-cancel').onclick = ()=>{ custEditing=null; overlay.remove(); };
   overlay.querySelector('#cu-save').onclick = ()=>{
+    c.name = upperCompanyName(c.name);
     if(!c.name.trim()){ alert('Firma adı gerekli.'); return; }
     if(!c.id) c.id = crypto.randomUUID();
     const idx = customers.findIndex(x=>x.id===c.id);
@@ -4360,7 +4446,7 @@ async function applyImportPlan(plan, opts){
     let before = null;
     if(c){ before = JSON.stringify(c); }
     else {
-      c = emptyCustomer(); c.id = crypto.randomUUID(); c.name = g.name;
+      c = emptyCustomer(); c.id = crypto.randomUUID(); c.name = upperCompanyName(g.name);
       c.stage = g.stage || opts.defaultStage || 'Aday';
       c.source = opts.source || '';
       customers.push(c); created.push(c.id); newCompanies++;
@@ -4668,13 +4754,13 @@ function openQuickSearch(){
 function renderQuickSearchResults(query){
   const results = document.getElementById('qsResults');
   if(!results) return;
-  const q = query.trim().toLowerCase();
+  const q = foldTR(query.trim());
   if(!q){ results.innerHTML = '<div style="padding:20px 18px;font-size:12.5px;color:var(--gray-500);">Cari adı, ürün kodu/açıklaması ya da teklif numarası yazmaya başla...</div>'; return; }
 
   let items = [];
-  customers.filter(c=>(c.name||'').toLowerCase().includes(q)).slice(0,5).forEach(c=>items.push({type:'Cari', label:c.name, id:c.id}));
-  products.filter(p=>(p.code||'').toLowerCase().includes(q)||(p.desc||'').toLowerCase().includes(q)).slice(0,5).forEach(p=>items.push({type:'Ürün', label:(p.code?p.code+' — ':'')+(p.desc||''), id:p.id}));
-  quotesIndex.filter(qt=>(qt.quoteNo||'').toLowerCase().includes(q)||(qt.customerName||'').toLowerCase().includes(q)).slice(0,5).forEach(qt=>items.push({type:'Teklif', label:(qt.quoteNo||'')+' — '+(qt.customerName||''), id:qt.id}));
+  customers.filter(c=>foldTR(c.name||'').includes(q)).slice(0,5).forEach(c=>items.push({type:'Cari', label:c.name, id:c.id}));
+  products.filter(p=>foldTR(p.code||'').includes(q)||foldTR(p.desc||'').includes(q)).slice(0,5).forEach(p=>items.push({type:'Ürün', label:(p.code?p.code+' — ':'')+(p.desc||''), id:p.id}));
+  quotesIndex.filter(qt=>foldTR(qt.quoteNo||'').includes(q)||foldTR(qt.customerName||'').includes(q)).slice(0,5).forEach(qt=>items.push({type:'Teklif', label:(qt.quoteNo||'')+' — '+(qt.customerName||''), id:qt.id}));
 
   if(!items.length){ results.innerHTML = '<div style="padding:20px 18px;font-size:12.5px;color:var(--gray-500);">Sonuç bulunamadı.</div>'; return; }
 
