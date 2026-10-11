@@ -1335,6 +1335,7 @@ function renderSidebarPrimaryNav(){
       <div class="tab ${activeTab==='list'||editorActive?'active':''}" data-tab="list">Teklifler</div>
       <div class="tab ${activeTab==='proposalsList'||isProposalTab(activeTab)?'active':''}" data-tab="proposalsList">Proje Teklifleri</div>
       <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler ${(()=>{ const n = readyOrders().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
+      <div class="tab ${activeTab==='openOrders'?'active':''}" data-tab="openOrders">Açık Siparişler</div>
       <div class="tab ${activeTab==='shipments'?'active':''}" data-tab="shipments">Sevkiyatlar ${(()=>{ const n = uninvoicedShipments().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
       <div class="tab ${activeTab==='purchase'||activeTab==='poEditor'||activeTab==='poPrint'?'active':''}" data-tab="purchase">Satın Alma</div>
       <div class="tab ${activeTab==='invoices'?'active':''}" data-tab="invoices">Faturalar</div>
@@ -1422,6 +1423,7 @@ function render(){
   else if(activeTab==='purchase') c.innerHTML = renderPurchasePage();
   else if(activeTab==='poEditor') c.innerHTML = renderPoEditor();
   else if(activeTab==='poPrint') c.innerHTML = renderPoPrint();
+  else if(activeTab==='openOrders'){ c.innerHTML = renderOpenOrdersShell(); loadOpenOrderBodies(true).then(()=>{ if(activeTab==='openOrders') refreshOpenBody(); }); }
   else if(activeTab==='shipments') c.innerHTML = renderShipmentsPage();
   else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
   else if(activeTab==='finance') c.innerHTML = renderFinancePage();
@@ -3910,6 +3912,128 @@ function attachInvoicesHandlers(){
   document.querySelectorAll('[data-go-ship]').forEach(el=>{ el.onclick = ()=>{ shipFilter = 'faturalanacak'; activeTab = 'shipments'; render(); }; });
 }
 
+/* ---------------- AÇIK SİPARİŞLER (sevk edilmemiş kalemler, müşteri bazında) ---------------- */
+let openSearch = '', openFilter = '', openSort = 'ad';
+let openOrderCache = { at:0, bodies:{} };
+
+async function loadOpenOrderBodies(force){
+  if(!force && openOrderCache.at && Date.now() - openOrderCache.at < 20000) return;
+  const bodies = {};
+  for(const q of quotesIndex.filter(x=>isOrderStatus(x.status))){
+    const r = await stGet('godo:quote:'+q.id); if(!(r && r.value)) continue;
+    try{ bodies[q.id] = JSON.parse(r.value); }catch(e){}
+  }
+  openOrderCache = { at:Date.now(), bodies };
+}
+function openLineState(l){
+  if(l.ready > 1e-9) return { key:'hazir', label:'Sevke hazır'+(l.ready < l.open - 1e-9 ? ' ('+fmtQty(l.ready)+'/'+fmtQty(l.open)+')' : '') };
+  if(l.purchased < l.ordered - 1e-9) return { key:'sas', label: l.purchased > 1e-9 ? 'SAS eksik ('+fmtQty(l.purchased)+'/'+fmtQty(l.ordered)+')' : 'SAS açılmadı' };
+  return { key:'mal', label:'Mal bekleniyor' };
+}
+function openOrderLines(){
+  const out = [], codes = productCodeMap();
+  quotesIndex.filter(q=>isOrderStatus(q.status)).forEach(q=>{
+    const full = openOrderCache.bodies[q.id]; if(!full) return;
+    const shp = {}; shipsOf(q.id).forEach(s=>(s.lines||[]).forEach(l=>{ const k = l.quoteItemId||l.code; shp[k] = (shp[k]||0) + (parseFloat(l.qty)||0); }));
+    const pur = {}, rec = {}, pos = {};
+    purchaseOrders.forEach(po=>{
+      if(po.salesOrderId!==q.id || po.status==='İptal') return;
+      (po.items||[]).forEach(it=>{
+        if(!it.quoteItemId) return;
+        const pq = parseFloat(it.qty)||0, rq = parseFloat(it.receivedQty)||0;
+        pur[it.quoteItemId] = (pur[it.quoteItemId]||0) + pq; rec[it.quoteItemId] = (rec[it.quoteItemId]||0) + rq;
+        (pos[it.quoteItemId] = pos[it.quoteItemId]||[]).push({ no:po.poNo, sup:supplierName(po.supplierId), got:rq, qty:pq });
+      });
+    });
+    (full.items||[]).filter(it=>it.code||it.desc).forEach(it=>{
+      const ordered = parseFloat(it.qty)||0, shipped = shp[it.id]||0, open = ordered - shipped;
+      if(open <= 1e-9) return;
+      const purchased = pur[it.id]||0, received = rec[it.id]||0, ready = Math.max(0, received - shipped), unit = lineUnitPrice(it);
+      const p = codes.get(foldTR((it.code||'').trim())); const stock = p && isStockTracked(p) ? fifoState(p.id).onHand : null;
+      const line = { q, it, ordered, shipped, open, purchased, received, ready, pos:pos[it.id]||[], unit, amount:open*unit, cur:q.currency||full.currency||'€', stock };
+      line.state = openLineState(line);
+      out.push(line);
+    });
+  });
+  return out;
+}
+function renderOpenOrdersShell(){
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <h2>Açık Siparişler</h2>
+    <p class="hint">İrsaliyesi kesilmemiş, yani henüz sevk edilmemiş kalemler müşteri bazında listelenir. Her kalemin yanında SAS ve mal kabul durumu görünür; sevk edilince listeden düşer.</p>
+    <div class="field" style="max-width:340px;margin:12px 0 16px;"><input id="openSearch" placeholder="Müşteri, teklif no, ürün kodu ara..." value="${escapeAttr(openSearch)}"></div>
+    <div id="openBody"><p class="hint">Siparişler yükleniyor…</p></div>
+  </div>`;
+}
+function renderOpenOrdersBody(){
+  const all = openOrderLines();
+  const cnt = { '':all.length, hazir:all.filter(l=>l.state.key==='hazir').length, mal:all.filter(l=>l.state.key==='mal').length, sas:all.filter(l=>l.state.key==='sas').length };
+  let lines = all.filter(l=>!openFilter || l.state.key===openFilter);
+  if(openSearch){ const s = foldTR(openSearch.trim()); lines = lines.filter(l=>foldTR([l.q.customerName, l.q.quoteNo, l.it.code, l.it.desc].join(' ')).includes(s)); }
+  const groups = new Map();
+  lines.forEach(l=>{
+    const key = l.q.customerId || foldTR(l.q.customerName||'');
+    if(!groups.has(key)) groups.set(key, { name:upperCompanyName(l.q.customerName||'İsimsiz Müşteri'), orders:new Map(), lines:[] });
+    const g = groups.get(key); g.lines.push(l);
+    if(!g.orders.has(l.q.id)) g.orders.set(l.q.id, { q:l.q, lines:[] });
+    g.orders.get(l.q.id).lines.push(l);
+  });
+  const amtOf = arr=>curText(sumByCur(arr.map(l=>({ currency:l.cur, v:l.amount })), x=>x.v));
+  const totalOf = g=>g.lines.reduce((t,l)=>t+l.amount,0);
+  const list = [...groups.values()].sort((a,b)=> openSort==='tutar' ? totalOf(b)-totalOf(a) : a.name.localeCompare(b.name,'tr'));
+  const waiting = uninvoicedShipments().length;
+  const FILTERS = [['','Tümü'],['hazir','Sevke hazır'],['mal','Mal bekleniyor'],['sas','SAS açılmadı / eksik']];
+  return `
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:0 0 20px;">
+      <div class="kpi-card"><div class="kpi-label">Açık Müşteri</div><div class="kpi-value">${new Set(all.map(l=>l.q.customerId||foldTR(l.q.customerName||''))).size}</div><div class="kpi-sub">${new Set(all.map(l=>l.q.id)).size} sipariş</div></div>
+      <div class="kpi-card"><div class="kpi-label">Açık Kalem</div><div class="kpi-value">${all.length}</div><div class="kpi-sub">${fmtQty(all.reduce((t,l)=>t+l.open,0))} adet</div></div>
+      <div class="kpi-card"><div class="kpi-label">Açık Tutar</div><div class="kpi-value" style="font-size:17px;">${amtOf(all)}</div><div class="kpi-sub">KDV hariç</div></div>
+      <div class="kpi-card"><div class="kpi-label">Sevke Hazır</div><div class="kpi-value" style="color:${cnt.hazir?'var(--ink)':'var(--gray-300)'};">${cnt.hazir}</div><div class="kpi-sub">kalem</div></div>
+    </div>
+    ${waiting ? `<div class="ready-note" style="margin-bottom:14px;">Ayrıca <b>${waiting} sevkiyat</b> sevk edilmiş ama faturalanmamış. <span class="link-btn" data-open-go-ship="1" style="margin-left:8px;cursor:pointer;">Sevkiyatlar'da faturaya çevir →</span></div>` : ''}
+    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+      ${FILTERS.map(([k,l])=>`<span class="version-pill ${openFilter===k?'active':''}" data-open-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}
+      <span style="width:1px;height:18px;background:var(--hairline-strong);margin:0 6px;"></span>
+      <span class="version-pill ${openSort==='ad'?'active':''}" data-open-sort="ad">Müşteri A–Z</span><span class="version-pill ${openSort==='tutar'?'active':''}" data-open-sort="tutar">Açık tutara göre</span>
+    </div>
+    ${list.length ? list.map(g=>`
+      <div style="margin-bottom:30px;">
+        <div class="subhead-row" style="margin-bottom:6px;align-items:baseline;"><div class="subhead" style="margin:0;">${escapeHtml(g.name)}</div>
+          <div class="mono" style="font-size:12px;color:var(--gray-500);">${g.orders.size} sipariş · ${g.lines.length} kalem · açık ${amtOf(g.lines)}</div></div>
+        ${[...g.orders.values()].sort((a,b)=>(a.q.date||'').localeCompare(b.q.date||'')).map(o=>`
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:8px 0 4px;">
+            <span class="mono" style="font-size:12px;font-weight:700;cursor:pointer;" data-open-order="${o.q.id}">${escapeHtml(o.q.quoteNo||'')}</span>
+            <span style="font-size:11px;color:var(--gray-500);">${escapeHtml(o.q.date||'')}${o.q.paymentTermDays?' · vade '+escapeHtml(String(o.q.paymentTermDays))+' gün':''}</span>
+            <span class="order-actions" style="margin-left:auto;"><span data-po-create="${o.q.id}">${poCountForOrder(o.q.id)?'+ SAS':'SAS Oluştur'}</span><span data-ship-create="${o.q.id}" style="color:var(--ink);">Sevkiyat Oluştur</span></span>
+          </div>
+          <table class="items-table" style="margin-bottom:6px;"><thead><tr><th>Ürün</th><th>Teslim süresi</th><th class="num">Sipariş</th><th class="num">Sevk</th><th class="num">Açık</th><th class="num">Açık tutar</th><th>Durum</th></tr></thead><tbody>
+            ${o.lines.map(l=>`<tr>
+              <td><div class="mono" style="font-size:12px;">${escapeHtml(l.it.code||'')}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.it.desc||'')}</div></td>
+              <td style="font-size:11.5px;">${escapeHtml(l.it.delivery||'—')}</td>
+              <td class="num mono">${fmtQty(l.ordered)}</td><td class="num mono" style="color:var(--gray-500);">${l.shipped?fmtQty(l.shipped):'—'}</td><td class="num mono" style="font-weight:700;">${fmtQty(l.open)}</td>
+              <td class="num mono" style="font-size:12px;">${l.cur} ${fmt(l.amount)}</td>
+              <td><span class="stage-chip st-${l.state.key==='hazir'?'hazir':l.state.key==='mal'?'sevk':'tedarik'}">${escapeHtml(l.state.label)}</span>
+                ${l.pos.length ? `<div style="font-size:10.5px;color:var(--gray-500);margin-top:3px;">${l.pos.map(p=>escapeHtml(p.no)+' · '+escapeHtml(p.sup)+' ('+fmtQty(p.got)+'/'+fmtQty(p.qty)+' geldi)').join('<br>')}</div>` : ''}
+                ${l.stock!==null && l.stock > 0 ? `<div style="font-size:10.5px;color:var(--gray-500);margin-top:3px;">stokta ${fmtQty(l.stock)} adet</div>` : ''}</td></tr>`).join('')}
+          </tbody></table>`).join('')}
+      </div>`).join('') : `<p class="hint">${(openSearch||openFilter) ? 'Filtreyle eşleşen açık kalem yok.' : 'Açıkta bekleyen sipariş kalemi yok — tüm siparişler sevk edilmiş.'}</p>`}`;
+}
+function refreshOpenBody(){
+  const el = document.getElementById('openBody'); if(!el) return;
+  el.innerHTML = renderOpenOrdersBody();
+  el.querySelectorAll('[data-open-filter]').forEach(p=>{ p.onclick = ()=>{ openFilter = p.dataset.openFilter; refreshOpenBody(); }; });
+  el.querySelectorAll('[data-open-sort]').forEach(p=>{ p.onclick = ()=>{ openSort = p.dataset.openSort; refreshOpenBody(); }; });
+  el.querySelectorAll('[data-open-order]').forEach(p=>{ p.onclick = async ()=>{ await openQuote(p.dataset.openOrder); activeTab='info'; render(); }; });
+  el.querySelectorAll('[data-po-create]').forEach(p=>{ p.onclick = ()=>openPoFromOrderModal(p.dataset.poCreate); });
+  el.querySelectorAll('[data-ship-create]').forEach(p=>{ p.onclick = ()=>openShipmentModal(p.dataset.shipCreate); });
+  el.querySelectorAll('[data-open-go-ship]').forEach(p=>{ p.onclick = ()=>{ shipFilter = 'faturalanacak'; activeTab = 'shipments'; render(); }; });
+}
+function attachOpenOrdersShell(){
+  const s = document.getElementById('openSearch');
+  if(s) s.oninput = e=>{ openSearch = e.target.value; refreshOpenBody(); };
+}
+
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
 let stockMoves = [];
 let lastStockImport = null;
@@ -5575,6 +5699,7 @@ function attachHandlers(){
   if(activeTab==='purchase') attachPurchaseHandlers();
   if(activeTab==='poEditor') attachPoEditorHandlers();
   if(activeTab==='poPrint') attachPoPrintHandlers();
+  if(activeTab==='openOrders') attachOpenOrdersShell();
   if(activeTab==='shipments') attachShipmentsHandlers();
   if(activeTab==='invoices'){ autoSyncFxRates(); attachInvoicesHandlers(); }
   if(activeTab==='finance') attachFinanceHandlers();
