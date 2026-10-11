@@ -356,6 +356,11 @@
   .list-row .icons span:hover{color:var(--ink);}
   .list-row .icons span.del:hover{color:var(--danger);}
   .contact-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center;}
+  .contact-row.has-title{grid-template-columns:1.1fr .9fr 1fr 1fr auto;}
+  .stage-pill{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:10px;border:1px solid var(--hairline-strong);color:var(--gray-700);background:var(--white);}
+  .stage-pill.st-interested,.stage-pill.st-quote{border-color:var(--ink);color:var(--ink);}
+  .stage-pill.st-customer{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .stage-pill.st-lost,.stage-pill.st-dnc{border-style:dashed;color:var(--gray-500);}
   .contact-row input{padding:7px 9px;font-size:12.5px;border:1px solid var(--hairline-strong);border-radius:3px;font-family:var(--font-sans);}
 
   .empty-state{display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;color:var(--gray-500);}
@@ -499,7 +504,8 @@ function emptyCompany(){
 }
 function emptyCustomer(){
   return { id:null, name:"", address:"", taxOffice:"", taxNo:"", website:"", contacts:[], notes:[], tags:[],
-    defaultPaymentTplId:"", defaultDeliveryTplId:"", defaultShippingTplId:"", lastContactDate:"" };
+    defaultPaymentTplId:"", defaultDeliveryTplId:"", defaultShippingTplId:"", lastContactDate:"",
+    stage:"", source:"", industry:"", employees:"", linkedin:"", city:"", country:"" };
 }
 function emptyProduct(){
   return { id:null, code:"", desc:"", delivery:"", listPrice:"", buyDiscount:"", discount:"", category:"", supplierId:"" };
@@ -609,6 +615,9 @@ let listFilters = { search:"", status:"", from:"", to:"" };
 let customerSearch = "";
 let supplierSearch = "";
 let customerTagFilter = "";
+let customerStageFilter = "";
+let customerListLimit = 100;
+let lastImport = null;
 let productSearch = "";
 let productCategoryFilter = "";
 let saveTimer = null;
@@ -869,6 +878,7 @@ async function loadAll(){
   try{ const c = await stGet('godo:company'); if(c && c.value) company = JSON.parse(c.value); }catch(e){}
   if(company.tagline===undefined) company.tagline = 'GLOBAL OPTIMIZATION | DIGITAL OPERATION';
   try{ const cs = await stGet('godo:customers'); if(cs && cs.value) customers = JSON.parse(cs.value); }catch(e){}
+  try{ const li = await stGet('godo:lastImport'); if(li && li.value) lastImport = JSON.parse(li.value); }catch(e){}
   try{ const ps = await stGet('godo:products'); if(ps && ps.value) products = JSON.parse(ps.value); }catch(e){}
   try{ const sp = await stGet('godo:suppliers'); if(sp && sp.value) suppliers = JSON.parse(sp.value); }catch(e){}
   try{ const idx = await stGet('godo:quotes-index'); if(idx && idx.value) quotesIndex = JSON.parse(idx.value); }catch(e){}
@@ -1659,7 +1669,7 @@ function renderProposalsList(){
 }
 
 function renderProposalInfo(){
-  const custOptions = customers.map(c=>`<option value="${c.id}" ${proposal.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+  const custOptions = selectableCustomers(proposal.customer.customerId).map(c=>`<option value="${c.id}" ${proposal.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
   return `
   <div class="panel">
     <h2>Proje Teklifi Bilgileri</h2>
@@ -2019,38 +2029,58 @@ function renderProposalPreview(){
   </div>`;
 }
 
+function selectableCustomers(selectedId){
+  // Soğuk adaylar (Aday / Aranmayacak) teklif listesini şişirmesin; seçili olan her zaman görünür
+  return customers.filter(c=>c.id===selectedId || (c.stage!=='Aday' && c.stage!=='Aranmayacak')).slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr'));
+}
+function customerMatchesSearch(c, s){
+  const hay = [c.name,c.taxOffice,c.website,c.city,c.country,c.industry].concat((c.contacts||[]).flatMap(ct=>[ct.name,ct.email,ct.title])).join(' ');
+  return foldTR(hay).includes(s);
+}
 function renderCustomersPage(){
   let rows = customers.slice();
   if(customerSearch){
-    const s = customerSearch.toLowerCase();
-    rows = rows.filter(c => (c.name||'').toLowerCase().includes(s) || (c.taxOffice||'').toLowerCase().includes(s));
+    const s = foldTR(customerSearch.trim());
+    rows = rows.filter(c => customerMatchesSearch(c, s));
   }
   if(customerTagFilter) rows = rows.filter(c=>(c.tags||[]).includes(customerTagFilter));
+  if(customerStageFilter==='__none') rows = rows.filter(c=>!c.stage);
+  else if(customerStageFilter) rows = rows.filter(c=>c.stage===customerStageFilter);
   rows.sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr'));
-  const allTags = [...new Set(customers.flatMap(c=>c.tags||[]))];
+  const allTags = [...new Set(customers.flatMap(c=>c.tags||[]))].sort((a,b)=>a.localeCompare(b,'tr'));
+  const stageCounts = {}; customers.forEach(c=>{ const k = c.stage||'__none'; stageCounts[k] = (stageCounts[k]||0)+1; });
+  const shown = rows.slice(0, customerListLimit);
+  const filtered = customerSearch || customerTagFilter || customerStageFilter;
 
   return `
   <div class="panel" style="max-width:1080px;">
     <div class="subhead-row" style="margin-bottom:4px;">
       <h2 style="margin:0;">Cariler</h2>
       <div style="display:flex;gap:8px;">
-        <button class="btn btn-ghost" id="btnBulkImportCust">Excel'den / Yapıştır ile Yükle</button>
+        <button class="btn btn-ghost" id="btnBulkImportCust">Apollo / Sheets'ten İçe Aktar</button>
         <button class="btn btn-primary" id="btnNewCustPage">+ Yeni Cari</button>
       </div>
     </div>
-    <p class="hint">${customers.length} kayıtlı cari.</p>
-    <div style="display:flex;gap:10px;margin-bottom:18px;">
-      <div class="field" style="max-width:320px;margin:0;"><input id="custSearch" placeholder="Cari ara..." value="${escapeAttr(customerSearch)}"></div>
-      ${allTags.length ? `<div class="field" style="max-width:200px;margin:0;"><select id="custTagFilter"><option value="">Tüm etiketler</option>${allTags.map(t=>`<option ${customerTagFilter===t?'selected':''}>${t}</option>`).join('')}</select></div>` : ''}
+    <p class="hint">${customers.length} kayıtlı cari${filtered ? ' · '+rows.length+' sonuç' : ''}.
+      ${lastImport ? `<button class="link-btn" id="btnUndoImport" style="margin-left:8px;">Son içe aktarmayı geri al (${formatDate(lastImport.at.slice(0,10))} · ${lastImport.counts.newCompanies} yeni cari)</button>` : ''}</p>
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+      <div class="field" style="max-width:320px;margin:0;"><input id="custSearch" placeholder="Firma, yetkili, e-posta, şehir ara..." value="${escapeAttr(customerSearch)}"></div>
+      <div class="field" style="max-width:200px;margin:0;"><select id="custStageFilter">
+        <option value="">Tüm aşamalar</option>
+        ${CUSTOMER_STAGES.map(st=>`<option value="${st}" ${customerStageFilter===st?'selected':''}>${st} (${stageCounts[st]||0})</option>`).join('')}
+        <option value="__none" ${customerStageFilter==='__none'?'selected':''}>Aşama yok (${stageCounts['__none']||0})</option>
+      </select></div>
+      ${allTags.length ? `<div class="field" style="max-width:200px;margin:0;"><select id="custTagFilter"><option value="">Tüm etiketler</option>${allTags.map(t=>`<option value="${escapeAttr(t)}" ${customerTagFilter===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}</select></div>` : ''}
     </div>
-    ${rows.length ? rows.map(c=>{
+    ${shown.length ? shown.map(c=>{
       const primaryContact = c.contacts && c.contacts[0];
       const hasEmail = primaryContact && primaryContact.email;
+      const place = [c.city, c.country].filter(Boolean).join(', ');
       return `
       <div class="dash-quote-row" data-id="${c.id}">
         <div>
-          <div class="dqr-cust">${escapeHtml(c.name)}</div>
-          <div class="dqr-meta">${c.contacts.length} yetkili${c.taxOffice?' · '+escapeHtml(c.taxOffice):''}${c.website?' · '+escapeHtml(c.website):''}</div>
+          <div class="dqr-cust">${escapeHtml(c.name)} ${c.stage ? `<span class="stage-pill ${STAGE_CLASS[c.stage]||''}" style="margin-left:6px;vertical-align:middle;">${escapeHtml(c.stage)}</span>` : ''}</div>
+          <div class="dqr-meta">${(c.contacts||[]).length} yetkili${place?' · '+escapeHtml(place):''}${c.industry?' · '+escapeHtml(c.industry):''}${c.taxOffice?' · '+escapeHtml(c.taxOffice):''}${c.website?' · '+escapeHtml(c.website):''}</div>
           <div class="dqr-meta" style="margin-top:2px;color:${c.lastContactDate?'var(--gray-500)':'var(--danger)'};">${c.lastContactDate ? 'Son iletişim: '+formatDate(c.lastContactDate) : 'Henüz iletişime geçilmedi'}</div>
           ${(c.tags&&c.tags.length) ? `<div style="margin-top:5px;">${c.tags.map(t=>`<span class="tag-pill ${t==='Sıcak'?'hot':t==='Ilık'?'warm':t==='Soğuk'?'cold':''}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         </div>
@@ -2060,7 +2090,8 @@ function renderCustomersPage(){
           <span data-action="del" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Sil</span>
         </div>
       </div>`;
-    }).join('') : `<p class="hint">${customerSearch ? 'Aramayla eşleşen cari yok.' : 'Henüz kayıtlı cari yok — "+ Yeni Cari" ile başla.'}</p>`}
+    }).join('') : `<p class="hint">${filtered ? 'Filtreyle eşleşen cari yok.' : 'Henüz kayıtlı cari yok — "+ Yeni Cari" ile başla ya da Apollo / Sheets listesini içe aktar.'}</p>`}
+    ${rows.length > shown.length ? `<div style="text-align:center;margin:18px 0 4px;"><button class="btn btn-ghost" id="custShowMore">Daha fazla göster (${rows.length-shown.length} kayıt daha)</button></div>` : ''}
   </div>`;
 }
 
@@ -2203,6 +2234,14 @@ function renderCustomerDetail(){
       </div>
     </div>
     <p class="hint">${escapeHtml(c.address||'—')}${c.taxOffice||c.taxNo?' · '+escapeHtml((c.taxOffice||'')+(c.taxNo?' V.D. '+c.taxNo:'')):''}${c.website?' · <a href="https://'+escapeAttr(c.website.replace(/^https?:\/\//,''))+'" target="_blank" style="color:inherit;">'+escapeHtml(c.website)+'</a>':''}</p>
+    ${(c.stage||c.source||c.industry||c.city||c.country||c.employees||c.linkedin) ? `<p class="hint" style="margin-top:-14px;">${[
+      c.stage ? 'Aşama: <b>'+escapeHtml(c.stage)+'</b>' : '',
+      c.source ? 'Kaynak: '+escapeHtml(c.source) : '',
+      c.industry ? escapeHtml(c.industry) : '',
+      [c.city,c.country].filter(Boolean).length ? escapeHtml([c.city,c.country].filter(Boolean).join(', ')) : '',
+      c.employees ? escapeHtml(c.employees)+' çalışan' : '',
+      safeUrl(c.linkedin) ? '<a href="'+escapeAttr(safeUrl(c.linkedin))+'" target="_blank" rel="noopener" style="color:inherit;">LinkedIn</a>' : ''
+    ].filter(Boolean).join(' · ')}</p>` : ''}
     <p class="hint" style="margin-top:-14px;color:${c.lastContactDate?'var(--gray-500)':'var(--danger)'};">${c.lastContactDate ? 'Son iletişim: '+formatDate(c.lastContactDate) : 'Henüz iletişime geçilmedi'}</p>
     ${(c.tags&&c.tags.length) ? `<div style="margin:-4px 0 16px;">${c.tags.map(t=>`<span class="tag-pill ${t==='Sıcak'?'hot':t==='Ilık'?'warm':t==='Soğuk'?'cold':''}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
 
@@ -2485,7 +2524,7 @@ function openItemBulkImportModal(){
 }
 
 function renderInfo(){
-  const custOptions = customers.map(c=>`<option value="${c.id}" ${quote.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+  const custOptions = selectableCustomers(quote.customer.customerId).map(c=>`<option value="${c.id}" ${quote.customer.customerId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
   const selectedCust = customers.find(c=>c.id===quote.customer.customerId);
   const contactOptions = selectedCust ? selectedCust.contacts.map(ct=>`<option value="${ct.id}" ${quote.customer.contactId===ct.id?'selected':''}>${escapeHtml(ct.name)}</option>`).join('') : '';
   const siblings = quote.rootId ? quotesIndex.filter(q=>q.rootId===quote.rootId).sort((a,b)=>(a.version||1)-(b.version||1)) : [];
@@ -2544,6 +2583,7 @@ function renderInfo(){
           <option value="">— Manuel / Kayıtsız —</option>
           ${custOptions}
         </select>
+        <p class="hint" style="margin:4px 0 0;font-size:10.5px;">"Aday" ve "Aranmayacak" aşamasındaki firmalar bu listede görünmez; teklif vermeden önce Cariler'den aşamayı "İlgili"ye çek.</p>
       </div>
       <div class="field">
         <label>Yetkili Seç</label>
@@ -3252,11 +3292,16 @@ function attachHandlers(){
 
   if(activeTab==='customers'){
     const s = document.getElementById('custSearch');
-    s.oninput = e=>{ customerSearch=e.target.value; render(); const el=document.getElementById('custSearch'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } };
+    s.oninput = e=>{ customerSearch=e.target.value; customerListLimit=100; render(); const el=document.getElementById('custSearch'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } };
     document.getElementById('btnNewCustPage').onclick = ()=>{ custEditing = emptyCustomer(); openCustomerEditModal(); };
     document.getElementById('btnBulkImportCust').onclick = ()=>openCustomerBulkImportModal();
     const tagFilterEl = document.getElementById('custTagFilter');
-    if(tagFilterEl) tagFilterEl.onchange = e=>{ customerTagFilter=e.target.value; render(); };
+    if(tagFilterEl) tagFilterEl.onchange = e=>{ customerTagFilter=e.target.value; customerListLimit=100; render(); };
+    document.getElementById('custStageFilter').onchange = e=>{ customerStageFilter=e.target.value; customerListLimit=100; render(); };
+    const moreBtn = document.getElementById('custShowMore');
+    if(moreBtn) moreBtn.onclick = ()=>{ customerListLimit += 100; render(); };
+    const undoBtn = document.getElementById('btnUndoImport');
+    if(undoBtn) undoBtn.onclick = ()=>undoLastImport();
     document.querySelectorAll('#content .dash-quote-row').forEach(row=>{
       const id = row.dataset.id;
       row.onclick = ()=>{ selectedCustomerId=id; activeTab='customerDetail'; render(); };
@@ -3990,8 +4035,9 @@ function customerEditHtml(){
   const c = custEditing;
   if(!c.tags) c.tags = [];
   const contactsHtml = c.contacts.map((ct,i)=>`
-    <div class="contact-row" data-i="${i}">
+    <div class="contact-row has-title" data-i="${i}">
       <input class="ct-name" placeholder="Ad Soyad" value="${escapeAttr(ct.name)}">
+      <input class="ct-title" placeholder="Ünvan" value="${escapeAttr(ct.title||'')}">
       <input class="ct-phone" placeholder="Telefon" value="${escapeAttr(ct.phone)}">
       <input class="ct-email" placeholder="E-posta" value="${escapeAttr(ct.email)}">
       <span class="row-remove" data-action="removeContact" data-i="${i}">✕</span>
@@ -4005,6 +4051,16 @@ function customerEditHtml(){
       <div class="field"><label>Vergi No</label><input id="cu-taxNo" value="${escapeAttr(c.taxNo)}"></div>
     </div>
     <div class="field"><label>Web Sitesi</label><input id="cu-website" value="${escapeAttr(c.website||'')}" placeholder="ornek.com"></div>
+    <div class="grid2">
+      <div class="field"><label>Aşama</label>
+        <select id="cu-stage"><option value="">— Seçilmedi —</option>${CUSTOMER_STAGES.map(st=>`<option ${c.stage===st?'selected':''}>${st}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Sektör</label><input id="cu-industry" value="${escapeAttr(c.industry||'')}"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Şehir</label><input id="cu-city" value="${escapeAttr(c.city||'')}"></div>
+      <div class="field"><label>Ülke</label><input id="cu-country" value="${escapeAttr(c.country||'')}"></div>
+    </div>
     <div class="field">
       <label>Etiketler</label>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
@@ -4044,6 +4100,10 @@ function attachCustomerEditHandlers(overlay){
   overlay.querySelector('#cu-taxOffice').oninput = e=>c.taxOffice=e.target.value;
   overlay.querySelector('#cu-taxNo').oninput = e=>c.taxNo=e.target.value;
   overlay.querySelector('#cu-website').oninput = e=>c.website=e.target.value;
+  overlay.querySelector('#cu-stage').onchange = e=>c.stage=e.target.value;
+  overlay.querySelector('#cu-industry').oninput = e=>c.industry=e.target.value;
+  overlay.querySelector('#cu-city').oninput = e=>c.city=e.target.value;
+  overlay.querySelector('#cu-country').oninput = e=>c.country=e.target.value;
   overlay.querySelector('#cu-payTpl').onchange = e=>c.defaultPaymentTplId=e.target.value;
   overlay.querySelector('#cu-delTpl').onchange = e=>c.defaultDeliveryTplId=e.target.value;
   overlay.querySelector('#cu-shipTpl').onchange = e=>c.defaultShippingTplId=e.target.value;
@@ -4062,6 +4122,7 @@ function attachCustomerEditHandlers(overlay){
   overlay.querySelectorAll('.contact-row').forEach(row=>{
     const i = +row.dataset.i;
     row.querySelector('.ct-name').oninput = e=>c.contacts[i].name=e.target.value;
+    row.querySelector('.ct-title').oninput = e=>c.contacts[i].title=e.target.value;
     row.querySelector('.ct-phone').oninput = e=>c.contacts[i].phone=e.target.value;
     row.querySelector('.ct-email').oninput = e=>c.contacts[i].email=e.target.value;
     row.querySelector('[data-action="removeContact"]').onclick = ()=>{ c.contacts.splice(i,1); openCustomerEditModal(); };
@@ -4082,77 +4143,382 @@ function attachCustomerEditHandlers(overlay){
 /* ---------------- PRODUCTS (ÜRÜN) ---------------- */
 let prodEditing = null;
 /* ---------------- BULK PRODUCT IMPORT (Excel / Paste) ---------------- */
+/* ---------------- MÜŞTERİ İÇE AKTARMA (Apollo / Sheets / CSV) ---------------- */
+const CUSTOMER_STAGES = ['Aday','İletişimde','İlgili','Teklif','Müşteri','Kaybedildi','Aranmayacak'];
+const STAGE_CLASS = {'Aday':'st-lead','İletişimde':'st-contacted','İlgili':'st-interested','Teklif':'st-quote','Müşteri':'st-customer','Kaybedildi':'st-lost','Aranmayacak':'st-dnc'};
+const IMPORT_FIELDS = [
+  {key:'company', label:'Firma Adı'}, {key:'website', label:'Web Sitesi'}, {key:'address', label:'Adres'},
+  {key:'city', label:'Şehir'}, {key:'country', label:'Ülke'}, {key:'industry', label:'Sektör'},
+  {key:'employees', label:'Çalışan Sayısı'}, {key:'companyLinkedin', label:'Firma LinkedIn'},
+  {key:'taxOffice', label:'Vergi Dairesi'}, {key:'taxNo', label:'Vergi No'},
+  {key:'contactName', label:'Yetkili (Ad Soyad)'}, {key:'firstName', label:'Yetkili Adı'}, {key:'lastName', label:'Yetkili Soyadı'},
+  {key:'title', label:'Ünvan / Pozisyon'}, {key:'email', label:'E-posta'}, {key:'emailStatus', label:'E-posta Durumu'},
+  {key:'phone', label:'Telefon'}, {key:'companyPhone', label:'Firma Telefonu'}, {key:'personLinkedin', label:'Yetkili LinkedIn'},
+  {key:'stage', label:'Aşama'}, {key:'tags', label:'Etiket / Liste'}
+];
+const GENERIC_DOMAINS = new Set(['gmail.com','googlemail.com','hotmail.com','hotmail.com.tr','outlook.com','outlook.com.tr','yahoo.com','yahoo.com.tr','icloud.com','me.com','yandex.com','yandex.com.tr','yandex.ru','live.com','msn.com','mynet.com','ttmail.com','protonmail.com','proton.me','gmx.com','aol.com','linkedin.com','facebook.com','instagram.com','twitter.com','x.com','youtube.com','google.com','sites.google.com','wixsite.com','blogspot.com','wordpress.com']);
+const COMPANY_STOP = new Set(['as','ltd','sti','san','tic','sanayi','ticaret','limited','sirketi','sirket','anonim','inc','llc','gmbh','co','corp','corporation','company','ve','and']);
+const IMPORT_HEADER_RULES = [
+  [/^(companylinkedinurl|companylinkedin|firmalinkedin|sirketlinkedin|firmalinkedinurl)$/, 'companyLinkedin'],
+  [/^(personlinkedinurl|personlinkedin|linkedinurl|linkedin|kisilinkedin|yetkililinkedin|profileurl|linkedinprofile)$/, 'personLinkedin'],
+  [/^(firstname|ilkad|adi|ad|isim|givenname)$/, 'firstName'],
+  [/^(lastname|surname|soyad|soyadi|familyname)$/, 'lastName'],
+  [/^(fullname|name|contactname|adsoyad|adisoyadi|yetkili|yetkiliadi|yetkiliadsoyad|yetkilikisi|kisi|ilgilikisi|contact)$/, 'contactName'],
+  [/^(title|jobtitle|pozisyon|gorev|position|role)$/, 'title'],
+  [/^unvan$/, 'unvan?'],
+  [/^(company|companyname|companynameforemails|account|accountname|organization|organisation|firma|firmaadi|firmaismi|sirket|sirketadi|sirketismi|musteri|musteriadi|cari|cariadi|ticariunvan|ticariunvani|firmaunvani|isletme|isletmeadi|kurum)$/, 'company'],
+  [/^(website|web|websitesi|webadresi|webadres|url|companywebsite|domain|companydomain|site|internetsitesi)$/, 'website'],
+  [/^(emailstatus|epostadurumu|emaildurumu)$/, 'emailStatus'],
+  [/^(email|eposta|epostaadresi|mail|mailadresi|emailaddress|workemail|epostaadres)$/, 'email'],
+  [/^(corporatephone|companyphone|firmatelefonu|santral|isyeritelefonu|sirkettelefonu)$/, 'companyPhone'],
+  [/^(phone|telefon|tel|gsm|cep|cepno|ceptelefonu|mobile|mobilephone|workdirectphone|directphone|telefonno|telefonnumarasi|homephone|otherphone|mobilenumber)$/, 'phone'],
+  [/^(address|adres|companyaddress|firmaadresi|acikadres|sirketadresi)$/, 'address'],
+  [/^(city|sehir|il|companycity)$/, 'city'],
+  [/^(country|ulke|companycountry)$/, 'country'],
+  [/^(industry|sektor|sektoru|faaliyetalani)$/, 'industry'],
+  [/^(employees|numberofemployees|calisansayisi|calisan|personelsayisi|employeecount|companysize)$/, 'employees'],
+  [/^(vergidairesi|vd|taxoffice)$/, 'taxOffice'],
+  [/^(vergino|vergikimlikno|vkn|taxid|taxno|verginumarasi|vergikimliknumarasi)$/, 'taxNo'],
+  [/^(stage|asama|statu|contactstage|accountstage|durum)$/, 'stage'],
+  [/^(lists|list|liste|listeler|etiket|etiketler|tags|tag|labels|kampanya)$/, 'tags']
+];
+
+function foldTR(s){
+  return String(s==null?'':s).toLocaleLowerCase('tr-TR')
+    .replace(/[çğıöşüâîû]/g, m=>({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u','â':'a','î':'i','û':'u'}[m]))
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+function foldKey(s){ return foldTR(s).replace(/[^a-z0-9]/g,''); }
+function companyKey(name){
+  const s = foldTR(name).replace(/(^|\s)a\.\s?s\.?(?=\s|$)/g,' ');
+  const toks = s.replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/).filter(t=>t && !COMPANY_STOP.has(t));
+  return toks.length ? toks.join(' ') : foldKey(name);
+}
+function domainOf(v){
+  let s = String(v||'').trim().toLowerCase();
+  if(!s) return '';
+  if(s.includes('@')) s = s.split('@').pop();
+  s = s.replace(/^[a-z]+:\/\//,'').replace(/^www\./,'').split(/[\/?#:\s]/)[0];
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s) ? s : '';
+}
+function usableDomain(d){ return d && !GENERIC_DOMAINS.has(d) ? d : ''; }
+function cleanEmail(v){
+  const s = String(v||'').trim().toLowerCase();
+  return /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(s) ? s : '';
+}
+function safeUrl(u){
+  const s = String(u||'').trim();
+  if(!s) return '';
+  if(/^https?:\/\//i.test(s)) return s;
+  if(/^[a-z][a-z0-9+.-]*:/i.test(s)) return '';
+  return 'https://'+s.replace(/^\/+/,'');
+}
+
+function detectDelimiter(text){
+  const firstLine = String(text).split(/\r?\n/).find(l=>l.trim().length) || '';
+  const counts = {'\t':0, ';':0, ',':0};
+  let inQ = false;
+  for(const ch of firstLine){
+    if(ch==='"') inQ = !inQ;
+    else if(!inQ && counts[ch]!==undefined) counts[ch]++;
+  }
+  if(counts['\t']>0 && counts['\t']>=counts[';'] && counts['\t']>=counts[',']) return '\t';
+  return counts[';']>counts[','] ? ';' : ',';
+}
+function parseDelimited(text, delim){
+  text = String(text||'').replace(/^\uFEFF/,'');
+  const rows = []; let row = [], field = '', inQ = false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i];
+    if(inQ){
+      if(ch==='"'){ if(text[i+1]==='"'){ field += '"'; i++; } else inQ = false; }
+      else field += ch;
+    } else if(ch==='"' && field===''){ inQ = true; }
+    else if(ch===delim){ row.push(field); field = ''; }
+    else if(ch==='\n' || ch==='\r'){
+      if(ch==='\r' && text[i+1]==='\n') i++;
+      row.push(field); field = ''; rows.push(row); row = [];
+    } else field += ch;
+  }
+  if(field!=='' || row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
+}
+
+function guessImportField(header){
+  const k = foldKey(header);
+  if(!k) return 'skip';
+  for(const [re, f] of IMPORT_HEADER_RULES){ if(re.test(k)) return f; }
+  return 'skip';
+}
+function guessImportMap(headers){
+  const map = headers.map(guessImportField);
+  const hasCompany = map.includes('company');
+  for(let i=0;i<map.length;i++){
+    if(map[i]==='unvan?') map[i] = hasCompany ? 'title' : 'company';
+  }
+  if(map.includes('firstName') && !map.includes('lastName') && !map.includes('contactName')){
+    const i = map.indexOf('firstName'); map[i] = 'contactName';
+  }
+  return map;
+}
+function mapStageText(s){
+  const k = foldKey(s);
+  if(!k) return '';
+  const table = [
+    [/^(aday|cold|new|prospect|lead|yeni)$/, 'Aday'],
+    [/^(iletisimde|approaching|contacted|outreach|attempted|unresponsive|ulasilamiyor)$/, 'İletişimde'],
+    [/^(ilgili|interested|replied|engaged|warm|ilgileniyor|meeting|demo)$/, 'İlgili'],
+    [/^(teklif|quoted|proposal|quote|teklifverildi)$/, 'Teklif'],
+    [/^(musteri|customer|client|previousclient|won|kazanildi)$/, 'Müşteri'],
+    [/^(kaybedildi|lost|notinterested|ilgilenmiyor|closedlost)$/, 'Kaybedildi'],
+    [/^(aranmayacak|donotcontact|dnc|unsubscribed)$/, 'Aranmayacak']
+  ];
+  for(const [re, st] of table){ if(re.test(k)) return st; }
+  return '';
+}
+
+function importRowToRecord(cells, map){
+  const rec = {}; const tags = [];
+  map.forEach((f,i)=>{
+    if(!f || f==='skip') return;
+    const v = String(cells[i]==null ? '' : cells[i]).trim();
+    if(!v) return;
+    if(f==='tags'){ tags.push(v); return; }
+    if(!rec[f]) rec[f] = v;
+  });
+  rec.tags = tags.join(';').split(/[;,|]/).map(t=>t.trim()).filter(Boolean);
+  return rec;
+}
+
+function buildImportPlan(rows, map){
+  const groups = []; const byDomain = new Map(), byKey = new Map();
+  let noCompany = 0;
+  rows.forEach(cells=>{
+    const rec = importRowToRecord(cells, map);
+    const name = (rec.company||'').trim();
+    if(!name){ noCompany++; return; }
+    const key = companyKey(name);
+    const email = cleanEmail(rec.email);
+    const dom = usableDomain(domainOf(rec.website)) || usableDomain(domainOf(email));
+    let g = (dom && byDomain.get(dom)) || byKey.get(key);
+    if(!g){
+      g = { name, key, domains:new Set(), fields:{}, stages:[], tags:new Set(), contacts:[], contactKeys:new Set() };
+      groups.push(g);
+    }
+    if(dom){ g.domains.add(dom); if(!byDomain.has(dom)) byDomain.set(dom, g); }
+    if(!byKey.has(key)) byKey.set(key, g);
+    ['website','address','city','country','industry','employees','companyLinkedin','taxOffice','taxNo'].forEach(f=>{
+      if(rec[f] && !g.fields[f]) g.fields[f] = rec[f];
+    });
+    const st = mapStageText(rec.stage); if(st) g.stages.push(st);
+    rec.tags.forEach(t=>g.tags.add(t.slice(0,40)));
+    const cname = rec.contactName || [rec.firstName, rec.lastName].filter(Boolean).join(' ');
+    const phone = rec.phone || rec.companyPhone || '';
+    if(cname || email || phone){
+      const ck = email || ('n:'+foldTR(cname)+'|'+phone.replace(/\D/g,''));
+      if(!g.contactKeys.has(ck)){
+        g.contactKeys.add(ck);
+        const ct = { id:null, name:cname||'', phone, email };
+        if(rec.title) ct.title = rec.title;
+        if(rec.emailStatus) ct.emailStatus = rec.emailStatus;
+        if(rec.personLinkedin) ct.linkedin = rec.personLinkedin;
+        g.contacts.push(ct);
+      }
+    }
+  });
+  // Mevcut cariler ile eşleştir
+  const exDomain = new Map(), exKey = new Map();
+  customers.forEach(c=>{
+    const k = companyKey(c.name||''); if(k && !exKey.has(k)) exKey.set(k, c);
+    const d = usableDomain(domainOf(c.website)); if(d && !exDomain.has(d)) exDomain.set(d, c);
+    (c.contacts||[]).forEach(ct=>{ const ed = usableDomain(domainOf(ct.email)); if(ed && !exDomain.has(ed)) exDomain.set(ed, c); });
+  });
+  let newCompanies = 0, matched = 0, newContacts = 0;
+  groups.forEach(g=>{
+    let m = null;
+    for(const d of g.domains){ if(exDomain.has(d)){ m = exDomain.get(d); break; } }
+    if(!m) m = exKey.get(g.key) || null;
+    g.match = m;
+    const have = new Set(); const haveNames = new Set();
+    if(m) (m.contacts||[]).forEach(ct=>{ const e = cleanEmail(ct.email); if(e) have.add(e); haveNames.add(foldTR(ct.name||'')); });
+    g.newContacts = m ? g.contacts.filter(ct=> ct.email ? !have.has(ct.email) : !(ct.name && haveNames.has(foldTR(ct.name)))) : g.contacts.slice();
+    const rank = ['Müşteri','Teklif','İlgili','İletişimde','Aday'];
+    g.stage = rank.find(s=>g.stages.includes(s)) || g.stages.find(s=>s==='Kaybedildi'||s==='Aranmayacak') || '';
+    if(m) matched++; else newCompanies++;
+    newContacts += g.newContacts.length;
+  });
+  return { groups, rowCount: rows.length, noCompany, newCompanies, matched, newContacts };
+}
+
+async function applyImportPlan(plan, opts){
+  const created = [], snapshots = {};
+  let newCompanies = 0, updated = 0, newContacts = 0;
+  const fillFields = ['website','address','city','country','industry','employees','taxOffice','taxNo'];
+  plan.groups.forEach(g=>{
+    let c = g.match ? customers.find(x=>x.id===g.match.id) : null;
+    const isNew = !c;
+    let before = null;
+    if(c){ before = JSON.stringify(c); }
+    else {
+      c = emptyCustomer(); c.id = crypto.randomUUID(); c.name = g.name;
+      c.stage = g.stage || opts.defaultStage || 'Aday';
+      c.source = opts.source || '';
+      customers.push(c); created.push(c.id); newCompanies++;
+    }
+    fillFields.forEach(f=>{ if(g.fields[f] && !c[f]) c[f] = g.fields[f]; });
+    if(g.fields.companyLinkedin && !c.linkedin) c.linkedin = g.fields.companyLinkedin;
+    if(!isNew && g.stage && !c.stage) c.stage = g.stage;
+    const tags = new Set(c.tags||[]);
+    g.tags.forEach(t=>tags.add(t));
+    if(opts.batchTag) tags.add(opts.batchTag);
+    c.tags = Array.from(tags).slice(0,12);
+    if(!c.contacts) c.contacts = [];
+    g.newContacts.forEach(ct=>{ c.contacts.push(Object.assign({}, ct, { id: crypto.randomUUID() })); newContacts++; });
+    if(!isNew){
+      if(JSON.stringify(c) !== before){
+        snapshots[c.id] = JSON.parse(before);
+        updated++;
+      }
+    }
+  });
+  await saveCustomers();
+  lastImport = { id: crypto.randomUUID(), at: new Date().toISOString(), source: opts.source||'', created, snapshots, counts:{ newCompanies, updated, newContacts } };
+  await stSet('godo:lastImport', JSON.stringify(lastImport));
+  return { newCompanies, updated, newContacts };
+}
+
+async function undoLastImport(){
+  if(!lastImport) return;
+  const li = lastImport;
+  if(!confirm(`Son içe aktarma geri alınsın mı?\n\n• ${li.created.length} yeni cari silinecek\n• ${Object.keys(li.snapshots).length} mevcut cari eski haline dönecek\n\nBu içe aktarmadan sonra o kayıtlarda yaptığın değişiklikler de kaybolur.`)) return;
+  const created = new Set(li.created);
+  customers = customers.filter(c=>!created.has(c.id));
+  Object.values(li.snapshots).forEach(snap=>{
+    const i = customers.findIndex(c=>c.id===snap.id);
+    if(i>=0) customers[i] = snap;
+  });
+  await saveCustomers();
+  lastImport = null;
+  await stSet('godo:lastImport', '');
+  render();
+}
+
+async function readImportFile(file){
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf);
+  if(text.includes('\uFFFD')){ try{ text = new TextDecoder('windows-1254').decode(buf); }catch(e){} }
+  return text;
+}
+
 function openCustomerBulkImportModal(){
   const old = document.getElementById('modalOverlay'); if(old) old.remove();
   const overlay = document.createElement('div');
-  overlay.id='modalOverlay';
+  overlay.id = 'modalOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
-  overlay.innerHTML = `<div class="modal-box" style="width:780px;max-width:94vw;">
-    <h2>Excel'den / Yapıştır ile Cari Yükle</h2>
-    <p class="hint">Excel'de <b>Firma Adı, Adres, Yetkili Adı, Telefon, E-posta</b> sütunlarını sırayla seç, kopyala (Ctrl+C), aşağıya yapıştır (Ctrl+V). Aynı isimde firma zaten kayıtlıysa üzerine yeni yetkili olarak eklenir, yoksa yeni cari oluşturulur.</p>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin-bottom:8px;"><input type="checkbox" id="ci-header" checked> İlk satır başlık (atlanacak)</label>
-    <textarea id="ci-paste" rows="10" class="code-editor" style="width:100%;" placeholder="Örnek Firma A.Ş.	Egemenlik Mah. No:14 Bornova/İzmir	Ahmet Yılmaz	+90 555 111 22 33	ahmet@ornekfirma.com"></textarea>
-    <div class="subhead" style="margin-top:16px;">Önizleme</div>
-    <div id="ci-preview" style="max-height:240px;overflow-y:auto;font-size:12px;"><p class="hint">Yapıştırdığında burada önizleme görünecek.</p></div>
-    <div class="actions-row" style="margin-top:14px;">
-      <button class="btn btn-primary" id="ci-import">İçe Aktar</button>
+  overlay.innerHTML = `<div class="modal-box" style="width:960px;max-width:96vw;max-height:92vh;overflow-y:auto;">
+    <h2>Müşteri İçe Aktar</h2>
+    <p class="hint">Apollo'dan CSV dışa aktar ya da Google Sheets'te hücreleri seçip kopyala. Sütunlar başlık satırından otomatik eşlenir, gerekirse aşağıdan düzeltirsin. Aynı firma (ad ya da web sitesi aynıysa) tek kayıtta toplanır, kişiler yetkili olarak altına eklenir.</p>
+    <div class="grid3">
+      <div class="field"><label>Kaynak</label><select id="ci-source"><option value="Apollo">Apollo</option><option value="Sheets">Google Sheets / Excel</option><option value="Diğer">Diğer</option></select></div>
+      <div class="field"><label>Yeni firmaların aşaması</label><select id="ci-stage">${CUSTOMER_STAGES.map(s=>`<option ${s==='Aday'?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Etiket ekle (opsiyonel)</label><input id="ci-tag" placeholder="ör. Apollo-Ekim"></div>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <label class="btn btn-ghost" style="cursor:pointer;margin:0;">CSV Dosyası Seç<input id="ci-file" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none;"></label>
+      <span id="ci-filename" class="hint" style="margin:0;">ya da aşağıya yapıştır</span>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin:0;"><input type="checkbox" id="ci-header" checked> İlk satır başlık</label>
+    </div>
+    <textarea id="ci-paste" rows="4" class="code-editor" style="width:100%;" placeholder="Başlık satırıyla birlikte yapıştır (Sheets'ten kopyalanan hücreler ya da CSV metni)"></textarea>
+    <div id="ci-mapping"></div>
+    <div id="ci-summary" style="margin-top:12px;"></div>
+    <div id="ci-sample" style="max-height:230px;overflow-y:auto;"></div>
+    <div class="actions-row" style="margin-top:14px;align-items:center;">
+      <button class="btn btn-primary" id="ci-import" disabled>İçe Aktar</button>
       <button class="btn btn-ghost" id="ci-cancel">Vazgeç</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
 
-  const ta = overlay.querySelector('#ci-paste');
-  const headerChk = overlay.querySelector('#ci-header');
-  const previewEl = overlay.querySelector('#ci-preview');
-  function getRows(){
-    let lines = ta.value.split(/\r?\n/).filter(l=>l.trim().length);
-    if(headerChk.checked && lines.length) lines = lines.slice(1);
-    return lines.map(l=> l.split('\t').length>1 ? l.split('\t') : l.split(','));
-  }
-  function updatePreview(){
-    const rows = getRows();
-    if(!rows.length){ previewEl.innerHTML = '<p class="hint">Yapıştırdığında burada önizleme görünecek.</p>'; return; }
-    previewEl.innerHTML = `<table class="items-table"><thead><tr><th>Firma Adı</th><th>Adres</th><th>Yetkili</th><th>Telefon</th><th>E-posta</th></tr></thead><tbody>${
-      rows.map(r=>`<tr><td>${escapeHtml((r[0]||'').trim())}</td><td>${escapeHtml((r[1]||'').trim())}</td><td>${escapeHtml((r[2]||'').trim())}</td><td class="mono">${escapeHtml((r[3]||'').trim())}</td><td class="mono">${escapeHtml((r[4]||'').trim())}</td></tr>`).join('')
-    }</tbody></table><p class="hint" style="margin-top:6px;">${rows.length} satır bulundu.</p>`;
-  }
-  ta.oninput = updatePreview;
-  headerChk.onchange = updatePreview;
-  overlay.querySelector('#ci-cancel').onclick = ()=>overlay.remove();
-  overlay.querySelector('#ci-import').onclick = ()=>{
-    const rows = getRows();
-    if(!rows.length){ alert('İçe aktarılacak veri yok.'); return; }
-    let created=0, updated=0;
-    rows.forEach(r=>{
-      const name = (r[0]||'').trim();
-      const address = (r[1]||'').trim();
-      const contactName = (r[2]||'').trim();
-      const phone = (r[3]||'').trim();
-      const email = (r[4]||'').trim();
-      if(!name) return;
-      let existing = customers.find(c=>(c.name||'').trim().toLowerCase()===name.toLowerCase());
-      if(existing){
-        if(address) existing.address = address;
-        if(contactName || phone || email){
-          if(!existing.contacts) existing.contacts=[];
-          existing.contacts.push({ id:crypto.randomUUID(), name:contactName, phone, email });
-        }
-        updated++;
-      } else {
-        const c = emptyCustomer();
-        c.id = crypto.randomUUID();
-        c.name = name;
-        c.address = address;
-        if(contactName || phone || email) c.contacts.push({ id:crypto.randomUUID(), name:contactName, phone, email });
-        customers.push(c);
-        created++;
-      }
+  const $ = id=>overlay.querySelector('#'+id);
+  let rawText = '', headers = [], dataRows = [], map = [], plan = null, timer = null;
+
+  function renderMapping(){
+    const el = $('ci-mapping');
+    if(!headers.length){ el.innerHTML = ''; return; }
+    const sample = dataRows[0] || [];
+    el.innerHTML = `<div class="subhead" style="margin-top:14px;">Sütun Eşleme</div>
+      <div style="max-height:220px;overflow:auto;border:1px solid var(--hairline);border-radius:4px;">
+      <table class="items-table"><thead><tr><th>Sütun</th><th>Örnek</th><th>Aktarılacağı alan</th></tr></thead><tbody>
+      ${headers.map((h,i)=>`<tr>
+        <td style="font-size:12px;">${escapeHtml(h||('Sütun '+(i+1)))}</td>
+        <td class="mono" style="font-size:11px;color:var(--gray-500);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(sample[i]==null?'':sample[i]).slice(0,60))}</td>
+        <td><select data-col="${i}" style="font-size:12px;padding:4px 6px;"><option value="skip">— Aktarma —</option>${IMPORT_FIELDS.map(f=>`<option value="${f.key}" ${map[i]===f.key?'selected':''}>${f.label}</option>`).join('')}</select></td>
+      </tr>`).join('')}
+      </tbody></table></div>`;
+    el.querySelectorAll('select[data-col]').forEach(sel=>{
+      sel.onchange = ()=>{ map[+sel.dataset.col] = sel.value; updatePlan(); };
     });
-    saveCustomers();
+  }
+  function updatePlan(){
+    const sum = $('ci-summary'), smp = $('ci-sample'), btn = $('ci-import');
+    plan = null; btn.disabled = true; smp.innerHTML = '';
+    if(!headers.length){ sum.innerHTML = ''; return; }
+    if(!map.includes('company')){
+      sum.innerHTML = '<p class="hint" style="color:var(--danger);">"Firma Adı" için bir sütun eşlenmedi — yukarıdan seç.</p>';
+      return;
+    }
+    plan = buildImportPlan(dataRows, map);
+    sum.innerHTML = `<div style="font-size:13px;line-height:1.7;">
+      <b>${plan.rowCount}</b> satır → <b>${plan.groups.length}</b> firma
+      (<b>${plan.newCompanies}</b> yeni, <b>${plan.matched}</b> mevcut cari ile eşleşti) · <b>${plan.newContacts}</b> yeni yetkili
+      ${plan.noCompany ? `<br><span style="color:var(--danger);">${plan.noCompany} satır firma adı boş olduğu için atlanacak.</span>` : ''}
+    </div>`;
+    smp.innerHTML = `<table class="items-table" style="margin-top:8px;"><thead><tr><th>Firma</th><th>Durum</th><th class="num">Yeni yetkili</th><th>Örnek e-posta</th></tr></thead><tbody>
+      ${plan.groups.slice(0,12).map(g=>`<tr><td style="font-size:12px;">${escapeHtml(g.name)}</td>
+        <td style="font-size:11px;color:${g.match?'var(--gray-500)':'var(--ink)'};">${g.match?'Mevcut: '+escapeHtml(g.match.name):'Yeni'}</td>
+        <td class="num mono">${g.newContacts.length}</td>
+        <td class="mono" style="font-size:11px;color:var(--gray-500);">${escapeHtml((g.newContacts.find(c=>c.email)||{}).email||'—')}</td></tr>`).join('')}
+      </tbody></table>${plan.groups.length>12?`<p class="hint" style="margin-top:6px;">…ve ${plan.groups.length-12} firma daha.</p>`:''}`;
+    btn.disabled = plan.groups.length===0;
+  }
+  function recompute(){
+    const text = rawText;
+    if(!text.trim()){ headers = []; dataRows = []; map = []; renderMapping(); updatePlan(); return; }
+    const parsed = parseDelimited(text, detectDelimiter(text));
+    const hasHeader = $('ci-header').checked;
+    headers = parsed.length ? (hasHeader ? parsed[0] : parsed[0].map((_,i)=>'Sütun '+(i+1))) : [];
+    dataRows = hasHeader ? parsed.slice(1) : parsed;
+    map = hasHeader ? guessImportMap(headers)
+      : headers.map((_,i)=>['company','address','contactName','phone','email'][i] || 'skip');
+    renderMapping(); updatePlan();
+  }
+
+  $('ci-paste').oninput = e=>{
+    rawText = e.target.value; $('ci-filename').textContent = 'ya da aşağıya yapıştır';
+    clearTimeout(timer); timer = setTimeout(recompute, 250);
+  };
+  $('ci-header').onchange = recompute;
+  $('ci-file').onchange = async e=>{
+    const f = e.target.files && e.target.files[0]; if(!f) return;
+    try{
+      rawText = await readImportFile(f);
+      $('ci-filename').textContent = f.name+' ('+Math.round(f.size/1024)+' KB)';
+      $('ci-paste').value = rawText.length < 200000 ? rawText : '';
+      if(rawText.length >= 200000) $('ci-paste').placeholder = 'Dosya yüklendi — metin büyük olduğu için burada gösterilmiyor.';
+      recompute();
+    }catch(err){ alert('Dosya okunamadı: '+err.message); }
+  };
+  $('ci-cancel').onclick = ()=>overlay.remove();
+  $('ci-import').onclick = async ()=>{
+    if(!plan || !plan.groups.length) return;
+    const btn = $('ci-import'); btn.disabled = true; btn.textContent = 'Aktarılıyor…';
+    const res = await applyImportPlan(plan, {
+      source: $('ci-source').value, defaultStage: $('ci-stage').value, batchTag: $('ci-tag').value.trim().slice(0,40)
+    });
     overlay.remove();
-    alert(`${created} yeni cari eklendi, ${updated} cari güncellendi.`);
     render();
+    alert(`İçe aktarma tamam:\n• ${res.newCompanies} yeni firma\n• ${res.updated} mevcut firma güncellendi\n• ${res.newContacts} yeni yetkili`+(plan.noCompany?`\n• ${plan.noCompany} satır firma adı olmadığı için atlandı`:'')+`\n\nYanlışsa Cariler sayfasındaki "Son içe aktarmayı geri al" bağlantısını kullanabilirsin.`);
   };
 }
 
