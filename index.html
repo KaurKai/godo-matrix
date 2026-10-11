@@ -404,6 +404,18 @@
   .empty-state p{font-size:13px;max-width:340px;text-align:center;line-height:1.6;}
 .camp-act{font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:12px;}
 .camp-act:hover{color:var(--ink);}
+.sidebar{overflow-y:auto;}
+.nav-group{margin-top:14px;}
+.nav-group-head{display:flex;align-items:center;gap:8px;padding:2px 10px 6px;font-size:9.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gray-500);cursor:pointer;user-select:none;}
+.nav-group-head::before{content:'';width:10px;height:1px;background:rgba(255,255,255,.28);flex:none;}
+.nav-group-head:hover{color:var(--gray-300);}
+.nav-group-head.locked{cursor:default;color:var(--gray-300);}
+.nav-group-head .chev{margin-left:auto;font-size:8.5px;opacity:.65;letter-spacing:0;}
+.nav-group-head .nav-badge{margin-left:auto;}
+.nav-group-head .nav-badge + .chev{margin-left:6px;}
+.nav-group-items{display:flex;flex-direction:column;gap:1px;}
+.nav-group-items .tab{padding-left:18px;}
+.side-primary-nav .tab.nav-settings{margin-top:16px;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;}
 </style>
 <style id="userDocStyle"></style>
 </head>
@@ -1347,32 +1359,61 @@ function isEditorTab(t){ return t==='info' || t==='items' || t==='terms' || t===
 function isSettingsTab(t){ return t==='settingsCompany' || t==='settingsTemplates' || t==='settingsDesign' || t==='settingsTrash' || t==='settingsSecurity' || t==='settingsBackups'; }
 
 
-function renderSidebarPrimaryNav(){
+function navCollapsed(){ try{ return JSON.parse(localStorage.getItem('godo-nav-collapsed')||'{}') || {}; }catch(e){ return {}; } }
+function setNavCollapsed(key, val){ const s = navCollapsed(); if(val) s[key] = 1; else delete s[key]; try{ localStorage.setItem('godo-nav-collapsed', JSON.stringify(s)); }catch(e){} }
+function navGroups(){
   const editorActive = isEditorTab(activeTab);
+  return [
+    { key:'satis', label:'Satış', items:[
+      { tab:'list', label:'Teklifler', on: activeTab==='list' || editorActive },
+      { tab:'proposalsList', label:'Proje Teklifleri', on: activeTab==='proposalsList' || isProposalTab(activeTab) },
+      { tab:'orders', label:'Siparişler', on: activeTab==='orders', n: readyOrders().length },
+      { tab:'openOrders', label:'Açık Siparişler', on: activeTab==='openOrders' } ]},
+    { key:'musteri', label:'Müşteri & Pazarlama', items:[
+      { tab:'customers', label:'Cariler', on: activeTab==='customers' || activeTab==='customerDetail' },
+      { tab:'campaign', label:'Kampanya', on: activeTab==='campaign' } ]},
+    { key:'tedarik', label:'Tedarik', items:[
+      { tab:'purchase', label:'Satın Alma', on: ['purchase','poEditor','poPrint'].includes(activeTab) },
+      { tab:'suppliers', label:'Tedarikçiler', on: activeTab==='suppliers' || activeTab==='supplierDetail' } ]},
+    { key:'lojistik', label:'Lojistik', items:[
+      { tab:'shipments', label:'Sevkiyatlar', on: activeTab==='shipments' || activeTab==='irsaliyePrint', n: uninvoicedShipments().length },
+      { tab:'stock', label:'Stok', on: activeTab==='stock' },
+      { tab:'products', label:'Ürünler', on: activeTab==='products' } ]},
+    { key:'finans', label:'Finans', items:[
+      { tab:'invoices', label:'Faturalar', on: activeTab==='invoices' },
+      { tab:'finance', label:'Alacak / Borç', on: activeTab==='finance' },
+      { tab:'accounting', label:'Muhasebe', on: activeTab==='accounting' },
+      { tab:'reports', label:'Raporlar', on: activeTab==='reports' } ]}
+  ];
+}
+function renderSidebarPrimaryNav(){
   const settingsActive = isSettingsTab(activeTab);
   const settingsTarget = settingsActive ? activeTab : 'settingsCompany';
   const today = new Date().toISOString().slice(0,10);
   const dueCount = tasks.filter(t=>!t.done && t.dueDate && t.dueDate<=today).length;
+  const badge = n=>n ? `<span class="nav-badge">${n}</span>` : '';
+  const col = navCollapsed();
   return `
     <div class="side-primary-nav">
-      <div class="tab ${activeTab==='dashboard'?'active':''}" data-tab="dashboard">Pano ${dueCount?`<span class="nav-badge">${dueCount}</span>`:''}</div>
-      <div class="tab ${activeTab==='list'||editorActive?'active':''}" data-tab="list">Teklifler</div>
-      <div class="tab ${activeTab==='proposalsList'||isProposalTab(activeTab)?'active':''}" data-tab="proposalsList">Proje Teklifleri</div>
-      <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler ${(()=>{ const n = readyOrders().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
-      <div class="tab ${activeTab==='openOrders'?'active':''}" data-tab="openOrders">Açık Siparişler</div>
-      <div class="tab ${activeTab==='shipments'?'active':''}" data-tab="shipments">Sevkiyatlar ${(()=>{ const n = uninvoicedShipments().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
-      <div class="tab ${activeTab==='purchase'||activeTab==='poEditor'||activeTab==='poPrint'?'active':''}" data-tab="purchase">Satın Alma</div>
-      <div class="tab ${activeTab==='invoices'?'active':''}" data-tab="invoices">Faturalar</div>
-      <div class="tab ${activeTab==='finance'?'active':''}" data-tab="finance">Alacak / Borç</div>
-      <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
-      <div class="tab ${activeTab==='campaign'?'active':''}" data-tab="campaign">Kampanya</div>
-      <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
-      <div class="tab ${activeTab==='stock'?'active':''}" data-tab="stock">Stok</div>
-      <div class="tab ${activeTab==='suppliers'||activeTab==='supplierDetail'?'active':''}" data-tab="suppliers">Tedarikçiler</div>
-      <div class="tab ${activeTab==='reports'?'active':''}" data-tab="reports">Raporlar</div>
-      <div class="tab ${activeTab==='accounting'?'active':''}" data-tab="accounting">Muhasebe</div>
-      <div class="tab ${settingsActive?'active':''}" data-tab="${settingsTarget}" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;">Ayarlar</div>
+      <div class="tab ${activeTab==='dashboard'?'active':''}" data-tab="dashboard">Pano ${badge(dueCount)}</div>
+      ${navGroups().map(g=>{
+        const hasActive = g.items.some(i=>i.on), closed = !!col[g.key] && !hasActive, sum = g.items.reduce((t,i)=>t+(i.n||0),0);
+        return `<div class="nav-group${closed?' closed':''}${hasActive?' has-active':''}">
+          <div class="nav-group-head${hasActive?' locked':''}" data-nav-group="${g.key}"><span class="nav-group-label">${g.label}</span>${closed ? badge(sum) : ''}${hasActive ? '' : `<span class="chev">${closed?'▸':'▾'}</span>`}</div>
+          ${closed ? '' : `<div class="nav-group-items">${g.items.map(i=>`<div class="tab ${i.on?'active':''}" data-tab="${i.tab}">${i.label} ${badge(i.n)}</div>`).join('')}</div>`}
+        </div>`;
+      }).join('')}
+      <div class="tab nav-settings ${settingsActive?'active':''}" data-tab="${settingsTarget}">Ayarlar</div>
     </div>`;
+}
+function bindNavHandlers(){
+  const w = document.getElementById('primaryNavWrap'); if(!w) return;
+  w.querySelectorAll('.tab').forEach(t=>{ t.onclick = ()=>{ activeTab = t.dataset.tab; render(); }; });
+  w.querySelectorAll('[data-nav-group]').forEach(h=>{ h.onclick = ()=>{
+    if(h.classList.contains('locked')) return;                        // açık sayfanın grubu kapanmaz
+    setNavCollapsed(h.dataset.navGroup, !navCollapsed()[h.dataset.navGroup]);
+    w.innerHTML = renderSidebarPrimaryNav(); bindNavHandlers();       // yalnız menü yenilenir, sayfa olduğu gibi kalır
+  }; });
 }
 
 function renderTabsBar(){
@@ -5837,6 +5878,7 @@ function buildMailtoLink(to){
 /* ---------------- HANDLERS: MAIN VIEW ---------------- */
 function attachHandlers(){
   document.querySelectorAll('.tab').forEach(t=>{ t.onclick = ()=>{ activeTab = t.dataset.tab; render(); }; });
+  bindNavHandlers();
 
   if(activeTab==='list'){
     const s=document.getElementById('lf-search');
