@@ -704,11 +704,28 @@ let currentUser = null;       // { id, email } — giriş yapan kullanıcı
 let pendingSync = [];         // ağ hatası sırasında biriken, gönderilemeyen yazımlar: {key, value|null(=delete)}
 let syncFailed = false;
 
+/* ---- Okuma önbelleği: açılışta tüm veri TEK istekte çekilir, sonraki okumalar hafızadan gelir ----
+   (Önceden her parça ayrı ve sırayla isteniyordu; sunucu Sidney'de olduğu için açılış ~12 sn sürüyordu.) */
+const KV_TTL_MS = 5*60*1000;
+const kvCache = new Map();          // anahtar → { value, at }
+let kvFullAt = 0;                   // son tam yüklemenin zamanı
+async function prefetchAllKV(){
+  const { data, error } = await sb.from('kv_store').select('key,value').eq('user_id', currentUser.id);
+  if(error) throw error;
+  const now = Date.now(); kvCache.clear();
+  (data||[]).forEach(r=>{ kvCache.set(r.key, { value:r.value, at:now }); try{ localStorage.setItem('godo::'+r.key, r.value); }catch(e){} });
+  kvFullAt = now;
+  return (data||[]).length;
+}
 async function sbGet(key){
+  const now = Date.now(), hit = kvCache.get(key);
+  if(hit && now - hit.at < KV_TTL_MS) return { key, value:hit.value, shared:false };
+  if(!hit && kvFullAt && now - kvFullAt < KV_TTL_MS) return null;          // tam yüklemede yoktu → sunucuda da yok, istek atma
   try{
     const { data, error } = await sb.from('kv_store').select('value').eq('user_id', currentUser.id).eq('key', key).maybeSingle();
     if(error) throw error;
-    if(data){ try{ localStorage.setItem('godo::'+key, data.value); }catch(e){} return { key, value:data.value, shared:false }; }
+    if(data){ try{ localStorage.setItem('godo::'+key, data.value); }catch(e){} kvCache.set(key, { value:data.value, at:Date.now() }); return { key, value:data.value, shared:false }; }
+    kvCache.delete(key);
     return null;
   }catch(e){
     syncFailed = true; renderStorageBanner();
@@ -717,6 +734,7 @@ async function sbGet(key){
   }
 }
 async function sbSet(key, value){
+  kvCache.set(key, { value, at:Date.now() });
   try{ localStorage.setItem('godo::'+key, value); }catch(e){}
   try{
     const { error } = await sb.from('kv_store').upsert(
@@ -733,6 +751,7 @@ async function sbSet(key, value){
   return { key, value, shared:false };
 }
 async function sbDelete(key){
+  kvCache.delete(key);
   try{ localStorage.removeItem('godo::'+key); }catch(e){}
   try{
     const { error } = await sb.from('kv_store').delete().eq('user_id', currentUser.id).eq('key', key);
@@ -933,6 +952,7 @@ function renderStorageBanner(){
 /* ---------------- STORAGE ---------------- */
 async function loadAll(){
   await initStorage();
+  if(storageMode==='supabase'){ try{ await prefetchAllKV(); }catch(e){ console.warn('Toplu yükleme yapılamadı, parça parça yüklenecek', e); } }
   try{ const c = await stGet('godo:company'); if(c && c.value) company = JSON.parse(c.value); }catch(e){}
   if(company.tagline===undefined) company.tagline = 'GLOBAL OPTIMIZATION | DIGITAL OPERATION';
   try{ const cs = await stGet('godo:customers'); if(cs && cs.value) customers = JSON.parse(cs.value); }catch(e){}
@@ -7598,6 +7618,7 @@ async function enterApp(user){
   document.getElementById('authGate').style.display = 'none';
   document.getElementById('app').style.display = '';
   startIdleWatcher();
+  const ct = document.getElementById('content'); if(ct) ct.innerHTML = '<div class="panel"><p class="hint">Veriler yükleniyor…</p></div>';
   await loadAll();
 }
 async function boot(){
