@@ -2110,46 +2110,44 @@ async function buildPoPlanFromOrder(quoteId){
   purchaseOrders.filter(po=>po.salesOrderId===quoteId && po.status!=='İptal').forEach(po=>(po.items||[]).forEach(it=>{
     if(it.quoteItemId) ordered[it.quoteItemId] = (ordered[it.quoteItemId]||0) + (parseFloat(it.qty)||0);
   }));
-  const groups = new Map();
+  const lines = [];
   (full.items||[]).filter(it=>it.code||it.desc).forEach(it=>{
     const p = (it.productId && products.find(x=>x.id===it.productId)) || codes.get(foldTR((it.code||'').trim()));
     const remaining = (parseFloat(it.qty)||0) - (ordered[it.id]||0);
     if(remaining <= 1e-9) return;
     let cost = lineBuyPrice(it);
     if(cost===null && p && parseFloat(p.listPrice)>0 && p.buyDiscount!=='' && p.buyDiscount!==undefined) cost = parseFloat(p.listPrice)*(1-(parseFloat(p.buyDiscount)||0)/100);
-    const sid = (p && p.supplierId && suppliers.some(s=>s.id===p.supplierId)) ? p.supplierId : '';
-    if(!groups.has(sid)) groups.set(sid, { supplierId:sid, lines:[] });
-    groups.get(sid).lines.push({ quoteItemId:it.id, productId:p?p.id:(it.productId||null), code:it.code||'', desc:it.desc||'', qty:remaining,
+    lines.push({ quoteItemId:it.id, productId:p?p.id:(it.productId||null), code:it.code||'', desc:it.desc||'', qty:remaining,
       unitCost: cost===null ? '' : String(Math.round(cost*100)/100) });
   });
-  return { full, currency: full.currency||'€', groups:[...groups.values()].sort((a,b)=>(a.supplierId===''?1:0)-(b.supplierId===''?1:0)) };
+  return { full, currency: full.currency||'€', lines };
 }
 async function openPoFromOrderModal(quoteId){
   const plan = await buildPoPlanFromOrder(quoteId);
   if(!plan){ alert('Sipariş verisi okunamadı.'); return; }
-  if(!plan.groups.length){ alert('Bu siparişin tüm kalemleri için satın alma siparişi zaten açılmış.'); return; }
+  if(!plan.lines.length){ alert('Bu siparişin tüm kalemleri için satın alma siparişi zaten açılmış.'); return; }
+  if(!suppliers.length){ alert('Önce Tedarikçiler sayfasından en az bir tedarikçi ekle.'); return; }
   const old = document.getElementById('modalOverlay'); if(old) old.remove();
   const overlay = document.createElement('div');
   overlay.id = 'modalOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
   const full = plan.full, cur = plan.currency;
-  overlay.innerHTML = `<div class="modal-box" style="width:860px;max-width:96vw;max-height:92vh;overflow-y:auto;">
+  const supOptions = suppliers.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr')).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  overlay.innerHTML = `<div class="modal-box" style="width:960px;max-width:96vw;max-height:92vh;overflow-y:auto;">
     <h2>Satın Alma Siparişi Oluştur</h2>
-    <p class="hint"><b>${escapeHtml(full.quoteNo||'')}</b> · ${escapeHtml(upperCompanyName(full.customer.name||''))} siparişinin kalemleri tedarikçilere göre gruplandı. Her grup için ayrı bir taslak SAS açılır; miktar ve maliyetleri sonra düzenleyebilirsin. Birim maliyet tekliftek alış iskontosundan gelir.</p>
-    ${plan.groups.map((g,gi)=>{
-      const total = g.lines.reduce((s,l)=>s+l.qty*(parseFloat(l.unitCost)||0),0);
-      const sup = suppliers.find(s=>s.id===g.supplierId);
-      return `<div class="subhead-row" style="margin-top:18px;align-items:center;gap:12px;">
-        <label style="display:flex;align-items:center;gap:8px;margin:0;"><input type="checkbox" class="pg-on" data-g="${gi}" checked>
-          ${g.supplierId ? `<b style="font-size:13px;">${escapeHtml(sup.name)}</b>` : `<b style="font-size:13px;color:var(--danger);">Tedarikçisi belli olmayan kalemler</b>`}</label>
-        ${g.supplierId ? '' : `<span style="display:flex;gap:8px;align-items:center;"><select class="pg-sup" data-g="${gi}" style="padding:5px 8px;font-size:12px;"><option value="">— Tedarikçi seç —</option>${suppliers.slice().sort((a,b)=>a.name.localeCompare(b.name,'tr')).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
-          <label style="font-size:11px;color:var(--gray-500);display:flex;gap:4px;align-items:center;margin:0;"><input type="checkbox" class="pg-remember" data-g="${gi}" checked> ürüne tedarikçi olarak kaydet</label></span>`}
-        <span class="mono" style="font-size:12px;color:var(--gray-500);">${cur} ${fmt(total)}</span></div>
-      <table class="items-table"><thead><tr><th>Ürün Kodu</th><th>Açıklama</th><th class="num">Adet</th><th class="num">Birim Maliyet</th></tr></thead><tbody>
-        ${g.lines.map(l=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(l.code)}</td><td style="font-size:12px;">${escapeHtml(l.desc)}</td><td class="num mono">${fmtQty(l.qty)}</td>
-          <td class="num mono" style="${l.unitCost===''?'color:var(--danger);':''}">${l.unitCost===''?'girilmedi':cur+' '+fmt(parseFloat(l.unitCost))}</td></tr>`).join('')}
-      </tbody></table>`;
-    }).join('')}
+    <p class="hint"><b>${escapeHtml(full.quoteNo||'')}</b> · ${escapeHtml(upperCompanyName(full.customer.name||''))}. Her kalem için tedarikçiyi seç; aynı tedarikçiye giden kalemler tek SAS'ta toplanır. Alınmayacak kalemin (stoktan karşılanan gibi) işaretini kaldır. Birim maliyet tekliftek alış iskontosundan gelir, düzeltebilirsin.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px;">
+      <label style="font-size:12px;font-weight:700;color:var(--gray-500);margin:0;">Tüm kalemler için tedarikçi:</label>
+      <select id="pl-bulk" style="padding:6px 8px;font-size:12px;min-width:240px;"><option value="">— Seç —</option>${supOptions}</select>
+    </div>
+    <table class="items-table"><thead><tr><th style="width:28px;"></th><th>Ürün Kodu</th><th>Açıklama</th><th class="num" style="width:80px;">Adet</th><th class="num" style="width:120px;">Birim Maliyet (${escapeHtml(cur)})</th><th style="width:230px;">Tedarikçi</th></tr></thead><tbody>
+      ${plan.lines.map((l,i)=>`<tr data-i="${i}">
+        <td><input type="checkbox" class="pl-on" checked></td>
+        <td class="mono" style="font-size:12px;">${escapeHtml(l.code)}</td><td style="font-size:12px;">${escapeHtml(l.desc)}</td>
+        <td class="num"><input class="pl-qty mono" type="number" min="0" step="1" value="${escapeAttr(String(l.qty))}" style="width:70px;text-align:right;font-size:12px;"></td>
+        <td class="num"><input class="pl-cost mono" type="number" min="0" step="0.01" value="${escapeAttr(String(l.unitCost))}" placeholder="girilmedi" style="width:100px;text-align:right;font-size:12px;${l.unitCost===''?'border-color:var(--danger);':''}"></td>
+        <td><select class="pl-sup" style="width:100%;padding:5px 6px;font-size:12px;"><option value="">— Seç —</option>${supOptions}</select></td></tr>`).join('')}
+    </tbody></table>
     <div class="actions-row" style="margin-top:18px;">
       <button class="btn btn-primary" id="pg-create">SAS Oluştur</button>
       <button class="btn btn-ghost" id="pg-cancel">Vazgeç</button>
@@ -2158,34 +2156,31 @@ async function openPoFromOrderModal(quoteId){
   document.body.appendChild(overlay);
   overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#pg-cancel').onclick = ()=>overlay.remove();
+  overlay.querySelector('#pl-bulk').onchange = e=>{ if(e.target.value) overlay.querySelectorAll('.pl-sup').forEach(s=>s.value = e.target.value); };
   overlay.querySelector('#pg-create').onclick = async ()=>{
     const bySupplier = new Map();
-    for(let gi=0; gi<plan.groups.length; gi++){
-      const g = plan.groups[gi];
-      if(!overlay.querySelector(`.pg-on[data-g="${gi}"]`).checked) continue;
-      let sid = g.supplierId;
-      if(!sid){
-        sid = overlay.querySelector(`.pg-sup[data-g="${gi}"]`).value;
-        if(!sid){ alert('Tedarikçisi belli olmayan kalemler için bir tedarikçi seç ya da o grubun işaretini kaldır.'); return; }
-        if(overlay.querySelector(`.pg-remember[data-g="${gi}"]`).checked){
-          g.lines.forEach(l=>{ const p = products.find(x=>x.id===l.productId); if(p && !p.supplierId) p.supplierId = sid; });
-        }
-      }
+    const rows = [...overlay.querySelectorAll('tbody tr')];
+    for(const tr of rows){
+      if(!tr.querySelector('.pl-on').checked) continue;
+      const l = plan.lines[+tr.dataset.i];
+      const sid = tr.querySelector('.pl-sup').value;
+      const qty = parseFloat(tr.querySelector('.pl-qty').value);
+      if(!sid){ alert('İşaretli her kalem için bir tedarikçi seç ya da kalemin işaretini kaldır.'); return; }
+      if(!(qty > 0)){ alert('Adet 0\'dan büyük olmalı: '+l.code); return; }
       if(!bySupplier.has(sid)) bySupplier.set(sid, []);
-      bySupplier.get(sid).push(...g.lines);
+      bySupplier.get(sid).push({ id:crypto.randomUUID(), productId:l.productId, code:l.code, desc:l.desc, qty:String(qty), unitCost:tr.querySelector('.pl-cost').value, quoteItemId:l.quoteItemId });
     }
-    if(!bySupplier.size){ alert('Oluşturulacak grup seçilmedi.'); return; }
+    if(!bySupplier.size){ alert('Oluşturulacak kalem seçilmedi.'); return; }
     const created = [];
-    bySupplier.forEach((lines, sid)=>{
+    bySupplier.forEach((items, sid)=>{
       const sup = suppliers.find(s=>s.id===sid);
       const po = Object.assign(emptyPO(), {
         id:crypto.randomUUID(), poNo:nextPoNo(), supplierId:sid, currency:cur, paymentTermDays: sup && sup.paymentTermDays ? sup.paymentTermDays : '',
-        salesOrderId:quoteId, salesOrderNo:full.quoteNo||'', salesOrderCustomer:upperCompanyName(full.customer.name||''),
-        items: lines.map(l=>({ id:crypto.randomUUID(), productId:l.productId, code:l.code, desc:l.desc, qty:String(l.qty), unitCost:String(l.unitCost), quoteItemId:l.quoteItemId }))
+        salesOrderId:quoteId, salesOrderNo:full.quoteNo||'', salesOrderCustomer:upperCompanyName(full.customer.name||''), items
       });
       purchaseOrders.push(po); created.push(po);
     });
-    await savePurchaseOrders(); await saveProducts();
+    await savePurchaseOrders();
     overlay.remove();
     if(created.length===1){ openPoEditor(created[0].id); }
     else { poSearch = full.quoteNo||''; poStatusFilter = ''; activeTab = 'purchase'; render(); alert(created.length+' satın alma siparişi taslağı oluşturuldu.'); }
@@ -2353,7 +2348,6 @@ function attachPoEditorHandlers(){
       if(p){
         it.productId = p.id; if(!it.desc) it.desc = p.desc||'';
         if(it.unitCost==='' && parseFloat(p.listPrice)>0 && p.buyDiscount!=='' && p.buyDiscount!==undefined) it.unitCost = String(Math.round(parseFloat(p.listPrice)*(1-(parseFloat(p.buyDiscount)||0)/100)*100)/100);
-        if(!po.supplierId && p.supplierId && suppliers.some(s=>s.id===p.supplierId)) po.supplierId = p.supplierId;
       }
       render();
     };
