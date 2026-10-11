@@ -357,6 +357,21 @@
   .list-row .icons span.del:hover{color:var(--danger);}
   .contact-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center;}
   .contact-row.has-title{grid-template-columns:1.1fr .9fr 1fr 1fr auto;}
+  .op-row{display:flex;gap:22px;flex-wrap:wrap;align-items:center;}
+  .op-item{display:flex;align-items:center;gap:8px;}
+  .op-l{font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;}
+  .op-bar{width:90px;height:6px;background:var(--hairline);border-radius:3px;overflow:hidden;}
+  .op-bar i{display:block;height:100%;background:var(--ink);}
+  .op-n{font-size:11px;color:var(--gray-500);}
+  .ready-note{font-size:12px;background:var(--paper-2);padding:7px 12px;border-radius:4px;border-left:3px solid var(--ink);}
+  .order-actions{display:flex;gap:18px;flex-wrap:wrap;align-items:center;}
+  .order-actions span{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;}
+  .ship-list{display:flex;flex-direction:column;gap:8px;}
+  .ship-row{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--paper-2);border-radius:4px;}
+  .stage-chip{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:10px;border:1px solid var(--hairline-strong);color:var(--gray-700);background:var(--white);}
+  .stage-chip.st-hazir{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .stage-chip.st-sevk,.stage-chip.st-faturalanacak,.stage-chip.st-tahsilat{border-color:var(--ink);color:var(--ink);}
+  .stage-chip.st-tamam{background:var(--paper-2);color:var(--gray-500);}
   .cust-picker{position:relative;}
   .cust-picker-list{position:absolute;left:0;right:0;top:100%;margin-top:2px;z-index:30;background:#fff;border:1px solid var(--hairline-strong);border-radius:4px;box-shadow:0 10px 28px rgba(0,0,0,.14);max-height:340px;overflow:auto;}
   .cust-picker-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--hairline);}
@@ -890,6 +905,7 @@ async function loadAll(){
   try{ const ps = await stGet('godo:products'); if(ps && ps.value) products = JSON.parse(ps.value); }catch(e){}
   try{ const sm = await stGet('godo:stock-moves'); if(sm && sm.value) stockMoves = JSON.parse(sm.value); }catch(e){}
   try{ const po = await stGet('godo:purchase-orders'); if(po && po.value) purchaseOrders = JSON.parse(po.value); }catch(e){}
+  try{ const sh = await stGet('godo:shipments'); if(sh && sh.value) shipments = JSON.parse(sh.value); }catch(e){}
   try{ const ls = await stGet('godo:last-stock-import'); if(ls && ls.value) lastStockImport = JSON.parse(ls.value); }catch(e){}
   try{ const sp = await stGet('godo:suppliers'); if(sp && sp.value) suppliers = JSON.parse(sp.value); }catch(e){}
   try{ const idx = await stGet('godo:quotes-index'); if(idx && idx.value) quotesIndex = JSON.parse(idx.value); }catch(e){}
@@ -932,6 +948,7 @@ async function loadAll(){
     await saveTermTemplates();
   }
   await normalizeCustomerNames();
+  try{ await backfillOrderQty(); await migrateOrdersToShipments(); for(const oid of [...new Set(shipments.map(s=>s.orderId))]) await syncOrderPipelineStatus(oid); }catch(e){ console.error('Sipariş taşıma hatası', e); }
   if(backfillEnglishTerms()) await saveTermTemplates();
   document.getElementById('storageModeLabel').textContent = storageModeLabel();
   updateSyncStatusLabel();
@@ -1043,7 +1060,7 @@ async function persistQuote(){
   await stSet('godo:quote:'+quote.id, JSON.stringify(quote));
   const total = computeTotals(quote).grand;
   const existingIdx = quotesIndex.findIndex(q=>q.id===quote.id);
-  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"" };
+  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"", qtyTotal: (quote.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0) };
   if(existingIdx >= 0) quotesIndex[existingIdx] = entry; else quotesIndex.unshift(entry);
   await saveIndex();
   flashSaved();
@@ -1098,7 +1115,7 @@ function scheduleProposalSave(){ clearTimeout(saveTimer); saveTimer = setTimeout
 
 /* ---------------- BACKUP: EXPORT / IMPORT ---------------- */
 async function exportBackup(){
-  const data = { exportedAt: new Date().toISOString(), company, customers, products, stockMoves, purchaseOrders, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
+  const data = { exportedAt: new Date().toISOString(), company, customers, products, stockMoves, purchaseOrders, shipments, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
   for(const q of quotesIndex){
     const r = await stGet('godo:quote:'+q.id);
     if(r && r.value){ try{ data.quotes[q.id] = JSON.parse(r.value); }catch(e){} }
@@ -1125,6 +1142,7 @@ function importBackupFile(file){
     if(data.products) products = data.products;
     if(data.stockMoves) stockMoves = data.stockMoves;
     if(data.purchaseOrders) purchaseOrders = data.purchaseOrders;
+    if(data.shipments) shipments = data.shipments;
     if(data.suppliers) suppliers = data.suppliers;
     if(data.quotesIndex) quotesIndex = data.quotesIndex;
     if(data.proposalsIndex) proposalsIndex = data.proposalsIndex;
@@ -1133,7 +1151,7 @@ function importBackupFile(file){
     if(data.termTemplates) termTemplates = data.termTemplates;
     if(data.docTemplates) docTemplates = data.docTemplates;
     if(data.defaultTemplate) defaultTemplate = data.defaultTemplate;
-    await saveCompany(); await saveCustomers(); await saveProducts(); await saveStockMoves(); await savePurchaseOrders(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
+    await saveCompany(); await saveCustomers(); await saveProducts(); await saveStockMoves(); await savePurchaseOrders(); await saveShipments(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
     if(data.quotes){ for(const id in data.quotes){ await stSet('godo:quote:'+id, JSON.stringify(data.quotes[id])); } }
     if(data.proposals){ for(const id in data.proposals){ await stSet('godo:proposal:'+id, JSON.stringify(data.proposals[id])); } }
     alert('Yedek başarıyla yüklendi.');
@@ -1153,11 +1171,6 @@ function nextQuoteNo(){
   const year = new Date().getFullYear();
   const count = quotesIndex.filter(q=>q.quoteNo && q.quoteNo.includes(String(year))).length + 1;
   return `GODO-${year}-${String(count).padStart(3,'0')}`;
-}
-function nextIrsaliyeNo(){
-  const year = new Date().getFullYear();
-  const count = quotesIndex.filter(q=>q.irsaliyeNo && q.irsaliyeNo.includes(String(year))).length + 1;
-  return `İRS-${year}-${String(count).padStart(3,'0')}`;
 }
 
 /* ---------------- CALC ---------------- */
@@ -1313,7 +1326,7 @@ function renderSidebarPrimaryNav(){
       <div class="tab ${activeTab==='dashboard'?'active':''}" data-tab="dashboard">Pano ${dueCount?`<span class="nav-badge">${dueCount}</span>`:''}</div>
       <div class="tab ${activeTab==='list'||editorActive?'active':''}" data-tab="list">Teklifler</div>
       <div class="tab ${activeTab==='proposalsList'||isProposalTab(activeTab)?'active':''}" data-tab="proposalsList">Proje Teklifleri</div>
-      <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler</div>
+      <div class="tab ${activeTab==='orders'?'active':''}" data-tab="orders">Siparişler ${(()=>{ const n = readyOrders().length; return n?`<span class="nav-badge">${n}</span>`:''; })()}</div>
       <div class="tab ${activeTab==='purchase'||activeTab==='poEditor'||activeTab==='poPrint'?'active':''}" data-tab="purchase">Satın Alma</div>
       <div class="tab ${activeTab==='customers'||activeTab==='customerDetail'?'active':''}" data-tab="customers">Cariler</div>
       <div class="tab ${activeTab==='products'?'active':''}" data-tab="products">Ürünler</div>
@@ -1373,6 +1386,7 @@ function render(){
     c.innerHTML = renderDashboard();
     ensureReportsData().then(data=>{ if(activeTab==='dashboard'){ const el=document.getElementById('dashProfitKPIs'); if(el) el.innerHTML = renderDashProfitKPIs(data); } });
     fillStockAlerts();
+    fillReadyWidget();
   }
   else if(activeTab==='list') c.innerHTML = renderQuotesList();
   else if(activeTab==='proposalsList') c.innerHTML = renderProposalsList();
@@ -1442,7 +1456,7 @@ function renderDashboard(){
   const dueTasks = tasks.filter(t=>!t.done && t.dueDate && t.dueDate<=today).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
   const dueCutoff = new Date(); dueCutoff.setDate(dueCutoff.getDate()+7);
   const dueCutoffStr = dueCutoff.toISOString().slice(0,10);
-  const duePayments = quotesIndex.filter(q=>isOrderStatus(q.status) && q.paymentStatus!=='Tamamen Ödendi' && q.paymentDueDate && q.paymentDueDate<=dueCutoffStr).sort((a,b)=>(a.paymentDueDate||'').localeCompare(b.paymentDueDate||''));
+  const duePayments = dueShipments(dueCutoffStr);
 
   return `
   <div class="panel" style="max-width:1040px;">
@@ -1461,20 +1475,21 @@ function renderDashboard(){
       <div class="kpi-card"><div class="kpi-label">Kârlılık Tutarı</div><div class="kpi-value">…</div><div class="kpi-sub">Hesaplanıyor</div></div>
     </div>
 
+    <div id="readyShipWidget"></div>
     <div id="stockAlertsWidget"></div>
 
     ${duePayments.length ? `
     <div class="subhead" style="margin-top:0;">Vadesi Yaklaşan / Geçen Ödemeler</div>
     <div style="margin-bottom:28px;">
-      ${duePayments.map(q=>`
-        <div class="dash-quote-row payment-due-row" data-id="${q.id}" style="padding:10px 4px;">
+      ${duePayments.map(s=>`
+        <div class="dash-quote-row payment-due-row" data-id="${s.orderId}" style="padding:10px 4px;">
           <div>
-            <div class="dqr-cust" style="font-size:12.5px;">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
-            <div class="dqr-meta">${q.quoteNo||''}${q.invoiceNo?' · Fatura: '+escapeHtml(q.invoiceNo):''}</div>
+            <div class="dqr-cust" style="font-size:12.5px;">${escapeHtml(s.customer.name||'İsimsiz Müşteri')}</div>
+            <div class="dqr-meta">${escapeHtml(s.orderNo||'')} · Fatura: ${escapeHtml(s.invoiceNo||'—')}</div>
           </div>
           <div style="text-align:right;">
-            <div class="mono" style="font-size:12px;">${q.currency||'€'} ${fmt((q.total||0)-(parseFloat(q.paidAmount)||0))}</div>
-            ${renderDueBadge(q)}
+            <div class="mono" style="font-size:12px;">${s.currency||'€'} ${fmt(Math.max(0, shipTotal(s)-shipPaid(s)))}</div>
+            ${dueBadgeHtml(shipDueDate(s), false)}
           </div>
         </div>`).join('')}
     </div>` : ''}
@@ -1594,84 +1609,7 @@ function renderQuotesKanban(rows){
   </div>`;
 }
 
-function renderDueBadge(q){
-  if(q.paymentStatus==='Tamamen Ödendi') return '';
-  if(!q.paymentDueDate) return '<span style="font-size:10.5px;color:var(--gray-300);">Vade girilmedi</span>';
-  const today = new Date().toISOString().slice(0,10);
-  const diffDays = Math.round((new Date(q.paymentDueDate) - new Date(today)) / 86400000);
-  if(diffDays < 0) return `<span style="font-size:10.5px;font-weight:700;color:var(--danger);">${Math.abs(diffDays)} gün gecikti</span>`;
-  if(diffDays === 0) return `<span style="font-size:10.5px;font-weight:700;color:var(--danger);">Bugün doluyor</span>`;
-  if(diffDays <= 3) return `<span style="font-size:10.5px;font-weight:700;color:#8A6B22;">${diffDays} gün kaldı</span>`;
-  return `<span style="font-size:10.5px;color:var(--gray-500);">${diffDays} gün kaldı</span>`;
-}
 
-function renderOrdersPage(){
-  const orders = quotesIndex.filter(q=>isOrderStatus(q.status)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const totalSum = orders.reduce((s,q)=>s+(q.total||0),0);
-  const curr = (orders[0]&&orders[0].currency) || '€';
-  const outstanding = orders.reduce((s,q)=>{
-    if(q.paymentStatus==='Tamamen Ödendi') return s;
-    const paid = parseFloat(q.paidAmount)||0;
-    return s + Math.max(0,(q.total||0)-paid);
-  },0);
-
-  const PAY_COLORS = {
-    'Fatura Kesilmedi':'var(--gray-500)',
-    'Fatura Kesildi / Ödeme Bekleniyor':'var(--gray-700)',
-    'Kısmi Ödeme Alındı':'#8A6B22',
-    'Tamamen Ödendi':'var(--ink)',
-    'Vadesi Geçti':'var(--danger)'
-  };
-
-  return `
-  <div class="panel" style="max-width:1120px;">
-    <h2>Siparişler</h2>
-    <p class="hint">${orders.length} sipariş · Toplam ${curr} ${fmt(totalSum)} — "Siparişe Dönüştü" ve "Fatura Kesildi" durumundaki teklifler burada listelenir.</p>
-    <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);max-width:520px;margin-bottom:24px;">
-      <div class="kpi-card"><div class="kpi-label">Toplam Sipariş Tutarı</div><div class="kpi-value">${curr} ${fmt(totalSum)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="color:${outstanding>0?'var(--danger)':'var(--ink)'};">${curr} ${fmt(outstanding)}</div></div>
-    </div>
-    ${orders.length ? orders.map(q=>{
-      const paid = parseFloat(q.paidAmount)||0;
-      const remaining = Math.max(0,(q.total||0)-paid);
-      return `
-      <div class="dash-quote-row" style="cursor:default;flex-direction:column;align-items:stretch;gap:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div style="cursor:pointer;" data-open="${q.id}">
-            <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
-            <div class="dqr-meta">${q.quoteNo||''}${q.version>1?' · v'+q.version:''} · ${q.date||''}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:16px;">
-            <div class="mono dqr-total">${q.currency||curr} ${fmt(q.total)}</div>
-            <select class="order-status-pick" data-id="${q.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
-              <option value="">— Sipariş Durumu —</option>
-              ${ORDER_STATUS_OPTIONS.map(s=>`<option ${q.orderStatus===s?'selected':''}>${s}</option>`).join('')}
-            </select>
-            <span data-order-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">Sipariş Çıktısı</span>
-            ${poCountForOrder(q.id) ? `<span data-po-list="${q.id}" data-po-no="${escapeAttr(q.quoteNo||'')}" style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;white-space:nowrap;">SAS (${poCountForOrder(q.id)})</span>` : ''}
-            <span data-po-create="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">${poCountForOrder(q.id)?'+ SAS':'SAS Oluştur'}</span>
-            <span data-irsaliye-print="${q.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;white-space:nowrap;">${q.irsaliyeNo?'İrsaliye ('+q.irsaliyeNo+')':'İrsaliye Oluştur'}</span>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper-2);border-radius:4px;flex-wrap:wrap;">
-          <input class="invoice-no-pick" data-id="${q.id}" value="${escapeAttr(q.invoiceNo||'')}" placeholder="Fatura No (e-Arşiv)" style="width:170px;font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
-          <select class="payment-status-pick" data-id="${q.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;color:${PAY_COLORS[q.paymentStatus]||'var(--gray-500)'};font-weight:600;">
-            <option value="">— Ödeme Durumu —</option>
-            ${PAYMENT_STATUS_OPTIONS.map(s=>`<option ${q.paymentStatus===s?'selected':''}>${s}</option>`).join('')}
-          </select>
-          ${q.paymentStatus==='Kısmi Ödeme Alındı' ? `
-            <input class="paid-amount-pick" data-id="${q.id}" type="number" step="0.01" value="${q.paidAmount||''}" placeholder="Alınan tutar" style="width:120px;font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
-            <span class="mono" style="font-size:11px;color:var(--gray-500);">Kalan: ${q.currency||curr} ${fmt(remaining)}</span>
-          ` : ''}
-          <span style="width:1px;height:20px;background:var(--hairline-strong);"></span>
-          <label style="font-size:11px;color:var(--gray-500);">Vade${q.paymentTermDays?' ('+q.paymentTermDays+' gün)':''}:</label>
-          <input class="due-date-pick" data-id="${q.id}" type="date" value="${q.paymentDueDate||''}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">
-          ${renderDueBadge(q)}
-        </div>
-      </div>`;
-    }).join('') : '<p class="hint">Henüz siparişe dönüşen teklif yok.</p>'}
-  </div>`;
-}
 
 /* ================= PROJE TEKLİFİ (PROPOSAL) SAYFALARI ================= */
 function renderProposalsList(){
@@ -2221,7 +2159,8 @@ function renderPurchasePage(){
         </div>
         <div style="display:flex;align-items:center;gap:16px;">
           <div class="mono dqr-total">${p.currency||'€'} ${fmt(poTotal(p))}</div>
-          <select class="po-status-pick" data-id="${p.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">${PO_STATUS.map(s=>`<option ${p.status===s?'selected':''}>${s}</option>`).join('')}</select>
+          <select class="po-status-pick" data-id="${p.id}" style="font-size:11.5px;padding:6px 8px;border:1px solid var(--hairline-strong);border-radius:3px;">${PO_STATUS.map(s=>`<option ${p.status===s?'selected':''} ${(s==='Kısmen Teslim Alındı'||s==='Teslim Alındı')&&p.status!==s?'disabled':''}>${s}</option>`).join('')}</select>
+          ${(p.status!=='İptal' && p.status!=='Teslim Alındı') ? `<span data-po-receive="${p.id}" style="font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Mal Kabul</span>` : ''}
           <span data-po-print="${p.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Çıktı</span>
           <span data-po-del="${p.id}" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">Sil</span>
         </div>
@@ -2239,6 +2178,7 @@ function attachPurchaseHandlers(){
     sel.onclick = e=>e.stopPropagation();
     sel.onchange = async e=>{ e.stopPropagation(); const po = purchaseOrders.find(p=>p.id===sel.dataset.id); if(po){ po.status = sel.value; await savePurchaseOrders(); render(); } };
   });
+  document.querySelectorAll('[data-po-receive]').forEach(b=>{ b.onclick = e=>{ e.stopPropagation(); openGoodsReceiptModal(b.dataset.poReceive); }; });
   document.querySelectorAll('[data-po-print]').forEach(b=>{ b.onclick = e=>{ e.stopPropagation(); poPrintId = b.dataset.poPrint; activeTab='poPrint'; render(); }; });
   document.querySelectorAll('[data-po-del]').forEach(b=>{
     b.onclick = async e=>{
@@ -2268,7 +2208,7 @@ function renderPoEditor(){
     <div class="grid3">
       <div class="field mono"><label>SAS No</label><input id="po-no" value="${escapeAttr(po.poNo)}"></div>
       <div class="field"><label>Tarih</label><input id="po-date" type="date" value="${escapeAttr(po.date)}"></div>
-      <div class="field"><label>Durum</label><select id="po-status">${PO_STATUS.map(s=>`<option ${po.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Durum</label><select id="po-status">${PO_STATUS.map(s=>`<option ${po.status===s?'selected':''} ${(s==='Kısmen Teslim Alındı'||s==='Teslim Alındı')&&po.status!==s?'disabled':''}>${s}</option>`).join('')}</select></div>
     </div>
     <div class="grid3">
       <div class="field"><label>Tedarikçi</label><select id="po-supplier"><option value="">— Seçiniz —</option>${sorted.map(s=>`<option value="${s.id}" ${po.supplierId===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
@@ -2292,10 +2232,14 @@ function renderPoEditor(){
       </tbody></table>
     <button class="add-row-btn" id="po-add-row">+ Kalem Ekle</button>
     <div class="totals-box"><div class="totals-row grand"><span>Ara Toplam (KDV hariç)</span><span id="poSubtotal">${escapeHtml(po.currency)} ${fmt(poTotal(po))}</span></div></div>
+    ${(()=>{ const sv = purchaseOrders.find(p=>p.id===po.id); const rc = (sv && sv.receipts)||[];
+      return rc.length ? `<div class="subhead" style="margin-top:22px;">Mal Kabul Geçmişi</div><table class="items-table"><thead><tr><th>Tarih</th><th>Tedarikçi İrsaliye</th><th class="num">Adet</th><th></th></tr></thead><tbody>
+        ${rc.map(r=>`<tr><td class="mono" style="font-size:12px;">${formatDate(r.date)}</td><td style="font-size:12px;">${escapeHtml(r.irsaliyeNo||'—')}</td><td class="num mono">${fmtQty((r.lines||[]).reduce((s,l)=>s+(parseFloat(l.qty)||0),0))}</td><td><span class="row-remove" data-del-receipt="${r.id}" title="Mal kabulü sil">✕</span></td></tr>`).join('')}</tbody></table>` : ''; })()}
     <div class="field" style="margin-top:18px;"><label>Notlar (çıktıda görünür)</label><textarea id="po-notes" rows="3" placeholder="Teslimat notu, sevkiyat talebi...">${escapeHtml(po.notes||'')}</textarea></div>
     <div class="actions-row" style="margin-top:16px;">
       <button class="btn btn-primary" id="po-save">Kaydet</button>
       <button class="btn btn-ghost" id="po-print">Kaydet ve Çıktı Al</button>
+      ${(!isNew && po.status!=='İptal') ? '<button class="btn btn-ghost" id="po-receive">Mal Kabul</button>' : ''}
       <button class="btn btn-ghost" id="po-cancel">Vazgeç</button>
     </div>
   </div>`;
@@ -2356,6 +2300,8 @@ function attachPoEditorHandlers(){
   $('po-add-row').onclick = ()=>{ po.items.push(blankPoItem()); render(); };
   $('po-save').onclick = async ()=>{ if(await savePoEditing()){ poEditing = null; activeTab='purchase'; render(); } };
   $('po-print').onclick = async ()=>{ if(await savePoEditing()){ poPrintId = po.id; poEditing = null; activeTab='poPrint'; render(); } };
+  const rcv = $('po-receive'); if(rcv) rcv.onclick = async ()=>{ if(await savePoEditing()){ const id = po.id; poEditing = null; activeTab='purchase'; render(); openGoodsReceiptModal(id); } };
+  document.querySelectorAll('[data-del-receipt]').forEach(b=>{ b.onclick = async ()=>{ if(await deleteGoodsReceipt(po.id, b.dataset.delReceipt)) openPoEditor(po.id); }; });
 }
 
 /* ---- Çıktı ---- */
@@ -2436,13 +2382,703 @@ function renderPoPrint(){
 function attachPoPrintHandlers(){
   const po = purchaseOrders.find(p=>p.id===poPrintId);
   document.getElementById('poPrintBack').onclick = ()=>{ activeTab='purchase'; render(); };
-  document.getElementById('poPrintGo').onclick = ()=>window.print();
+  document.getElementById('poPrintGo').onclick = async ()=>{ await markPoOrdered(po); window.print(); };
   document.getElementById('poPrintMail').onclick = ()=>{
     if(!po) return;
     const sup = suppliers.find(s=>s.id===po.supplierId);
     if(!(sup && (sup.contacts||[]).some(c=>c.email))) alert('Bu tedarikçinin kayıtlı e-postası yok. Yine de e-posta penceresini açıyorum, alıcıyı elle girebilirsin.');
+    markPoOrdered(po);
     window.location.href = buildPoMailto(po);
   };
+}
+
+/* ---------------- SEVKİYAT · FATURA · TAHSİLAT · SİPARİŞ AŞAMASI ---------------- */
+let shipments = [];
+let shipPrintId = null;
+let orderSearch = '';
+let orderFilter = '';
+const PAY_STATE_LABEL = { noinvoice:'Fatura bekliyor', waiting:'Ödeme bekleniyor', partial:'Kısmi ödeme', paid:'Ödendi', overdue:'Vadesi geçti' };
+
+async function saveShipments(){ await stSet('godo:shipments', JSON.stringify(shipments)); }
+function todayStr(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function addDaysStr(dateStr, n){ const d = new Date(dateStr+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+function diffDaysStr(a, b){ return Math.round((Date.parse(a+'T00:00:00Z') - Date.parse(b+'T00:00:00Z'))/86400000); }
+function shipsOf(orderId){ return shipments.filter(s=>s.orderId===orderId); }
+function nextShipmentIrsaliyeNo(){
+  const year = new Date().getFullYear();
+  const used = new Set(shipments.map(s=>s.irsaliyeNo).concat(quotesIndex.map(q=>q.irsaliyeNo)).filter(Boolean));
+  let n = [...used].filter(x=>String(x).includes('-'+year+'-')).length + 1, no;
+  do { no = `İRS-${year}-${String(n).padStart(3,'0')}`; n++; } while(used.has(no));
+  return no;
+}
+
+/* ---- Tutarlar ve durum ---- */
+function shipQty(s){ return (s.lines||[]).reduce((t,l)=>t+(parseFloat(l.qty)||0),0); }
+function shipNet(s){ return (s.lines||[]).reduce((t,l)=>t+(parseFloat(l.qty)||0)*(parseFloat(l.unitPrice)||0),0); }
+function shipIsInvoiced(s){ return !!(s.invoiceNo || s.invoiceDate); }
+function shipTotal(s){ const v = shipIsInvoiced(s) ? (parseFloat(s.vatRate)||0) : 0; return shipNet(s) * (1 + v/100); }
+function shipPaid(s){ return (s.payments||[]).reduce((t,p)=>t+(parseFloat(p.amount)||0),0); }
+function shipDueDate(s){
+  if(!shipIsInvoiced(s)) return '';
+  if(s.dueDateOverride) return s.dueDateOverride;
+  const t = parseInt(s.termDays);
+  if(isNaN(t) || !s.invoiceDate) return '';
+  return addDaysStr(s.invoiceDate, t);
+}
+function shipPayState(s){
+  if(!shipIsInvoiced(s)) return 'noinvoice';
+  const total = shipTotal(s), paid = shipPaid(s);
+  if(total > 0 && paid >= total - 0.01) return 'paid';
+  const due = shipDueDate(s);
+  if(due && due < todayStr()) return 'overdue';
+  return paid > 0 ? 'partial' : 'waiting';
+}
+function dueBadgeHtml(due, paid){
+  if(paid) return '';
+  if(!due) return '<span style="font-size:10.5px;color:var(--gray-300);">Vade tanımsız</span>';
+  const d = diffDaysStr(due, todayStr());
+  if(d < 0) return `<span style="font-size:10.5px;font-weight:700;color:var(--danger);">${Math.abs(d)} gün gecikti</span>`;
+  if(d === 0) return `<span style="font-size:10.5px;font-weight:700;color:var(--danger);">Bugün doluyor</span>`;
+  if(d <= 3) return `<span style="font-size:10.5px;font-weight:700;color:#8A6B22;">${d} gün kaldı</span>`;
+  return `<span style="font-size:10.5px;color:var(--gray-500);">${d} gün kaldı</span>`;
+}
+function sumByCur(list, fn){ const m = {}; list.forEach(x=>{ const c = x.currency||'€'; m[c] = (m[c]||0) + fn(x); }); return m; }
+function curText(m){ const parts = Object.entries(m).filter(([,v])=>Math.abs(v)>0.005).map(([c,v])=>c+' '+fmt(v)); return parts.length ? parts.join(' · ') : '—'; }
+
+/* ---- Sipariş toplamları ve aşama ---- */
+function orderQtyTotal(q){ return parseFloat(q.qtyTotal)||0; }
+function orderAgg(q){
+  const ships = shipsOf(q.id);
+  let shippedQty = 0, invoicedQty = 0;
+  const shpByItem = {};
+  ships.forEach(s=>(s.lines||[]).forEach(l=>{
+    const v = parseFloat(l.qty)||0; shippedQty += v; if(shipIsInvoiced(s)) invoicedQty += v;
+    const k = l.quoteItemId || l.code; shpByItem[k] = (shpByItem[k]||0) + v;
+  }));
+  let purchased = 0, received = 0; const recvByItem = {};
+  purchaseOrders.forEach(po=>{
+    if(po.salesOrderId!==q.id || po.status==='İptal') return;
+    (po.items||[]).forEach(it=>{
+      const pq = parseFloat(it.qty)||0, rq = parseFloat(it.receivedQty)||0;
+      purchased += pq; received += rq;
+      if(it.quoteItemId) recvByItem[it.quoteItemId] = (recvByItem[it.quoteItemId]||0) + rq;
+    });
+  });
+  let ready = 0; Object.keys(recvByItem).forEach(k=>{ ready += Math.max(0, recvByItem[k] - (shpByItem[k]||0)); });
+  const invShips = ships.filter(shipIsInvoiced);
+  const invoicedTotal = invShips.reduce((t,s)=>t+shipTotal(s),0);
+  const paidTotal = invShips.reduce((t,s)=>t+shipPaid(s),0);
+  const unpaidShips = invShips.filter(s=>shipPayState(s)!=='paid');
+  return { N:orderQtyTotal(q), ships, shippedQty, invoicedQty, purchased, received, ready, invoicedTotal, paidTotal, unpaidShips };
+}
+function orderStage(q, a){
+  a = a || orderAgg(q); const N = a.N;
+  const eps = 1e-9;
+  if(N > 0 && a.invoicedQty >= N - eps) return a.unpaidShips.length ? { key:'tahsilat', label:'Faturalandı · tahsilat bekliyor' } : { key:'tamam', label:'Tamamlandı' };
+  if(N > 0 && a.shippedQty >= N - eps) return { key:'faturalanacak', label: a.invoicedQty>0 ? 'Sevk edildi · kalan fatura bekliyor' : 'Sevk edildi · fatura bekliyor' };
+  if(a.shippedQty > 0){
+    if(a.shippedQty - a.invoicedQty > eps) return { key:'faturalanacak', label:'Kısmen sevk edildi · fatura bekliyor' };
+    return { key:'sevk', label: a.ready>0 ? 'Kısmen sevk edildi · kalan sevke hazır' : 'Kısmen sevk edildi' };
+  }
+  if(a.ready > 0) return { key:'hazir', label:'Sevke hazır' };
+  if(a.purchased > 0) return { key:'mal', label:'Mal bekleniyor' };
+  return { key:'tedarik', label:'Tedarik bekliyor' };
+}
+function orderMatchesFilter(q, a, f){
+  if(!f) return true;
+  const eps = 1e-9;
+  if(f==='hazir') return a.ready > eps;
+  if(f==='bekleyen') return a.ready <= eps && (a.N<=0 || a.shippedQty < a.N - eps) && ((a.purchased - a.received) > eps || a.purchased === 0);
+  if(f==='faturalanacak') return a.shippedQty - a.invoicedQty > eps;
+  if(f==='tahsilat') return a.unpaidShips.length > 0;
+  if(f==='tamam') return a.N > 0 && a.invoicedQty >= a.N - eps && a.unpaidShips.length === 0;
+  return true;
+}
+function readyLinesForOrder(orderId){
+  const shp = {}; shipsOf(orderId).forEach(s=>(s.lines||[]).forEach(l=>{ const k = l.quoteItemId||l.code; shp[k] = (shp[k]||0) + (parseFloat(l.qty)||0); }));
+  const recv = {}, info = {};
+  purchaseOrders.forEach(po=>{
+    if(po.salesOrderId!==orderId || po.status==='İptal') return;
+    (po.items||[]).forEach(it=>{ if(!it.quoteItemId) return; recv[it.quoteItemId] = (recv[it.quoteItemId]||0) + (parseFloat(it.receivedQty)||0); info[it.quoteItemId] = { code:it.code, desc:it.desc }; });
+  });
+  return Object.keys(recv).map(k=>({ code:info[k].code, desc:info[k].desc, qty: recv[k] - (shp[k]||0) })).filter(x=>x.qty > 1e-9);
+}
+function readyOrders(){
+  return quotesIndex.filter(q=>isOrderStatus(q.status)).map(q=>({ q, lines:readyLinesForOrder(q.id) })).filter(x=>x.lines.length);
+}
+function dueShipments(cutoff){
+  return shipments.filter(s=>shipIsInvoiced(s) && shipPayState(s)!=='paid' && shipDueDate(s) && shipDueDate(s) <= cutoff)
+    .sort((a,b)=>shipDueDate(a).localeCompare(shipDueDate(b)));
+}
+
+/* ---- Durum eşitleme (Teklifler hattı: Fatura Kesildi yalnızca tüm kalemler faturalanınca) ---- */
+async function setQuoteStatusById(id, status){
+  const r = await stGet('godo:quote:'+id); if(!(r && r.value)) return;
+  const full = JSON.parse(r.value); full.status = status;
+  await stSet('godo:quote:'+id, JSON.stringify(full));
+  const idx = quotesIndex.findIndex(q=>q.id===id); if(idx>=0) quotesIndex[idx].status = status;
+  await saveIndex();
+  if(quote && quote.id===id) quote.status = status;
+}
+async function syncOrderPipelineStatus(orderId){
+  const q = quotesIndex.find(x=>x.id===orderId);
+  if(!q || !isOrderStatus(q.status)) return;
+  const ships = shipsOf(orderId); if(!ships.length) return;
+  const N = orderQtyTotal(q); if(!(N > 0)) return;
+  const invoiced = ships.filter(shipIsInvoiced).reduce((t,s)=>t+shipQty(s),0);
+  const target = invoiced >= N - 1e-9 ? 'Fatura Kesildi' : 'Siparişe Dönüştü';
+  if(q.status !== target) await setQuoteStatusById(orderId, target);
+}
+function canSetFaturaKesildi(orderId){
+  const ships = shipsOf(orderId);
+  const q = quotesIndex.find(x=>x.id===orderId);
+  if(!ships.length) return { ok:false, msg:'"Fatura Kesildi" durumu otomatiktir: Siparişler sayfasında sevkiyat oluşturup fatura no gir, tüm kalemler faturalanınca bu duruma kendiliğinden geçer.' };
+  const N = q ? orderQtyTotal(q) : 0, inv = ships.filter(shipIsInvoiced).reduce((t,s)=>t+shipQty(s),0);
+  if(N > 0 && inv < N - 1e-9) return { ok:false, msg:'Bu siparişin faturalanmamış kalemleri var ('+fmtQty(inv)+'/'+fmtQty(N)+'). Tüm kalemler faturalanınca durum kendiliğinden "Fatura Kesildi" olur.' };
+  return { ok:true };
+}
+
+/* ---- Açılışta: eski sipariş verisini sevkiyata taşı, adet toplamlarını doldur ---- */
+async function backfillOrderQty(){
+  let changed = false;
+  for(const q of quotesIndex){
+    if(!isOrderStatus(q.status) || q.qtyTotal !== undefined) continue;
+    const r = await stGet('godo:quote:'+q.id); if(!(r && r.value)) continue;
+    let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
+    q.qtyTotal = (full.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0);
+    changed = true;
+  }
+  if(changed) await saveIndex();
+}
+async function migrateOrdersToShipments(){
+  let changed = false;
+  for(const q of quotesIndex.filter(x=>isOrderStatus(x.status))){
+    if(shipments.some(s=>s.orderId===q.id)) continue;
+    const legacy = q.irsaliyeNo || q.invoiceNo || q.paymentDueDate || (q.paymentStatus && q.paymentStatus!=='Fatura Kesilmedi') || q.status==='Fatura Kesildi' || q.orderStatus==='Sevk Edildi' || q.orderStatus==='Teslim Edildi';
+    if(!legacy) continue;
+    const r = await stGet('godo:quote:'+q.id); if(!(r && r.value)) continue;
+    let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
+    const lines = (full.items||[]).filter(it=>it.code||it.desc).map(it=>({ quoteItemId:it.id, productId:it.productId||null, code:it.code||'', desc:it.desc||'', qty:parseFloat(it.qty)||0, unitPrice:lineUnitPrice(it) }));
+    if(!lines.length) continue;
+    const invoiced = !!(full.invoiceNo || full.status==='Fatura Kesildi' || (full.paymentStatus && full.paymentStatus!=='Fatura Kesilmedi'));
+    const vat = full.vatEnabled ? (parseFloat(full.vatRate)||0) : 0;
+    const date = full.irsaliyeDate || full.date || todayStr();
+    const net = lines.reduce((t,l)=>t+l.qty*l.unitPrice,0), total = net*(1+vat/100);
+    let paid = parseFloat(full.paidAmount)||0;
+    if(full.paymentStatus==='Tamamen Ödendi' && paid < total - 0.01) paid = total;
+    const cu = full.customer||{};
+    shipments.push({
+      id:crypto.randomUUID(), orderId:q.id, orderNo:full.quoteNo||q.quoteNo||'',
+      customer:{ name:upperCompanyName(cu.name||q.customerName||''), taxOffice:cu.taxOffice||'', taxNo:cu.taxNo||'', address:cu.address||'', contactName:cu.contactName||'', phone:cu.contactPhone||'' },
+      currency:full.currency||q.currency||'€', date, irsaliyeNo:full.irsaliyeNo||'', irsaliyeNote:full.irsaliyeNote||'', officialIrsaliyeNo:'',
+      lines, termDays:full.paymentTermDays||'', vatDefault:vat, vatRate: invoiced ? vat : '', invoiceNo:full.invoiceNo||'', invoiceDate: invoiced ? date : '',
+      dueDateOverride:full.paymentDueDate||'', payments: paid>0 ? [{ id:crypto.randomUUID(), date, amount:Math.round(paid*100)/100, note:'Önceki sistemden aktarıldı' }] : [], migrated:true
+    });
+    changed = true;
+  }
+  if(changed) await saveShipments();
+}
+
+/* ---- Stok çıkışı: yalnızca resmi irsaliye no girilince ---- */
+function applyShipmentStock(s){
+  stockMoves = stockMoves.filter(m=>m.shipmentId!==s.id);
+  if((s.officialIrsaliyeNo||'').trim()){
+    const codes = productCodeMap();
+    (s.lines||[]).forEach(l=>{
+      const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
+      const q = parseFloat(l.qty)||0;
+      if(!p || q<=0 || !stockMoves.some(m=>m.productId===p.id)) return;
+      stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:s.date, type:'cikis', qty:-q, unitCost:0, currency:'€', srcDoc:s.officialIrsaliyeNo, note:'Sevkiyat '+(s.irsaliyeNo||''), shipmentId:s.id, createdAt:new Date().toISOString() });
+    });
+  }
+  stockReservedCache = null;
+}
+function shipStockPending(s){
+  if((s.officialIrsaliyeNo||'').trim()) return false;
+  const codes = productCodeMap();
+  return (s.lines||[]).some(l=>{ const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim())); return p && stockMoves.some(m=>m.productId===p.id); });
+}
+async function afterShipmentChange(orderId){
+  stockReservedCache = null;
+  await saveShipments(); await saveStockMoves();
+  await syncOrderPipelineStatus(orderId);
+}
+
+/* ---- Modal yardımcısı ---- */
+function openSimpleModal(innerHtml, width){
+  const old = document.getElementById('modalOverlay'); if(old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'modalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(14,14,14,.6);display:flex;align-items:center;justify-content:center;z-index:60;';
+  overlay.innerHTML = `<div class="modal-box" style="width:${width||620}px;max-width:96vw;max-height:92vh;overflow-y:auto;">${innerHtml}</div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{ if(e.target===overlay) overlay.remove(); });
+  return overlay;
+}
+
+/* ---- Sevkiyat oluştur ---- */
+async function openShipmentModal(orderId){
+  const q = quotesIndex.find(x=>x.id===orderId);
+  const r = await stGet('godo:quote:'+orderId);
+  if(!q || !(r && r.value)){ alert('Sipariş verisi okunamadı.'); return; }
+  const full = JSON.parse(r.value);
+  const shp = {}; shipsOf(orderId).forEach(s=>(s.lines||[]).forEach(l=>{ const k = l.quoteItemId||l.code; shp[k] = (shp[k]||0) + (parseFloat(l.qty)||0); }));
+  const recv = {}, bought = {};
+  purchaseOrders.forEach(po=>{ if(po.salesOrderId!==orderId || po.status==='İptal') return; (po.items||[]).forEach(it=>{ if(!it.quoteItemId) return; bought[it.quoteItemId] = (bought[it.quoteItemId]||0) + (parseFloat(it.qty)||0); recv[it.quoteItemId] = (recv[it.quoteItemId]||0) + (parseFloat(it.receivedQty)||0); }); });
+  const lines = (full.items||[]).filter(it=>it.code||it.desc).map(it=>{
+    const ordered = parseFloat(it.qty)||0, shipped = shp[it.id]||0, remaining = ordered - shipped;
+    const hasPO = (bought[it.id]||0) > 0, got = recv[it.id]||0, ready = Math.max(0, got - shipped);
+    const def = hasPO ? Math.min(remaining, ready) : remaining;
+    return { it, ordered, shipped, remaining, hasPO, got, def: Math.max(0, def) };
+  }).filter(l=>l.remaining > 1e-9);
+  if(!lines.length){ alert('Bu siparişin tüm kalemleri zaten sevk edilmiş.'); return; }
+  const ov = openSimpleModal(`
+    <h2>Sevkiyat Oluştur</h2>
+    <p class="hint"><b>${escapeHtml(full.quoteNo||'')}</b> · ${escapeHtml(upperCompanyName(full.customer.name||''))}. Bu sevkiyata giren kalemleri ve miktarları seç; irsaliye numarası otomatik verilir. Mal kabulü yapılmış kalemler dolu gelir, mal bekleyenler 0 gelir.</p>
+    <table class="items-table"><thead><tr><th style="width:28px;"></th><th>Ürün</th><th class="num">Sipariş</th><th class="num">Sevk edilen</th><th class="num">Gelen (mal kabul)</th><th class="num" style="width:110px;">Bu sevkiyatta</th></tr></thead><tbody>
+      ${lines.map((l,i)=>`<tr data-i="${i}">
+        <td><input type="checkbox" class="sl-on" ${l.def>0?'checked':''}></td>
+        <td><div class="mono" style="font-size:12px;">${escapeHtml(l.it.code||'')}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.it.desc||'')}</div></td>
+        <td class="num mono">${fmtQty(l.ordered)}</td><td class="num mono">${fmtQty(l.shipped)}</td>
+        <td class="num mono" style="color:${l.hasPO?(l.got>=l.remaining?'var(--ink)':'var(--danger)'):'var(--gray-300)'};">${l.hasPO?fmtQty(l.got):'SAS yok'}</td>
+        <td class="num"><input class="sl-qty mono" type="number" min="0" step="1" value="${l.def}" style="width:90px;text-align:right;font-size:12px;"></td></tr>`).join('')}
+    </tbody></table>
+    <div class="grid2" style="margin-top:14px;">
+      <div class="field"><label>Sevk Tarihi</label><input id="sl-date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>Not (araç plaka, şoför vb. — opsiyonel)</label><input id="sl-note"></div>
+    </div>
+    <div class="field"><label>Resmi e-irsaliye no (opsiyonel — girilince stoktan düşülür)</label><input id="sl-official" placeholder="Portalda kestiysen numarasını yaz"></div>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="sl-create">Sevkiyat Oluştur</button>
+      <button class="btn btn-ghost" id="sl-cancel">Vazgeç</button>
+    </div>`, 880);
+  ov.querySelector('#sl-cancel').onclick = ()=>ov.remove();
+  ov.querySelector('#sl-create').onclick = async ()=>{
+    const out = [];
+    for(const tr of ov.querySelectorAll('tbody tr')){
+      if(!tr.querySelector('.sl-on').checked) continue;
+      const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.sl-qty').value);
+      if(!(qty > 0)) continue;
+      if(qty > l.remaining + 1e-9){ alert((l.it.code||'Kalem')+' için kalan miktardan ('+fmtQty(l.remaining)+') fazla girdin.'); return; }
+      out.push({ quoteItemId:l.it.id, productId:l.it.productId||null, code:l.it.code||'', desc:l.it.desc||'', qty, unitPrice:lineUnitPrice(l.it) });
+    }
+    if(!out.length){ alert('Sevk edilecek miktar girilmedi.'); return; }
+    const cu = full.customer||{};
+    const lang = full.lang==='en';
+    const vatDefault = full.vatEnabled ? (parseFloat(full.vatRate)||0) : (lang ? 0 : (parseFloat(full.vatRate)||20));
+    const s = {
+      id:crypto.randomUUID(), orderId, orderNo:full.quoteNo||'',
+      customer:{ name:upperCompanyName(cu.name||''), taxOffice:cu.taxOffice||'', taxNo:cu.taxNo||'', address:cu.address||'', contactName:cu.contactName||'', phone:cu.contactPhone||'' },
+      currency:full.currency||'€', date:ov.querySelector('#sl-date').value||todayStr(), irsaliyeNo:nextShipmentIrsaliyeNo(), irsaliyeNote:ov.querySelector('#sl-note').value.trim(),
+      officialIrsaliyeNo:ov.querySelector('#sl-official').value.trim(), lines:out, termDays:q.paymentTermDays||full.paymentTermDays||'',
+      vatDefault, vatRate:'', invoiceNo:'', invoiceDate:'', dueDateOverride:'', payments:[]
+    };
+    shipments.push(s); applyShipmentStock(s);
+    await afterShipmentChange(orderId);
+    ov.remove(); shipPrintId = s.id; activeTab = 'irsaliyePrint'; render();
+  };
+}
+
+/* ---- Fatura gir ---- */
+function openShipmentInvoiceModal(id){
+  const s = shipments.find(x=>x.id===id); if(!s) return;
+  const net = shipNet(s), cur = s.currency||'€';
+  const startVat = s.vatRate!=='' && s.vatRate!==undefined ? s.vatRate : (s.vatDefault!==undefined ? s.vatDefault : 20);
+  const ov = openSimpleModal(`
+    <h2>Fatura — ${escapeHtml(s.irsaliyeNo||'Sevkiyat')}</h2>
+    <p class="hint">${escapeHtml(s.orderNo)} · ${escapeHtml(s.customer.name||'')}. Faturayı e-Arşiv portalından kestikten sonra numarasını gir; tutar sevkiyattaki kalemlerden, vade tarihi teklifteki ödeme vadesinden otomatik hesaplanır.</p>
+    <div class="grid3">
+      <div class="field"><label>Fatura No</label><input id="iv-no" value="${escapeAttr(s.invoiceNo||'')}" placeholder="GİB2026000012345"></div>
+      <div class="field"><label>Fatura Tarihi</label><input id="iv-date" type="date" value="${escapeAttr(s.invoiceDate||todayStr())}"></div>
+      <div class="field"><label>KDV %</label><input id="iv-vat" type="number" min="0" step="1" value="${escapeAttr(String(startVat))}"></div>
+    </div>
+    <div id="iv-sum" style="font-size:13px;line-height:1.8;background:var(--paper-2);padding:10px 14px;border-radius:4px;"></div>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="iv-save">Kaydet</button>
+      ${shipIsInvoiced(s) ? '<button class="btn btn-danger" id="iv-remove">Faturayı Kaldır</button>' : ''}
+      <button class="btn btn-ghost" id="iv-cancel">Vazgeç</button>
+    </div>`, 640);
+  const upd = ()=>{
+    const v = parseFloat(ov.querySelector('#iv-vat').value)||0, d = ov.querySelector('#iv-date').value;
+    const t = parseInt(s.termDays); const due = s.dueDateOverride || (d && !isNaN(t) ? addDaysStr(d, t) : '');
+    ov.querySelector('#iv-sum').innerHTML = `Ara toplam: <b class="mono">${cur} ${fmt(net)}</b> · KDV (%${v}): <b class="mono">${cur} ${fmt(net*v/100)}</b> · <b>Fatura toplamı: <span class="mono">${cur} ${fmt(net*(1+v/100))}</span></b><br>
+      Vade: ${due ? '<b>'+formatDate(due)+'</b> ('+(s.dueDateOverride?'elle girilmiş':t+' gün')+')' : '<span style="color:var(--danger);">tanımsız — teklifte ödeme vadesi (gün) girilmemiş</span>'}`;
+  };
+  ['iv-vat','iv-date'].forEach(i=>ov.querySelector('#'+i).addEventListener('input', upd)); upd();
+  ov.querySelector('#iv-cancel').onclick = ()=>ov.remove();
+  ov.querySelector('#iv-save').onclick = async ()=>{
+    const no = ov.querySelector('#iv-no').value.trim(), date = ov.querySelector('#iv-date').value;
+    if(!no){ alert('Fatura numarası gerekli.'); return; }
+    if(!date){ alert('Fatura tarihi gerekli.'); return; }
+    s.invoiceNo = no; s.invoiceDate = date; s.vatRate = String(parseFloat(ov.querySelector('#iv-vat').value)||0);
+    await afterShipmentChange(s.orderId); ov.remove(); render();
+  };
+  const rm = ov.querySelector('#iv-remove');
+  if(rm) rm.onclick = async ()=>{
+    if((s.payments||[]).length && !confirm('Bu faturaya kayıtlı tahsilat var. Fatura kaldırılırsa tahsilatlar da silinir. Devam edilsin mi?')) return;
+    s.invoiceNo = ''; s.invoiceDate = ''; s.vatRate = ''; s.payments = [];
+    await afterShipmentChange(s.orderId); ov.remove(); render();
+  };
+}
+
+/* ---- Tahsilatlar ---- */
+function openShipmentPaymentsModal(id){
+  const s = shipments.find(x=>x.id===id); if(!s) return;
+  const cur = s.currency||'€';
+  const draw = ()=>{
+    const total = shipTotal(s), paid = shipPaid(s), rest = Math.max(0, total-paid);
+    const st = shipPayState(s);
+    ov.firstElementChild.innerHTML = `
+      <h2>Tahsilat — ${escapeHtml(s.invoiceNo||s.irsaliyeNo||'')}</h2>
+      <p class="hint">${escapeHtml(s.orderNo)} · ${escapeHtml(s.customer.name||'')} · Fatura toplamı <b class="mono">${cur} ${fmt(total)}</b> · Tahsil edilen <b class="mono">${cur} ${fmt(paid)}</b> · Kalan <b class="mono">${cur} ${fmt(rest)}</b> · <b>${PAY_STATE_LABEL[st]}</b> ${dueBadgeHtml(shipDueDate(s), st==='paid')}</p>
+      ${(s.payments||[]).length ? `<table class="items-table"><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Not</th><th></th></tr></thead><tbody>
+        ${s.payments.map(p=>`<tr><td class="mono" style="font-size:12px;">${formatDate(p.date)}</td><td class="num mono">${cur} ${fmt(parseFloat(p.amount)||0)}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml(p.note||'')}</td><td><span class="row-remove" data-del-pay="${p.id}">✕</span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">Henüz tahsilat kaydı yok.</p>'}
+      ${rest > 0.005 ? `<div class="subhead" style="margin-top:16px;">Tahsilat Ekle</div>
+      <div class="grid3">
+        <div class="field mono"><label>Tutar (${cur})</label><input id="py-amt" type="number" step="0.01" min="0" value="${Math.round(rest*100)/100}"></div>
+        <div class="field"><label>Tarih</label><input id="py-date" type="date" value="${todayStr()}"></div>
+        <div class="field"><label>Not</label><input id="py-note" placeholder="havale, çek..."></div>
+      </div>` : ''}
+      <div class="actions-row" style="margin-top:10px;">
+        ${rest > 0.005 ? '<button class="btn btn-primary" id="py-add">Tahsilatı Kaydet</button>' : ''}
+        <button class="btn btn-ghost" id="py-close">Kapat</button>
+      </div>`;
+    ov.querySelector('#py-close').onclick = ()=>{ ov.remove(); render(); };
+    const add = ov.querySelector('#py-add');
+    if(add) add.onclick = async ()=>{
+      const amt = parseFloat(ov.querySelector('#py-amt').value);
+      if(!(amt > 0)){ alert('Geçerli bir tutar gir.'); return; }
+      s.payments = (s.payments||[]).concat([{ id:crypto.randomUUID(), date:ov.querySelector('#py-date').value||todayStr(), amount:Math.round(amt*100)/100, note:ov.querySelector('#py-note').value.trim() }]);
+      await afterShipmentChange(s.orderId); draw();
+    };
+    ov.querySelectorAll('[data-del-pay]').forEach(b=>{
+      b.onclick = async ()=>{ if(!confirm('Bu tahsilat kaydı silinsin mi?')) return; s.payments = s.payments.filter(p=>p.id!==b.dataset.delPay); await afterShipmentChange(s.orderId); draw(); };
+    });
+  };
+  if(!shipIsInvoiced(s)){ alert('Önce sevkiyatın fatura numarasını gir.'); return; }
+  const ov = openSimpleModal('', 700);
+  draw();
+}
+
+/* ---- Sevkiyat düzenle / sil ---- */
+function openShipmentEditModal(id){
+  const s = shipments.find(x=>x.id===id); if(!s) return;
+  const ov = openSimpleModal(`
+    <h2>Sevkiyat — ${escapeHtml(s.irsaliyeNo||'irsaliyesiz')}</h2>
+    <div class="grid2">
+      <div class="field"><label>Sevk Tarihi</label><input id="se2-date" type="date" value="${escapeAttr(s.date||'')}"></div>
+      <div class="field"><label>Ödeme Vadesi (gün)</label><input id="se2-term" type="number" min="0" value="${escapeAttr(String(s.termDays||''))}" placeholder="tekliften geldi"></div>
+    </div>
+    <div class="field"><label>Resmi e-irsaliye no (girilince stoktan düşülür, silinince geri eklenir)</label><input id="se2-off" value="${escapeAttr(s.officialIrsaliyeNo||'')}"></div>
+    <div class="field"><label>Not (irsaliyede görünür)</label><input id="se2-note" value="${escapeAttr(s.irsaliyeNote||'')}"></div>
+    <div class="field"><label>Vade tarihini elle belirle (boş bırak = otomatik)</label><input id="se2-due" type="date" value="${escapeAttr(s.dueDateOverride||'')}"></div>
+    <div class="actions-row" style="margin-top:12px;">
+      <button class="btn btn-primary" id="se2-save">Kaydet</button>
+      <button class="btn btn-danger" id="se2-del">Sevkiyatı Sil</button>
+      <button class="btn btn-ghost" id="se2-cancel">Vazgeç</button>
+    </div>`, 620);
+  ov.querySelector('#se2-cancel').onclick = ()=>ov.remove();
+  ov.querySelector('#se2-save').onclick = async ()=>{
+    s.date = ov.querySelector('#se2-date').value || s.date; s.termDays = ov.querySelector('#se2-term').value;
+    s.officialIrsaliyeNo = ov.querySelector('#se2-off').value.trim(); s.irsaliyeNote = ov.querySelector('#se2-note').value.trim();
+    s.dueDateOverride = ov.querySelector('#se2-due').value;
+    applyShipmentStock(s); await afterShipmentChange(s.orderId); ov.remove(); render();
+  };
+  ov.querySelector('#se2-del').onclick = async ()=>{
+    const warn = shipIsInvoiced(s) ? '\n\nBu sevkiyat faturalanmış'+((s.payments||[]).length?' ve tahsilat kayıtları var':'')+'; hepsi silinecek.' : '';
+    if(!confirm((s.irsaliyeNo||'Bu sevkiyat')+' silinsin mi?'+warn)) return;
+    shipments = shipments.filter(x=>x.id!==s.id); stockMoves = stockMoves.filter(m=>m.shipmentId!==s.id);
+    await afterShipmentChange(s.orderId); ov.remove(); render();
+  };
+}
+
+/* ---- İrsaliye çıktısı (sevkiyattan) ---- */
+function renderIrsaliyePrint(){
+  const s = shipments.find(x=>x.id===shipPrintId);
+  if(!s) return '<div class="panel"><p class="hint">Sevkiyat bulunamadı.</p><button class="link-btn" id="btnBackOrdersFromIrsaliye">← Siparişlere Dön</button></div>';
+  if(!s.irsaliyeNo){ s.irsaliyeNo = nextShipmentIrsaliyeNo(); saveShipments(); }
+  const styleEl = document.getElementById('userDocStyle'); if(styleEl) styleEl.textContent = getSlotCSS('classic');
+  const cu = s.customer||{};
+  const rows = (s.lines||[]).map((l,i)=>`
+    <tr><td class="num pos">${i+1}</td><td><div class="item-code">${escapeHtml(l.code)}</div>${l.desc?`<div class="item-desc">${escapeHtml(l.desc)}</div>`:''}</td><td class="center">${escapeHtml(String(l.qty))} AD</td></tr>`).join('')
+    || '<tr><td colspan="3" style="text-align:center;color:var(--gray-300);padding:20px 0;">Kalem yok</td></tr>';
+  const printHTML = `
+    <div class="doc-head">
+      <div>
+        <div class="doc-word">${escapeHtml(company.name||'GODO')}</div>
+        <div class="doc-rule"></div>
+        ${company.tagline?`<div class="doc-tagline">${escapeHtml(company.tagline)}</div>`:''}
+        <div class="doc-sub">${escapeHtml(company.website||'')}</div>
+      </div>
+      <div class="doc-meta">
+        <div class="qn">${escapeHtml(s.irsaliyeNo)}</div>
+        <div>Tarih: ${formatDate(s.date)}</div>
+        <div>İlişkili Teklif: ${escapeHtml(s.orderNo||'')}</div>
+      </div>
+    </div>
+    <div class="doc-title">Sevk İrsaliyesi</div>
+    <div class="doc-customer">
+      <div class="dc-name">${escapeHtml(cu.name||'')}</div>
+      <div class="dc-grid">
+        <div><span class="dc-label">Vergi Dairesi / No</span><span class="dc-value">${escapeHtml([cu.taxOffice,cu.taxNo].filter(Boolean).join(' / ')||'—')}</span></div>
+        <div><span class="dc-label">Yetkili / İletişim</span><span class="dc-value">${escapeHtml([cu.contactName,cu.phone].filter(Boolean).join(' · ')||'—')}</span></div>
+      </div>
+      ${cu.address?`<div class="dc-address">${escapeHtml(cu.address)}</div>`:''}
+    </div>
+    <table class="doc-items">
+      <colgroup><col style="width:6%"><col style="width:74%"><col style="width:20%"></colgroup>
+      <thead><tr><th class="num">№</th><th>Ürün Kodu ve Açıklama</th><th class="center">Miktar</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div id="irsNoteBlock" style="margin-top:22px;font-size:12px;color:var(--gray-500);${s.irsaliyeNote?'':'display:none;'}"><b>Not:</b> <span id="irsNoteText">${escapeHtml(s.irsaliyeNote||'')}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-top:64px;">
+      <div style="width:44%;"><div style="border-top:1px solid var(--ink);padding-top:6px;font-size:11px;color:var(--gray-500);">Sevk Eden — Ad Soyad / İmza</div></div>
+      <div style="width:44%;"><div style="border-top:1px solid var(--ink);padding-top:6px;font-size:11px;color:var(--gray-500);">Teslim Alan — Ad Soyad / İmza</div></div>
+    </div>
+    <div class="doc-foot"><span>${escapeHtml((company.name||'GODO').toUpperCase())} — ${escapeHtml(company.website||'')}</span><span>${escapeHtml(s.irsaliyeNo)}</span></div>`;
+  return `
+  <div class="preview-wrap">
+    <div class="preview-toolbar">
+      <button class="btn btn-ghost" id="btnBackOrdersFromIrsaliye">← Siparişlere Dön</button>
+      <button class="btn btn-primary" id="btnPrintIrsaliye">PDF Olarak Kaydet / Yazdır</button>
+    </div>
+    <div class="screen-only-note" style="max-width:900px;margin:0 auto 12px;display:flex;align-items:center;gap:8px;">
+      <label style="font-size:11px;font-weight:700;color:var(--gray-500);white-space:nowrap;">Not (araç plaka, şoför vb. — opsiyonel):</label>
+      <input id="irsaliyeNoteInput" value="${escapeAttr(s.irsaliyeNote||'')}" placeholder="ör. Araç: 35 ABC 123 · Şoför: Ahmet Yılmaz" style="flex:1;padding:6px 9px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:12px;">
+    </div>
+    <div id="printArea">${printHTML}</div>
+  </div>`;
+}
+function attachIrsaliyePrintHandlers(){
+  const s = shipments.find(x=>x.id===shipPrintId);
+  const backBtn = document.getElementById('btnBackOrdersFromIrsaliye');
+  if(!backBtn) return;   // sevkiyat bulunamadıysa (silinmiş) işleyici yok
+  backBtn.onclick = ()=>{ activeTab='orders'; render(); };
+  const prn = document.getElementById('btnPrintIrsaliye'); if(prn) prn.onclick = ()=>window.print();
+  const inp = document.getElementById('irsaliyeNoteInput');
+  if(inp && s) inp.oninput = ()=>{
+    s.irsaliyeNote = inp.value;
+    const blk = document.getElementById('irsNoteBlock'), txt = document.getElementById('irsNoteText');
+    if(blk && txt){ txt.textContent = inp.value; blk.style.display = inp.value ? '' : 'none'; }
+    clearTimeout(attachIrsaliyePrintHandlers._t); attachIrsaliyePrintHandlers._t = setTimeout(saveShipments, 500);
+  };
+}
+
+/* ---- Siparişler sayfası ---- */
+function progressBar(label, done, total){
+  const pct = total > 0 ? Math.min(100, Math.round(done/total*100)) : 0;
+  return `<div class="op-item"><span class="op-l">${label}</span><div class="op-bar"><i style="width:${pct}%"></i></div><span class="op-n mono">${fmtQty(done)}/${fmtQty(total)}</span></div>`;
+}
+function renderOrdersPage(){
+  const all = quotesIndex.filter(q=>isOrderStatus(q.status)).sort((a,b)=>(b.date||'').localeCompare(a.date||''))
+    .map(q=>{ const a = orderAgg(q); return { q, a, st:orderStage(q,a) }; });
+  const counts = { '':all.length, hazir:0, bekleyen:0, faturalanacak:0, tahsilat:0, tamam:0 };
+  all.forEach(x=>{ ['hazir','bekleyen','faturalanacak','tahsilat','tamam'].forEach(f=>{ if(orderMatchesFilter(x.q,x.a,f)) counts[f]++; }); });
+  let rows = all.filter(x=>orderMatchesFilter(x.q,x.a,orderFilter));
+  if(orderSearch){
+    const s = foldTR(orderSearch.trim());
+    rows = rows.filter(x=>foldTR([x.q.customerName,x.q.quoteNo].concat(x.a.ships.map(sh=>sh.invoiceNo+' '+sh.irsaliyeNo)).join(' ')).includes(s));
+  }
+  const allShips = shipments.filter(s=>quotesIndex.some(q=>q.id===s.orderId));
+  const outstanding = sumByCur(allShips.filter(s=>shipIsInvoiced(s)), s=>Math.max(0, shipTotal(s)-shipPaid(s)));
+  const toInvoice = sumByCur(allShips.filter(s=>!shipIsInvoiced(s)), s=>shipNet(s));
+  const sevkeHazir = counts.hazir;
+  const FILTERS = [['','Tümü'],['hazir','Sevke hazır'],['bekleyen','Tedarik / mal bekleyen'],['faturalanacak','Faturalanacak'],['tahsilat','Tahsilat bekleyen'],['tamam','Tamamlanan']];
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <h2>Siparişler</h2>
+    <p class="hint">Aşamalar, sevkiyat ve fatura bilgilerinden otomatik hesaplanır. Sen sadece olayları girersin: SAS, mal kabul, sevkiyat, fatura no, tahsilat.</p>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:22px;">
+      <div class="kpi-card"><div class="kpi-label">Açık Sipariş</div><div class="kpi-value">${all.length - counts.tamam}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Sevke Hazır</div><div class="kpi-value" style="color:${sevkeHazir?'var(--ink)':'var(--gray-300)'};">${sevkeHazir}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Faturalanmamış Sevkiyat</div><div class="kpi-value" style="font-size:17px;">${curText(toInvoice)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="font-size:17px;color:${Object.values(outstanding).some(v=>v>0.005)?'var(--danger)':'var(--ink)'};">${curText(outstanding)}</div></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+      <div class="field" style="max-width:300px;margin:0;"><input id="orderSearch" placeholder="Firma, teklif no, fatura/irsaliye no ara..." value="${escapeAttr(orderSearch)}"></div>
+      ${FILTERS.map(([k,l])=>`<span class="version-pill ${orderFilter===k?'active':''}" data-order-filter="${k}">${l} (${counts[k]||0})</span>`).join('')}
+    </div>
+    ${rows.length ? rows.map(({q,a,st})=>{
+      const cur = q.currency||'€';
+      return `
+      <div class="dash-quote-row order-card" data-order="${q.id}" style="cursor:default;flex-direction:column;align-items:stretch;gap:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+          <div style="cursor:pointer;" data-open="${q.id}">
+            <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
+            <div class="dqr-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(q.date||'')}${q.paymentTermDays?' · Vade '+escapeHtml(String(q.paymentTermDays))+' gün':''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mono dqr-total">${cur} ${fmt(q.total)}</div>
+            <span class="stage-chip st-${st.key}">${escapeHtml(st.label)}</span>
+          </div>
+        </div>
+        <div class="op-row">
+          ${a.purchased>0 ? progressBar('Mal kabul', a.received, a.purchased) : ''}
+          ${progressBar('Sevk', a.shippedQty, a.N)}
+          ${progressBar('Fatura', a.invoicedQty, a.N)}
+          ${a.invoicedTotal>0 ? `<div class="op-item"><span class="op-l">Tahsilat</span><span class="mono" style="font-size:11.5px;">${cur} ${fmt(a.paidTotal)} / ${fmt(a.invoicedTotal)}</span></div>` : ''}
+        </div>
+        ${a.ready>0 ? `<div class="ready-note">✓ Sevke hazır: ${readyLinesForOrder(q.id).map(l=>escapeHtml(l.code)+' ×'+fmtQty(l.qty)).join(', ')}</div>` : ''}
+        <div class="order-actions">
+          <span data-order-print="${q.id}">Sipariş Çıktısı</span>
+          ${poCountForOrder(q.id) ? `<span data-po-list="${q.id}" data-po-no="${escapeAttr(q.quoteNo||'')}" style="color:var(--ink);">SAS (${poCountForOrder(q.id)})</span>` : ''}
+          <span data-po-create="${q.id}">${poCountForOrder(q.id)?'+ SAS':'SAS Oluştur'}</span>
+          ${(a.N<=0 || a.shippedQty < a.N - 1e-9) ? `<span data-ship-create="${q.id}" style="color:var(--ink);">Sevkiyat Oluştur</span>` : ''}
+        </div>
+        ${a.ships.length ? `<div class="ship-list">${a.ships.slice().sort((x,y)=>(x.date||'').localeCompare(y.date||'')).map(s=>{
+          const inv = shipIsInvoiced(s), ps = shipPayState(s), total = shipTotal(s), paid = shipPaid(s);
+          return `<div class="ship-row">
+            <div style="min-width:210px;">
+              <div class="mono" style="font-size:12px;font-weight:700;">${escapeHtml(s.irsaliyeNo||'irsaliyesiz')} <span style="font-weight:400;color:var(--gray-500);">· ${formatDate(s.date)}</span></div>
+              <div style="font-size:11px;color:var(--gray-500);">${(s.lines||[]).length} kalem · ${fmtQty(shipQty(s))} adet${s.officialIrsaliyeNo?' · e-irsaliye '+escapeHtml(s.officialIrsaliyeNo):''}${shipStockPending(s)?' · <span style="color:#8A6B22;">stoktan düşülmedi</span>':''}</div>
+            </div>
+            <div style="flex:1;min-width:230px;">
+              ${inv ? `<div style="font-size:12px;"><b>Fatura ${escapeHtml(s.invoiceNo||'—')}</b> <span class="mono">· ${s.currency} ${fmt(total)}</span> <span style="color:var(--gray-500);">(${formatDate(s.invoiceDate)})</span></div>
+                <div style="font-size:11px;">${PAY_STATE_LABEL[ps]}${paid>0?' · tahsil '+s.currency+' '+fmt(paid):''} ${dueBadgeHtml(shipDueDate(s), ps==='paid')}${shipDueDate(s)?' <span style="color:var(--gray-300);">· vade '+formatDate(shipDueDate(s))+'</span>':''}</div>`
+                : `<div style="font-size:12px;color:var(--gray-500);">Fatura bekliyor · <span class="mono">${s.currency} ${fmt(shipNet(s))}</span> (KDV hariç)</div>`}
+            </div>
+            <div class="order-actions" style="margin:0;">
+              <span data-ship-print="${s.id}">İrsaliye</span>
+              <span data-ship-invoice="${s.id}" style="color:var(--ink);">${inv?'Fatura':'Fatura Gir'}</span>
+              ${inv ? `<span data-ship-pay="${s.id}" style="color:var(--ink);">Tahsilat${(s.payments||[]).length?' ('+s.payments.length+')':''}</span>` : ''}
+              <span data-ship-edit="${s.id}">Düzenle</span>
+            </div>
+          </div>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+    }).join('') : `<p class="hint">${(orderSearch||orderFilter) ? 'Filtreyle eşleşen sipariş yok.' : 'Henüz siparişe dönüşen teklif yok.'}</p>`}
+  </div>`;
+}
+function attachOrdersHandlers(){
+  document.querySelectorAll('[data-open]').forEach(el=>{ el.onclick = async ()=>{ await openQuote(el.dataset.open); activeTab='info'; render(); }; });
+  document.querySelectorAll('[data-order-print]').forEach(el=>{ el.onclick = async e=>{ e.stopPropagation(); await openQuote(el.dataset.orderPrint); activeTab='orderPrint'; render(); }; });
+  document.querySelectorAll('[data-po-create]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openPoFromOrderModal(el.dataset.poCreate); }; });
+  document.querySelectorAll('[data-po-list]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); poSearch = el.dataset.poNo||''; poStatusFilter=''; activeTab='purchase'; render(); }; });
+  document.querySelectorAll('[data-ship-create]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openShipmentModal(el.dataset.shipCreate); }; });
+  document.querySelectorAll('[data-ship-print]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); shipPrintId = el.dataset.shipPrint; activeTab='irsaliyePrint'; render(); }; });
+  document.querySelectorAll('[data-ship-invoice]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openShipmentInvoiceModal(el.dataset.shipInvoice); }; });
+  document.querySelectorAll('[data-ship-pay]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openShipmentPaymentsModal(el.dataset.shipPay); }; });
+  document.querySelectorAll('[data-ship-edit]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openShipmentEditModal(el.dataset.shipEdit); }; });
+  document.querySelectorAll('[data-order-filter]').forEach(el=>{ el.onclick = ()=>{ orderFilter = el.dataset.orderFilter; render(); }; });
+  const s = document.getElementById('orderSearch');
+  if(s) s.oninput = e=>{ orderSearch = e.target.value; render(); const el = document.getElementById('orderSearch'); if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; } };
+}
+
+/* ---- Pano: sevke hazır + vadesi yaklaşan ödemeler ---- */
+function fillReadyWidget(){
+  const el = document.getElementById('readyShipWidget'); if(!el) return;
+  const list = readyOrders();
+  if(!list.length){ el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="subhead" style="margin-top:0;">Sevke Hazır Siparişler</div>
+    <div style="margin-bottom:28px;">
+      ${list.map(({q,lines})=>`
+        <div class="dash-quote-row ready-row" data-ship-create-dash="${q.id}" style="padding:10px 4px;">
+          <div><div class="dqr-cust" style="font-size:12.5px;">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
+            <div class="dqr-meta">${escapeHtml(q.quoteNo||'')} · ${lines.map(l=>escapeHtml(l.code)+' ×'+fmtQty(l.qty)).join(', ')}</div></div>
+          <div style="text-align:right;"><span class="stage-chip st-hazir">Sevke hazır</span></div>
+        </div>`).join('')}
+    </div>`;
+  el.querySelectorAll('[data-ship-create-dash]').forEach(row=>{ row.onclick = ()=>{ activeTab='orders'; render(); openShipmentModal(row.dataset.shipCreateDash); }; });
+}
+
+/* ---------------- MAL KABUL (gelen irsaliye → stok girişi → sevke hazır bildirimi) ---------------- */
+function recalcPoReceived(po){
+  (po.items||[]).forEach(it=>{
+    it.receivedQty = (po.receipts||[]).reduce((s,r)=>s+(r.lines||[]).filter(l=>l.poItemId===it.id).reduce((t,l)=>t+(parseFloat(l.qty)||0),0),0);
+  });
+  if(po.status==='İptal') return;
+  const ord = (po.items||[]).reduce((s,it)=>s+(parseFloat(it.qty)||0),0);
+  const rec = (po.items||[]).reduce((s,it)=>s+Math.min(parseFloat(it.receivedQty)||0, parseFloat(it.qty)||0),0);
+  if((po.receipts||[]).length){
+    if(ord > 0 && rec >= ord - 1e-9) po.status = 'Teslim Alındı';
+    else if(rec > 1e-9) po.status = 'Kısmen Teslim Alındı';
+  }
+}
+function ensureProductForPoItem(it){
+  const codes = productCodeMap();
+  let p = (it.productId && products.find(x=>x.id===it.productId)) || codes.get(foldTR((it.code||'').trim()));
+  if(!p){ p = Object.assign(emptyProduct(), { id:crypto.randomUUID(), code:it.code||'', desc:it.desc||'' }); products.push(p); }
+  return p;
+}
+async function markPoOrdered(po){
+  if(po && po.status==='Taslak'){
+    po.status = 'Sipariş Verildi';
+    const real = purchaseOrders.find(p=>p.id===po.id); if(real && real!==po) real.status = po.status;
+    await savePurchaseOrders();
+  }
+}
+function openGoodsReceiptModal(poId){
+  const po = purchaseOrders.find(p=>p.id===poId); if(!po) return;
+  const lines = (po.items||[]).map(it=>({ it, ordered:parseFloat(it.qty)||0, got:parseFloat(it.receivedQty)||0 })).filter(l=>l.ordered - l.got > 1e-9);
+  if(!lines.length){ alert('Bu SAS\'ın tüm kalemleri teslim alınmış.'); return; }
+  const ov = openSimpleModal(`
+    <h2>Mal Kabul — ${escapeHtml(po.poNo)}</h2>
+    <p class="hint">${escapeHtml(supplierName(po.supplierId))}${po.salesOrderNo?' · Sipariş '+escapeHtml(po.salesOrderNo):''}. Gelen miktarları gir; stoğa SAS'taki maliyetle girer${po.salesOrderNo?' ve o siparişin sevkiyata hazır olduğu bildirilir':''}.</p>
+    <div class="grid2">
+      <div class="field"><label>Tedarikçi İrsaliye No</label><input id="gr-no" placeholder="gelen irsaliye numarası"></div>
+      <div class="field"><label>Teslim Alma Tarihi</label><input id="gr-date" type="date" value="${todayStr()}"></div>
+    </div>
+    <table class="items-table"><thead><tr><th>Ürün</th><th class="num">Sipariş</th><th class="num">Daha önce gelen</th><th class="num">Kalan</th><th class="num" style="width:110px;">Bu sefer gelen</th></tr></thead><tbody>
+      ${lines.map((l,i)=>`<tr data-i="${i}">
+        <td><div class="mono" style="font-size:12px;">${escapeHtml(l.it.code||'')}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.it.desc||'')}</div></td>
+        <td class="num mono">${fmtQty(l.ordered)}</td><td class="num mono">${fmtQty(l.got)}</td><td class="num mono">${fmtQty(l.ordered-l.got)}</td>
+        <td class="num"><input class="gr-qty mono" type="number" min="0" step="1" value="${l.ordered-l.got}" style="width:90px;text-align:right;font-size:12px;"></td></tr>`).join('')}
+    </tbody></table>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="gr-save">Mal Kabulü Kaydet</button>
+      <button class="btn btn-ghost" id="gr-cancel">Vazgeç</button>
+    </div>`, 760);
+  ov.querySelector('#gr-cancel').onclick = ()=>ov.remove();
+  ov.querySelector('#gr-save').onclick = async ()=>{
+    const recLines = [];
+    for(const tr of ov.querySelectorAll('tbody tr')){
+      const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.gr-qty').value);
+      if(!(qty > 0)) continue;
+      if(qty > l.ordered - l.got + 1e-9){ alert((l.it.code||'Kalem')+' için kalan miktardan ('+fmtQty(l.ordered-l.got)+') fazla girdin.'); return; }
+      recLines.push({ poItemId:l.it.id, qty });
+    }
+    if(!recLines.length){ alert('Gelen miktar girilmedi.'); return; }
+    const receipt = { id:crypto.randomUUID(), date:ov.querySelector('#gr-date').value||todayStr(), irsaliyeNo:ov.querySelector('#gr-no').value.trim(), lines:recLines, createdAt:new Date().toISOString() };
+    po.receipts = (po.receipts||[]).concat([receipt]);
+    recLines.forEach(rl=>{
+      const it = po.items.find(x=>x.id===rl.poItemId); const p = ensureProductForPoItem(it);
+      if(!it.productId) it.productId = p.id;
+      stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:receipt.date, type:'giris', qty:rl.qty, unitCost:parseFloat(it.unitCost)||0, currency:po.currency||'€',
+        srcDoc:po.poNo+(receipt.irsaliyeNo?' · '+receipt.irsaliyeNo:''), note:'Mal kabul', poReceiptId:receipt.id, createdAt:new Date().toISOString() });
+    });
+    recalcPoReceived(po);
+    stockReservedCache = null;
+    await savePurchaseOrders(); await saveStockMoves(); await saveProducts();
+    ov.remove();
+    showReceiptNotice(po, recLines);
+  };
+}
+function showReceiptNotice(po, recLines){
+  const q = po.salesOrderId ? quotesIndex.find(x=>x.id===po.salesOrderId) : null;
+  const ready = q ? readyLinesForOrder(q.id) : [];
+  const ov = openSimpleModal(`
+    <h2>Mal Kabul Kaydedildi</h2>
+    <p class="hint"><b>${escapeHtml(po.poNo)}</b> · ${escapeHtml(supplierName(po.supplierId))}: ${recLines.length} kalem stoğa girdi. SAS durumu: <b>${escapeHtml(po.status)}</b>.</p>
+    ${q ? `<div style="background:var(--paper-2);padding:14px 16px;border-radius:4px;margin:12px 0;">
+        <div style="font-size:13px;font-weight:700;">${escapeHtml(q.quoteNo||'')} · ${escapeHtml(upperCompanyName(q.customerName||''))}</div>
+        ${ready.length ? `<div style="font-size:12.5px;margin-top:6px;">✓ Sevke hazır: ${ready.map(l=>escapeHtml(l.code)+' ×'+fmtQty(l.qty)).join(', ')}</div>
+          <div style="font-size:11.5px;color:var(--gray-500);margin-top:4px;">İrsaliye kesip faturalamaya hazır.</div>` : `<div style="font-size:12px;color:var(--gray-500);margin-top:6px;">Bu siparişin geri kalanı için mal bekleniyor.</div>`}
+      </div>` : ''}
+    <div class="actions-row"><button class="btn btn-primary" id="rn-ship" ${q && ready.length?'':'style="display:none;"'}>Sevkiyat Oluştur</button><button class="btn btn-ghost" id="rn-ok">Tamam</button></div>`, 560);
+  ov.querySelector('#rn-ok').onclick = ()=>{ ov.remove(); render(); };
+  ov.querySelector('#rn-ship').onclick = ()=>{ ov.remove(); activeTab='orders'; render(); openShipmentModal(q.id); };
+}
+async function deleteGoodsReceipt(poId, receiptId){
+  const po = purchaseOrders.find(p=>p.id===poId); if(!po) return false;
+  if(!confirm('Bu mal kabul kaydı silinsin mi? Stok girişi de geri alınır.')) return false;
+  po.receipts = (po.receipts||[]).filter(r=>r.id!==receiptId);
+  stockMoves = stockMoves.filter(m=>m.poReceiptId!==receiptId);
+  recalcPoReceived(po);
+  if(!po.receipts.length && (po.status==='Kısmen Teslim Alındı' || po.status==='Teslim Alındı')) po.status = 'Sipariş Verildi';
+  stockReservedCache = null;
+  await savePurchaseOrders(); await saveStockMoves();
+  return true;
 }
 
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
@@ -2450,6 +3086,7 @@ let stockMoves = [];
 let lastStockImport = null;
 let stockSearch = '';
 let stockOnlyAlerts = false;
+let stockShowZero = false;
 let stockReservedCache = null;      // { at, map }
 const STOCK_TYPE_LABEL = { acilis:'Açılış', giris:'Giriş', cikis:'Çıkış', sayim:'Sayım düzeltme' };
 const STOCK_HEADER_RULES = [
@@ -2520,14 +3157,16 @@ async function computeReservedMap(force){
   if(!force && stockReservedCache && Date.now()-stockReservedCache.at < 30000) return stockReservedCache.map;
   const map = {};
   const codes = productCodeMap();
-  const open = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü' && !['Sevk Edildi','Teslim Edildi'].includes(q.orderStatus));
+  const open = quotesIndex.filter(q=>q.status==='Siparişe Dönüştü');
   for(const q of open){
     const r = await stGet('godo:quote:'+q.id);
     if(!r || !r.value) continue;
     let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
+    const shp = {}; shipsOf(q.id).forEach(s=>(s.lines||[]).forEach(l=>{ const k = l.quoteItemId||l.code; shp[k] = (shp[k]||0) + (parseFloat(l.qty)||0); }));
     (full.items||[]).forEach(it=>{
       const p = (it.productId && products.find(x=>x.id===it.productId)) || codes.get(foldTR((it.code||'').trim()));
-      if(p) map[p.id] = (map[p.id]||0) + (parseFloat(it.qty)||0);
+      const rem = (parseFloat(it.qty)||0) - (shp[it.id]||0);
+      if(p && rem > 0) map[p.id] = (map[p.id]||0) + rem;
     });
   }
   stockReservedCache = { at: Date.now(), map };
@@ -2560,6 +3199,7 @@ function renderStockShell(){
     <div style="display:flex;gap:14px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
       <div class="field" style="max-width:320px;margin:0;"><input id="stockSearch" placeholder="Ürün kodu veya açıklama ara..." value="${escapeAttr(stockSearch)}"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin:0;"><input type="checkbox" id="stockOnlyAlerts" ${stockOnlyAlerts?'checked':''}> Sadece minimum altı</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-500);margin:0;"><input type="checkbox" id="stockShowZero" ${stockShowZero?'checked':''}> Sıfır stoklu ürünleri göster</label>
     </div>
     <div id="stockBody">${renderStockBody(null)}</div>
   </div>`;
@@ -2570,6 +3210,7 @@ function renderStockBody(reserved){
   const alertCount = rows.filter(r=>r.alert).length;
   if(stockSearch){ const s = foldTR(stockSearch.trim()); rows = rows.filter(r=>foldTR((r.p.code||'')+' '+(r.p.desc||'')).includes(s)); }
   if(stockOnlyAlerts) rows = rows.filter(r=>r.alert);
+  if(!stockShowZero) rows = rows.filter(r=>Math.abs(r.st.onHand) > 1e-9 || r.min > 0 || (r.res||0) > 0);
   const kpis = `
     <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin:0 0 20px;">
       <div class="kpi-card"><div class="kpi-label">Takip Edilen Ürün</div><div class="kpi-value">${products.filter(isStockTracked).length}</div></div>
@@ -2614,6 +3255,7 @@ function attachStockHandlers(){
   const undo = document.getElementById('btnStockUndo'); if(undo) undo.onclick = ()=>undoLastStockImport();
   document.getElementById('stockSearch').oninput = e=>{ stockSearch = e.target.value; refreshStockBody(); };
   document.getElementById('stockOnlyAlerts').onchange = e=>{ stockOnlyAlerts = e.target.checked; refreshStockBody(); };
+  document.getElementById('stockShowZero').onchange = e=>{ stockShowZero = e.target.checked; refreshStockBody(); };
   refreshStockBody();
   computeReservedMap(true).then(()=>{ if(activeTab==='stock') refreshStockBody(); });
 }
@@ -3502,8 +4144,8 @@ function renderInfo(){
         <select id="f-status">${STATUS_OPTIONS.map(s=>`<option ${quote.status===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
       ${isOrderStatus(quote.status) ? `
-      <div class="field" style="max-width:220px;"><label>Sipariş Durumu</label>
-        <select id="f-orderStatus"><option value="">— Seçiniz —</option>${ORDER_STATUS_OPTIONS.map(s=>`<option ${quote.orderStatus===s?'selected':''}>${s}</option>`).join('')}</select>
+      <div class="field" style="max-width:300px;"><label>Sipariş Aşaması (otomatik)</label>
+        <div style="padding:9px 0;font-size:12.5px;">${(()=>{ const qi = quotesIndex.find(x=>x.id===quote.id); return qi ? escapeHtml(orderStage(qi).label) : 'Tedarik bekliyor'; })()}</div>
       </div>` : ''}
       ${quote.status==='Reddedildi' ? `
       <div class="field" style="max-width:220px;"><label>Kayıp Sebebi</label>
@@ -3867,77 +4509,6 @@ function renderOrderPrint(){
   </div>`;
 }
 
-function renderIrsaliyePrint(){
-  if(!quote.irsaliyeNo){ quote.irsaliyeNo = nextIrsaliyeNo(); quote.irsaliyeDate = new Date().toISOString().slice(0,10); persistQuote(); }
-  const tokens = buildDocTokens();
-  const filteredItems = quote.items.filter(it=>it.code||it.desc);
-  const itemsRows = filteredItems.map((it,idx)=>`
-    <tr>
-      <td class="num pos">${idx+1}</td>
-      <td>
-        <div class="item-code">${escapeHtml(it.code)}</div>
-        ${it.desc ? `<div class="item-desc">${escapeHtml(it.desc)}</div>` : ''}
-      </td>
-      <td class="center">${it.qty} AD</td>
-    </tr>
-  `).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--gray-300);padding:20px 0;">Kalem yok</td></tr>';
-
-  const printHTML = `
-    <div class="doc-head">
-      <div>
-        <div class="doc-word">${tokens.COMPANY_NAME}</div>
-        <div class="doc-rule"></div>
-        ${tokens.COMPANY_TAGLINE_BLOCK||''}
-        <div class="doc-sub">${tokens.COMPANY_WEBSITE}</div>
-      </div>
-      <div class="doc-meta">
-        <div class="qn">${escapeHtml(quote.irsaliyeNo)}</div>
-        <div>Tarih: ${formatDate(quote.irsaliyeDate)}</div>
-        <div>İlişkili Teklif: ${escapeHtml(quote.quoteNo)}</div>
-      </div>
-    </div>
-    <div class="doc-title">Sevk İrsaliyesi</div>
-    <div class="doc-customer">
-      <div class="dc-name">${tokens.CUSTOMER_NAME}</div>
-      <div class="dc-grid">
-        <div><span class="dc-label">Vergi Dairesi / No</span><span class="dc-value">${tokens.CUSTOMER_TAX}</span></div>
-        <div><span class="dc-label">Yetkili / İletişim</span><span class="dc-value">${tokens.CUSTOMER_CONTACT}</span></div>
-      </div>
-      ${tokens.CUSTOMER_ADDRESS_BLOCK||''}
-    </div>
-    <table class="doc-items">
-      <colgroup><col style="width:6%"><col style="width:74%"><col style="width:20%"></colgroup>
-      <thead><tr><th class="num">№</th><th>Ürün Kodu ve Açıklama</th><th class="center">Miktar</th></tr></thead>
-      <tbody>${itemsRows}</tbody>
-    </table>
-    ${quote.irsaliyeNote ? `<div style="margin-top:22px;font-size:12px;color:var(--gray-500);"><b>Not:</b> ${escapeHtml(quote.irsaliyeNote)}</div>` : ''}
-    <div style="display:flex;justify-content:space-between;margin-top:64px;">
-      <div style="width:44%;">
-        <div style="border-top:1px solid var(--ink);padding-top:6px;font-size:11px;color:var(--gray-500);">Sevk Eden — Ad Soyad / İmza</div>
-      </div>
-      <div style="width:44%;">
-        <div style="border-top:1px solid var(--ink);padding-top:6px;font-size:11px;color:var(--gray-500);">Teslim Alan — Ad Soyad / İmza</div>
-      </div>
-    </div>
-    <div class="doc-foot">
-      <span>${tokens.COMPANY_NAME_UPPER} — ${tokens.COMPANY_WEBSITE}</span>
-      <span>${escapeHtml(quote.irsaliyeNo)}</span>
-    </div>
-  `;
-
-  return `
-  <div class="preview-wrap">
-    <div class="preview-toolbar">
-      <button class="btn btn-ghost" id="btnBackOrdersFromIrsaliye">← Siparişlere Dön</button>
-      <button class="btn btn-primary" id="btnPrintIrsaliye">PDF Olarak Kaydet / Yazdır</button>
-    </div>
-    <div class="screen-only-note" style="max-width:900px;margin:0 auto 12px;display:flex;align-items:center;gap:8px;">
-      <label style="font-size:11px;font-weight:700;color:var(--gray-500);white-space:nowrap;">Not (fatura no, araç plaka, şoför vb. — opsiyonel):</label>
-      <input id="irsaliyeNoteInput" value="${escapeAttr(quote.irsaliyeNote||'')}" placeholder="ör. Fatura No: GİB2026000012345 · Araç: 35 ABC 123 · Şoför: Ahmet Yılmaz" style="flex:1;padding:6px 9px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:12px;">
-    </div>
-    <div id="printArea">${printHTML}</div>
-  </div>`;
-}
 
 /* ---------------- HELPERS ---------------- */
 function proseHtml(text){
@@ -4028,17 +4599,17 @@ function attachHandlers(){
           col.classList.remove('drag-over');
           if(!draggedId) return;
           const newStatus = col.dataset.status;
+          if(newStatus==='Fatura Kesildi'){ const g = canSetFaturaKesildi(draggedId); if(!g.ok){ alert(g.msg); draggedId = null; render(); return; } }
           const r = await stGet('godo:quote:'+draggedId);
           if(r && r.value){
             const full = JSON.parse(r.value);
             full.status = newStatus;
-            const syncPay = newStatus==='Fatura Kesildi' && (!full.paymentStatus || full.paymentStatus==='Fatura Kesilmedi');
-            if(syncPay) full.paymentStatus = 'Fatura Kesildi / Ödeme Bekleniyor';
             await stSet('godo:quote:'+draggedId, JSON.stringify(full));
             const idx = quotesIndex.findIndex(q=>q.id===draggedId);
-            if(idx>=0){ quotesIndex[idx].status = newStatus; if(syncPay) quotesIndex[idx].paymentStatus = full.paymentStatus; }
+            if(idx>=0){ quotesIndex[idx].status = newStatus; }
             await saveIndex();
-            if(quote.id===draggedId){ quote.status = newStatus; if(syncPay) quote.paymentStatus = full.paymentStatus; }
+            if(quote.id===draggedId){ quote.status = newStatus; }
+            await backfillOrderQty();
           }
           draggedId = null;
           render();
@@ -4157,64 +4728,7 @@ function attachHandlers(){
     };
   }
 
-  if(activeTab==='orders'){
-    document.querySelectorAll('[data-open]').forEach(el=>{
-      el.onclick = async ()=>{ await openQuote(el.dataset.open); activeTab='info'; render(); };
-    });
-    document.querySelectorAll('.order-status-pick').forEach(sel=>{
-      sel.onclick = e=>e.stopPropagation();
-      sel.onchange = async e=>{
-        e.stopPropagation();
-        const id = sel.dataset.id;
-        const r = await stGet('godo:quote:'+id);
-        if(r && r.value){
-          const full = JSON.parse(r.value);
-          full.orderStatus = sel.value;
-          await stSet('godo:quote:'+id, JSON.stringify(full));
-          const idx = quotesIndex.findIndex(q=>q.id===id);
-          if(idx>=0) quotesIndex[idx].orderStatus = sel.value;
-          await saveIndex();
-        }
-      };
-    });
-    document.querySelectorAll('[data-order-print]').forEach(el=>{
-      el.onclick = async e=>{ e.stopPropagation(); await openQuote(el.dataset.orderPrint); activeTab='orderPrint'; render(); };
-    });
-    document.querySelectorAll('[data-po-create]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); openPoFromOrderModal(el.dataset.poCreate); }; });
-    document.querySelectorAll('[data-po-list]').forEach(el=>{ el.onclick = e=>{ e.stopPropagation(); poSearch = el.dataset.poNo||''; poStatusFilter=''; activeTab='purchase'; render(); }; });
-    document.querySelectorAll('[data-irsaliye-print]').forEach(el=>{
-      el.onclick = async e=>{ e.stopPropagation(); await openQuote(el.dataset.irsaliyePrint); activeTab='irsaliyePrint'; render(); };
-    });
-    document.querySelectorAll('.invoice-no-pick').forEach(inp=>{
-      inp.onclick = e=>e.stopPropagation();
-      inp.onchange = async e=>{ e.stopPropagation(); await updateOrderField(inp.dataset.id, 'invoiceNo', inp.value); };
-    });
-    document.querySelectorAll('.payment-status-pick').forEach(sel=>{
-      sel.onclick = e=>e.stopPropagation();
-      sel.onchange = async e=>{
-        e.stopPropagation();
-        const id = sel.dataset.id;
-        await updateOrderField(id, 'paymentStatus', sel.value);
-        if(sel.value==='Fatura Kesildi / Ödeme Bekleniyor'){
-          const row = quotesIndex.find(q=>q.id===id);
-          if(row && !row.paymentDueDate && row.paymentTermDays){
-            const d = new Date();
-            d.setDate(d.getDate() + parseInt(row.paymentTermDays));
-            await updateOrderField(id, 'paymentDueDate', d.toISOString().slice(0,10));
-          }
-        }
-        render();
-      };
-    });
-    document.querySelectorAll('.paid-amount-pick').forEach(inp=>{
-      inp.onclick = e=>e.stopPropagation();
-      inp.onchange = async e=>{ e.stopPropagation(); await updateOrderField(inp.dataset.id, 'paidAmount', inp.value); render(); };
-    });
-    document.querySelectorAll('.due-date-pick').forEach(inp=>{
-      inp.onclick = e=>e.stopPropagation();
-      inp.onchange = async e=>{ e.stopPropagation(); await updateOrderField(inp.dataset.id, 'paymentDueDate', inp.value); render(); };
-    });
-  }
+  if(activeTab==='orders') attachOrdersHandlers();
 
   if(activeTab==='orderPrint'){
     document.getElementById('btnBackOrders').onclick = ()=>{ activeTab='orders'; render(); };
@@ -4226,17 +4740,7 @@ function attachHandlers(){
     };
   }
 
-  if(activeTab==='irsaliyePrint'){
-    document.getElementById('btnBackOrdersFromIrsaliye').onclick = ()=>{ activeTab='orders'; render(); };
-    document.getElementById('btnPrintIrsaliye').onclick = ()=>{ persistQuote(); window.print(); };
-    const noteInp = document.getElementById('irsaliyeNoteInput');
-    if(noteInp) noteInp.oninput = ()=>{ quote.irsaliyeNote = noteInp.value; scheduleSave();
-      const pos = noteInp.selectionStart;
-      render();
-      const fresh = document.getElementById('irsaliyeNoteInput');
-      if(fresh){ fresh.focus(); fresh.selectionStart = fresh.selectionEnd = pos; }
-    };
-  }
+  if(activeTab==='irsaliyePrint') attachIrsaliyePrintHandlers();
 
   if(activeTab==='stock') attachStockHandlers();
   if(activeTab==='purchase') attachPurchaseHandlers();
@@ -4506,14 +5010,12 @@ function attachHandlers(){
     document.getElementById('f-lang').onchange = e=>{ const kept = setQuoteLang(e.target.value); scheduleSave(); render(); notifyKeptTerms(kept); };
     document.getElementById('f-status').onchange = e=>{
       const prevStatus = quote.status;
+      if(e.target.value==='Fatura Kesildi'){ const g = canSetFaturaKesildi(quote.id); if(!g.ok){ alert(g.msg); e.target.value = prevStatus; return; } }
       quote.status = e.target.value;
-      if(quote.status==='Fatura Kesildi' && (!quote.paymentStatus || quote.paymentStatus==='Fatura Kesilmedi')) quote.paymentStatus = 'Fatura Kesildi / Ödeme Bekleniyor';
       document.getElementById('statusIndicator').textContent = quote.status;
       if(quote.status==='Gönderildi' && prevStatus!=='Gönderildi') maybeCreateFollowupTask();
       scheduleSave(); render();
     };
-    const orderStatusSel = document.getElementById('f-orderStatus');
-    if(orderStatusSel) orderStatusSel.onchange = e=>{ quote.orderStatus=e.target.value; scheduleSave(); };
     const lossReasonSel = document.getElementById('f-lossReason');
     if(lossReasonSel) lossReasonSel.onchange = e=>{ quote.lossReason=e.target.value; scheduleSave(); };
 
