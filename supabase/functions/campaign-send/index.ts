@@ -23,7 +23,18 @@ export function fillText(text, c) {
   const first = String(c?.name || "").trim().split(/\s+/)[0] || "";
   return String(text || "").replace(/\{Selamlama\}/g, c?.greeting || ("Merhaba " + first).trim()).replace(/\{Ad\}/g, first).replace(/\{Firma\}/g, c?.company || "");
 }
-const textToHtml = (t) => String(t || "").split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px 0;">${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+// Paragraflar <p>; "•", "-" ya da "*" ile başlayan ardışık satırlar asılı girintili madde listesi (<ul>)
+const BULLET = /^\s*[•\-*]\s+/;
+const textToHtml = (t) => String(t || "").split(/\n{2,}/).map((block) => {
+  const out = []; let para = [], items = [];
+  const flushP = () => { if (para.length) { out.push(`<p style="margin:0 0 14px 0;">${para.map(esc).join("<br>")}</p>`); para = []; } };
+  const flushL = () => { if (items.length) { out.push(`<ul style="margin:0 0 14px 0;padding-left:24px;">${items.map((x) => `<li style="margin:0 0 6px 0;padding-left:4px;">${esc(x)}</li>`).join("")}</ul>`); items = []; } };
+  for (const line of block.split("\n")) {
+    if (BULLET.test(line)) { flushP(); items.push(line.replace(BULLET, "")); } else { flushL(); para.push(line); }
+  }
+  flushP(); flushL();
+  return out.join("");
+}).join("");
 export function emailHtml(campaign, step, c) {
   return `<div style="font-family:Arial, Helvetica, sans-serif;font-size:14px;line-height:1.6;color:#12151a;">${textToHtml(fillText(step.body, c))}</div>`
     + (campaign.signature_html ? `<div style="margin-top:18px;">${campaign.signature_html}</div>` : "")
