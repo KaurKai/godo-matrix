@@ -20,6 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="vendor/supabase-js-2.117.3.umd.js" integrity="sha384-BWcjm9OdFth9TbhCxZPdm+gAOUMAzQy9nmTs12ioXdCcbVnJaPMn+fMUoQCLt60R" crossorigin="anonymous"></script>
+<script src="vendor/html2pdf.bundle.min.js"></script>
 <style>
   :root{
     --ink:#0E0E0E;
@@ -5934,6 +5935,81 @@ function buildDocTokens(){
   };
 }
 
+async function quotePdfHash(){
+  const area = document.getElementById('printArea');
+  if(!area) throw new Error('Teklif önizlemesi bulunamadı.');
+  const css = document.getElementById('userDocStyle');
+  const source = [quote.id||'', quote.quoteNo||'', String(quote.version||1), qLang(quote), effectiveTemplate(), css?css.textContent:'', area.innerHTML].join('\n');
+  const bytes = new TextEncoder().encode(source);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function quotePdfStorageKey(quoteId, hash){ return 'godo:quotePdf:'+quoteId+':'+hash; }
+function quotePdfObjectPath(quoteId, quoteNo, hash){
+  const safeNo = String(quoteNo||'teklif').replace(/[^A-Za-z0-9._-]/g,'-');
+  return currentUser.id+'/quotes/'+quoteId+'/'+safeNo+'-'+hash.slice(0,20)+'.pdf';
+}
+function downloadQuotePdfBlob(blob, filename){
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = filename; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
+}
+async function archiveQuotePdf(options){
+  options = options||{};
+  if(storageMode!=='supabase' || !currentUser || !sb) throw new Error('PDF arşivlemek ve Gmail taslağı oluşturmak için Matrix’e Supabase hesabınla giriş yapmalısın.');
+  await persistQuote();
+  if(syncFailed) throw new Error('Teklif Supabase’e kaydedilemedi. Bağlantı düzeldiğinde tekrar dene.');
+  const hash = await quotePdfHash(), key = quotePdfStorageKey(quote.id, hash);
+  const existing = await stGet(key);
+  if(existing && existing.value){
+    const meta = JSON.parse(existing.value);
+    if(meta && meta.contentHash===hash && meta.storagePath){
+      const {data,error} = await sb.storage.from('campaign-files').download(meta.storagePath);
+      if(!error && data){
+        if(options.download) downloadQuotePdfBlob(data, meta.fileName);
+        return Object.assign({blob:data, reused:true}, meta);
+      }
+    }
+  }
+  if(!window.html2pdf) throw new Error('PDF oluşturucu yüklenemedi. Sayfayı yenileyip tekrar dene.');
+  await document.fonts.ready;
+  const original = document.getElementById('printArea');
+  if(!original) throw new Error('Teklif önizlemesi bulunamadı.');
+  const shell = document.createElement('div');
+  shell.className = 'preview-wrap';
+  shell.style.cssText = 'position:fixed;left:-12000px;top:0;width:186mm;min-height:0;padding:0;background:#fff;z-index:-1;overflow:visible;';
+  const clone = original.cloneNode(true);
+  clone.style.maxWidth = 'none'; clone.style.width = '100%'; clone.style.margin = '0'; clone.style.padding = '0'; clone.style.boxShadow = 'none';
+  clone.querySelectorAll('table.doc-items tr,table.doc-simple-table tr,.doc-terms,.doc-terms .blk,.doc-totals,.doc-sig-grid').forEach(el=>{
+    el.style.breakInside = 'avoid'; el.style.pageBreakInside = 'avoid';
+  });
+  clone.querySelectorAll('thead').forEach(el=>{ el.style.display = 'table-header-group'; });
+  shell.appendChild(clone); document.body.appendChild(shell);
+  let blob;
+  try{
+    blob = await window.html2pdf().set({
+      margin:[10,12,12,12], image:{type:'jpeg',quality:0.94},
+      pagebreak:{mode:['css','legacy'],avoid:['table.doc-items tr','table.doc-simple-table tr','.doc-terms .blk','.doc-totals','.doc-sig-grid']},
+      html2canvas:{scale:1.25,backgroundColor:'#ffffff',useCORS:false,logging:false,windowWidth:794,scrollY:0},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true}
+    }).from(clone).outputPdf('blob');
+  }finally{ shell.remove(); }
+  if(!blob || blob.size<1000) throw new Error('PDF oluşturulamadı; teklif içeriği boş veya oluşturucu başarısız.');
+  if(blob.size>10*1024*1024) throw new Error('PDF 10 MB sınırını aşıyor. Teklif çok uzun; kalem açıklamalarını kısaltıp tekrar dene.');
+  const raw = new Uint8Array(await blob.arrayBuffer());
+  const fileDigest = await crypto.subtle.digest('SHA-256',raw);
+  const fileSha256 = Array.from(new Uint8Array(fileDigest)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  const fileName = String(quote.quoteNo||'Teklif')+'.pdf';
+  const storagePath = quotePdfObjectPath(quote.id,quote.quoteNo,hash);
+  const {error:uploadError} = await sb.storage.from('campaign-files').upload(storagePath,blob,{upsert:true,contentType:'application/pdf'});
+  if(uploadError) throw new Error('PDF Supabase’e yüklenemedi: '+uploadError.message);
+  const meta = {quoteId:quote.id,quoteNo:quote.quoteNo,version:quote.version||1,contentHash:hash,fileSha256:fileSha256,fileName:fileName,storagePath:storagePath,size:blob.size,createdAt:new Date().toISOString()};
+  await stSet(key,JSON.stringify(meta));
+  if(syncFailed) throw new Error('PDF depoya yüklendi ama arşiv kaydı senkronize edilemedi. Tekrar dene; aynı dosya yolu kullanılacak.');
+  if(options.download) downloadQuotePdfBlob(blob,fileName);
+  return Object.assign({blob:blob,reused:false},meta);
+}
+
 function renderPreview(){
   const tokens = buildDocTokens();
   const eff = effectiveTemplate();
@@ -5957,11 +6033,12 @@ function renderPreview(){
         <option value="en" ${qLang(quote)==='en'?'selected':''}>Dil: English</option>
       </select>
       <button class="btn btn-ghost" id="btnBackEdit">Düzenlemeye Dön</button>
-      <button class="btn btn-ghost" id="btnMailDraft">E-posta Taslağı Oluştur</button>
-      <button class="btn btn-primary" id="btnPrint">PDF Olarak Kaydet / Yazdır</button>
+      <button class="btn btn-ghost" id="btnMailDraft">Gmail Taslağı (PDF ekli)</button>
+      <button class="btn btn-ghost" id="btnArchivePdf">PDF'yi Arşivle / İndir</button>
+      <button class="btn btn-primary" id="btnPrint">Yazdır / PDF Kaydet</button>
     </div>
     <div class="screen-only-note" style="max-width:900px;margin:-8px auto 14px;text-align:right;">
-      <span style="font-size:10.5px;color:var(--gray-500);">Tarayıcı kısıtı nedeniyle PDF otomatik eklenmiyor — önce PDF'i indir, sonra açılan e-postaya sürükleyip ekle.
+      <span id="quotePdfStatus" style="font-size:10.5px;color:var(--gray-500);">Teklif PDF'si aynı şablondan oluşturulur ve özel Supabase deposunda saklanır. Gmail taslağı bu arşivlenmiş dosyayı ekler.
       ${isOverridden ? ` Bu teklif için elle "${TPL_NAMES[quote.template]}" seçildi.` : ` Sistem varsayılanı kullanılıyor: "${TPL_NAMES[defaultTemplate]}" (Ayarlar &gt; PDF Tasarımı'ndan değiştirilebilir).`}</span>
     </div>
     <div id="printArea">${printAreaHTML}</div>
@@ -6675,10 +6752,26 @@ function attachHandlers(){
       }
       persistQuote(); window.print();
     };
-    document.getElementById('btnMailDraft').onclick = ()=>{
-      const to = quote.customer.contactEmail || (quote.customer.contactPhone && quote.customer.contactPhone.includes('@') ? quote.customer.contactPhone : '');
-      if(!to){ alert('Bu carinin kayıtlı bir e-postası yok. Yine de e-posta penceresini açıyorum, alıcıyı elle girebilirsin.'); }
-      window.location.href = buildMailtoLink(to);
+    document.getElementById('btnArchivePdf').onclick = async ()=>{
+      const btn = document.getElementById('btnArchivePdf'), status = document.getElementById('quotePdfStatus');
+      btn.disabled = true; btn.textContent = 'PDF oluşturuluyor…';
+      try{
+        const file = await archiveQuotePdf({download:true});
+        if(status) status.textContent = (file.reused?'Arşivdeki PDF indirildi. ':'PDF oluşturuldu, Supabase’e arşivlendi ve indirildi. ')+file.fileName+' · '+Math.ceil(file.size/1024)+' KB';
+      }catch(e){ alert(e.message||String(e)); }
+      finally{ btn.disabled = false; btn.textContent = 'PDF’yi Arşivle / İndir'; }
+    };
+    document.getElementById('btnMailDraft').onclick = async ()=>{
+      const btn = document.getElementById('btnMailDraft'), status = document.getElementById('quotePdfStatus');
+      btn.disabled = true; btn.textContent = 'Gmail taslağı hazırlanıyor…';
+      try{
+        const file = await archiveQuotePdf({download:false});
+        const {data,error} = await sb.functions.invoke('quote-mail-draft',{body:{quoteId:quote.id,documentHash:file.contentHash}});
+        if(error) throw error;
+        if(!data || !data.ok) throw new Error((data&&data.error)||'Gmail taslağı oluşturulamadı.');
+        if(status) status.innerHTML = 'Gmail taslağı hazır: '+escapeHtml(data.fileName)+' eklendi. <a href="'+escapeAttr(data.gmailUrl)+'" target="_blank" rel="noopener noreferrer">Gmail’de açıp incele</a>.';
+      }catch(e){ alert(e.message||String(e)); }
+      finally{ btn.disabled = false; btn.textContent = 'Gmail Taslağı (PDF ekli)'; }
     };
   }
 }
