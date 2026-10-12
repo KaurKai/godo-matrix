@@ -25,10 +25,12 @@ export function fillText(text, c) {
 }
 // Paragraflar <p>; "•", "-" ya da "*" ile başlayan ardışık satırlar asılı girintili madde listesi (<ul>)
 const BULLET = /^\s*[•\-*]\s+/;
+// Madde başlığı (ilk ":" öncesi, en çok 70 karakter) kalın
+const liHtml = (x) => { const m = x.match(/^([^:]{1,70}):\s*([\s\S]*)$/); return m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(x); };
 const textToHtml = (t) => String(t || "").split(/\n{2,}/).map((block) => {
   const out = []; let para = [], items = [];
   const flushP = () => { if (para.length) { out.push(`<p style="margin:0 0 14px 0;">${para.map(esc).join("<br>")}</p>`); para = []; } };
-  const flushL = () => { if (items.length) { out.push(`<ul style="margin:0 0 14px 0;padding-left:24px;">${items.map((x) => `<li style="margin:0 0 6px 0;padding-left:4px;">${esc(x)}</li>`).join("")}</ul>`); items = []; } };
+  const flushL = () => { if (items.length) { out.push(`<ul style="margin:0 0 14px 0;padding-left:24px;">${items.map((x) => `<li style="margin:0 0 6px 0;padding-left:4px;">${liHtml(x)}</li>`).join("")}</ul>`); items = []; } };
   for (const line of block.split("\n")) {
     if (BULLET.test(line)) { flushP(); items.push(line.replace(BULLET, "")); } else { flushL(); para.push(line); }
   }

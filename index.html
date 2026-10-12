@@ -4435,7 +4435,7 @@ function campTextToHtml(text){
   return String(text||'').split(/\n{2,}/).map(block=>{
     const out = []; let para = [], items = [];
     const flushP = ()=>{ if(para.length){ out.push(`<p style="margin:0 0 14px 0;">${para.map(escapeHtml).join('<br>')}</p>`); para = []; } };
-    const flushL = ()=>{ if(items.length){ out.push(`<ul style="margin:0 0 14px 0;padding-left:24px;">${items.map(x=>`<li style="margin:0 0 6px 0;padding-left:4px;">${escapeHtml(x)}</li>`).join('')}</ul>`); items = []; } };
+    const flushL = ()=>{ if(items.length){ out.push(`<ul style="margin:0 0 14px 0;padding-left:24px;">${items.map(x=>{ const m = x.match(/^([^:]{1,70}):\s*([\s\S]*)$/); return `<li style="margin:0 0 6px 0;padding-left:4px;">${m ? `<b>${escapeHtml(m[1])}:</b> ${escapeHtml(m[2])}` : escapeHtml(x)}</li>`; }).join('')}</ul>`); items = []; } };
     block.split('\n').forEach(line=>{ if(BULLET.test(line)){ flushP(); items.push(line.replace(BULLET,'')); } else { flushL(); para.push(line); } });
     flushP(); flushL();
     return out.join('');
