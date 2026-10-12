@@ -4300,6 +4300,7 @@ const CAMP_HIST = { tanitim:'Tanıtım maili', hatirlatma1:'1. hatırlatma', hat
 
 function campIsDue(r){ return r.status==='aktif' && (r.step===0 || (r.next_due_at && r.next_due_at <= todayStr())); }
 async function loadOutreach(){
+  await loadCampaigns();
   try{ const { data, error } = await sb.from('outreach').select('*').order('created_at', { ascending:false }); if(error) throw error; outreachRows = data || []; outreachErr = ''; }
   catch(e){ outreachErr = (e && e.message) || 'okunamadı'; }
   if(!outreachErr) await syncOutreachCustomers();
@@ -4337,7 +4338,7 @@ async function campUpdate(r, patch, hist){
 function renderCampaignShell(){
   return `<div class="panel" style="max-width:1220px;">
     <h2>Kampanya</h2>
-    <p class="hint">Tanıtım maili dizisi: ilk mail → <b>3.</b>, <b>7.</b>, <b>15.</b> ve <b>35. gün</b> aynı mail dizisinde hatırlatma → <b>42. gün</b> cevap yoksa pasif. Cevap gelince dizi durur. Hafta sonuna denk gelen adım pazartesiye kayar. Kişiler kampanya sohbetinde eklenir, burada aday cari olarak açılır.</p>
+    <p class="hint">Tanıtım maili dizisi: ilk mail → <b>3.</b>, <b>7.</b>, <b>15.</b> ve <b>35. gün</b> aynı mail dizisinde hatırlatma → <b>42. gün</b> cevap yoksa pasif. Cevap gelince dizi durur. Hafta sonuna denk gelen adım pazartesiye kayar. Kampanyaların şablonları, imzası ve eki aşağıda; kişiler kampanya sohbetinde eklenir, burada aday cari olarak açılır.</p>
     <div class="field" style="max-width:340px;margin:12px 0 16px;"><input id="campSearch" placeholder="Kişi, firma, e-posta ara..." value="${escapeAttr(campSearch)}"></div>
     <div id="campBody"><p class="hint">Yükleniyor…</p></div></div>`;
 }
@@ -4348,12 +4349,14 @@ function renderCampaignBody(){
     pasif:all.filter(r=>r.status==='pasif').length, cikis:all.filter(r=>r.status==='cikis').length, '':all.length };
   const rate = sent.length ? Math.round(cnt.yanit / sent.length * 100) : 0;
   let list = all.filter(r=> campFilter==='' ? true : campFilter==='vade' ? campIsDue(r) : r.status===campFilter);
+  if(campCampaignFilter) list = list.filter(r=>r.campaign_id===campCampaignFilter);
   if(campSearch){ const q = foldTR(campSearch.trim()); list = list.filter(r=>foldTR([r.name,r.company,r.email,r.title].join(' ')).includes(q)); }
   list = list.slice().sort((a,b)=> (campIsDue(b)-campIsDue(a)) || String(a.next_due_at||'9999').localeCompare(String(b.next_due_at||'9999')) || String(b.created_at).localeCompare(String(a.created_at)));
   const funnel = [1,2,3,4,5].map(s=>all.filter(r=>r.status==='aktif' && r.step===s).length);
   const FILTERS = [['aktif','Dizide'],['vade','Bugün vadesi gelen'],['yanit','Yanıt verdi'],['pasif','Pasif'],['cikis','Çıkış istedi'],['','Tümü']];
   const chip = st=>`<span class="stage-chip st-${st==='yanit'?'hazir':st==='aktif'?'sevk':'tedarik'}">${escapeHtml(CAMP_STATUS[st]||st)}</span>`;
-  return `
+  return renderCampaignCards() + `
+    <div class="subhead" style="margin-top:4px;">Kişiler</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:0 0 16px;">
       <div class="kpi-card"><div class="kpi-label">Dizide</div><div class="kpi-value">${cnt.aktif}</div><div class="kpi-sub">aktif kişi</div></div>
       <div class="kpi-card"><div class="kpi-label">Bugün Vadesi Gelen</div><div class="kpi-value" style="color:${cnt.vade?'var(--danger)':'var(--ink)'};">${cnt.vade}</div><div class="kpi-sub">gönderim / pasife alma</div></div>
@@ -4362,7 +4365,8 @@ function renderCampaignBody(){
     </div>
     <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;font-size:11.5px;color:var(--gray-500);">Dizideki dağılım:
       ${['Tanıtım','1. hatırlatma','2. hatırlatma','3. hatırlatma','Son hatırlatma'].map((l,i)=>`<span class="mono" style="padding:2px 8px;border:1px solid var(--hairline-strong);border-radius:10px;">${l}: <b>${funnel[i]}</b></span>`).join('')}</div>
-    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">${FILTERS.map(([k,l])=>`<span class="version-pill ${campFilter===k?'active':''}" data-camp-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">${FILTERS.map(([k,l])=>`<span class="version-pill ${campFilter===k?'active':''}" data-camp-filter="${k}">${l} (${cnt[k]||0})</span>`).join('')}
+      ${campaigns.length>1 ? `<select id="campCampaignSel" style="padding:5px 8px;font-size:12px;margin-left:auto;"><option value="">Tüm kampanyalar</option>${campaigns.map(c=>`<option value="${c.id}" ${campCampaignFilter===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>` : ''}</div>
     ${list.length ? `<table class="items-table"><thead><tr><th>Kişi</th><th>Firma</th><th>E-posta</th><th>Aşama</th><th>Sonraki adım</th><th>Durum</th><th></th></tr></thead><tbody>
       ${list.map(r=>`<tr>
         <td><b style="font-size:12.5px;">${escapeHtml(r.name||'')}</b><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(r.title||'')}</div></td>
@@ -4385,6 +4389,8 @@ function refreshCampBody(){
   el.innerHTML = renderCampaignBody();
   const byId = id=>outreachRows.find(r=>r.id===id);
   el.querySelectorAll('[data-camp-filter]').forEach(p=>{ p.onclick = ()=>{ campFilter = p.dataset.campFilter; refreshCampBody(); }; });
+  bindCampaignCards(el);
+  const csel = el.querySelector('#campCampaignSel'); if(csel) csel.onchange = e=>{ campCampaignFilter = e.target.value; refreshCampBody(); };
   el.querySelectorAll('[data-camp-hist]').forEach(b=>{ b.onclick = ()=>openCampHistory(byId(b.dataset.campHist)); });
   el.querySelectorAll('[data-camp-reply]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campReply); if(!confirm(r.name+' cevap verdi olarak işaretlensin mi? Dizi durur.')) return; await campUpdate(r, { status:'yanit', replied_at:new Date().toISOString(), next_due_at:null }, { kind:'cevap', note:'Elle işaretlendi' }); }; });
   el.querySelectorAll('[data-camp-passive]').forEach(b=>{ b.onclick = async ()=>{ const r = byId(b.dataset.campPassive); if(!confirm(r.name+' pasife alınsın mı? Hatırlatmalar durur.')) return; await campUpdate(r, { status:'pasif', next_due_at:null }, { kind:'pasif', note:'Elle pasife alındı' }); }; });
@@ -4406,6 +4412,144 @@ function openCampHistory(r){
 function attachCampaignShell(){
   const s = document.getElementById('campSearch');
   if(s) s.oninput = e=>{ campSearch = e.target.value; refreshCampBody(); };
+}
+
+/* ---------------- KAMPANYA TANIMLARI (şablonlar, imza, ek dosya) ---------------- */
+let campaigns = [], campaignsErr = '', campCampaignFilter = '';
+const CAMP_OPTOUT = 'Bu konuda yeniden iletişime geçmemizi istemezseniz bu e-postayı "istemiyorum" diye yanıtlamanız yeterli.';
+const CAMP_STEP_NAMES = ['Tanıtım maili','1. hatırlatma','2. hatırlatma','3. hatırlatma','Son hatırlatma'];
+const CAMP_STATUS_LABEL = { taslak:'Taslak', aktif:'Aktif', durduruldu:'Durduruldu' };
+const CAMP_SAMPLE = { name:'Cafer Usta', company:'Ustaoğlu Holding', greeting:'Merhaba Cafer Bey' };
+async function loadCampaigns(){
+  try{ const { data, error } = await sb.from('campaigns').select('*').order('created_at', { ascending:true }); if(error) throw error; campaigns = data || []; campaignsErr = ''; }
+  catch(e){ campaignsErr = (e && e.message) || 'okunamadı'; }
+}
+// Şablon metnini kişiye göre doldurur ve e-posta HTML'ine çevirir (gönderim tarafı da aynı kurala uyacak)
+function campFillText(text, c){
+  const first = String((c && c.name) || '').trim().split(/\s+/)[0] || '';
+  return String(text||'').replace(/\{Selamlama\}/g, (c && c.greeting) || ('Merhaba '+first).trim()).replace(/\{Ad\}/g, first).replace(/\{Firma\}/g, (c && c.company) || '');
+}
+function campTextToHtml(text){
+  return String(text||'').split(/\n{2,}/).map(p=>`<p style="margin:0 0 14px 0;">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
+}
+function campEmailHtml(campaign, step, contact){
+  return `<div style="font-family:Arial, Helvetica, sans-serif;font-size:14px;line-height:1.6;color:#12151a;">${campTextToHtml(campFillText(step.body, contact))}</div>`
+    + (campaign.signature_html ? `<div style="margin-top:18px;">${campaign.signature_html}</div>` : '')
+    + (step.optout ? `<p style="font-family:Arial, Helvetica, sans-serif;font-size:11px;color:#9aa2b0;margin:22px 0 0 0;">${escapeHtml(CAMP_OPTOUT)}</p>` : '');
+}
+function campStats(cid){
+  const rows = outreachRows.filter(r=>r.campaign_id===cid);
+  return { total:rows.length, aktif:rows.filter(r=>r.status==='aktif').length, yanit:rows.filter(r=>r.status==='yanit').length, pasif:rows.filter(r=>r.status==='pasif').length };
+}
+function renderCampaignCards(){
+  if(campaignsErr) return `<p class="hint" style="color:var(--danger);">Kampanyalar okunamadı: ${escapeHtml(campaignsErr)}</p>`;
+  return `<div class="subhead-row" style="margin-bottom:8px;"><div class="subhead" style="margin:0;">Kampanyalar</div><button class="btn btn-ghost" id="campNew" style="padding:6px 12px;font-size:12px;">+ Yeni Kampanya</button></div>
+    ${campaigns.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-bottom:24px;">${campaigns.map(c=>{ const st = campStats(c.id), steps = Array.isArray(c.steps) ? c.steps : [];
+      const needsFile = steps.some(s=>s.attach) && !c.attachment_path;
+      return `<div class="kpi-card" style="text-align:left;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><b style="font-size:13.5px;">${escapeHtml(c.name)}</b>
+          <span class="stage-chip st-${c.status==='aktif'?'hazir':c.status==='taslak'?'tedarik':'sevk'}">${escapeHtml(CAMP_STATUS_LABEL[c.status]||c.status)}</span></div>
+        ${c.description ? `<div style="font-size:11.5px;color:var(--gray-500);margin:6px 0;line-height:1.5;">${escapeHtml(c.description)}</div>` : ''}
+        <div style="font-size:11.5px;margin-top:6px;">${steps.length} adım (${steps.map(s=>s.day).join(' · ')}. gün) · günde en çok <b>${c.daily_limit}</b> yeni kişi</div>
+        <div style="font-size:11.5px;margin-top:4px;color:${needsFile?'var(--danger)':'var(--gray-500)'};">${c.attachment_path ? 'Ek: '+escapeHtml(c.attachment_name||'')+' ('+fmtBytes(c.attachment_size||0)+')' : needsFile ? 'Tanıtım maili ek istiyor ama PDF yüklenmedi' : 'Ek yok'}</div>
+        <div style="font-size:11.5px;margin-top:4px;">Kişi: <b>${st.total}</b> · dizide ${st.aktif} · yanıt ${st.yanit} · pasif ${st.pasif}</div>
+        <div style="margin-top:10px;"><span class="camp-act" style="margin-left:0;" data-camp-edit="${c.id}">Düzenle</span>
+          ${c.status!=='aktif' ? `<span class="camp-act" data-camp-status="${c.id}|aktif" style="color:var(--ink);">Başlat</span>` : `<span class="camp-act" data-camp-status="${c.id}|durduruldu">Durdur</span>`}
+          ${st.total ? '' : `<span class="camp-act" data-camp-del="${c.id}" style="color:var(--danger);">Sil</span>`}</div>
+      </div>`; }).join('')}</div>` : '<p class="hint">Henüz kampanya yok.</p>'}`;
+}
+function bindCampaignCards(el){
+  const q = s=>el.querySelectorAll(s);
+  const nb = el.querySelector('#campNew'); if(nb) nb.onclick = ()=>openCampaignEditor(null);
+  q('[data-camp-edit]').forEach(b=>{ b.onclick = ()=>openCampaignEditor(campaigns.find(c=>c.id===b.dataset.campEdit)); });
+  q('[data-camp-status]').forEach(b=>{ b.onclick = async ()=>{
+    const [id, st] = b.dataset.campStatus.split('|'), c = campaigns.find(x=>x.id===id);
+    if(st==='aktif' && (c.steps||[]).some(s=>s.attach) && !c.attachment_path){ alert('Tanıtım maili ek istiyor ama PDF yüklenmedi. Önce Düzenle\'den PDF\'i yükle.'); return; }
+    if(!confirm(c.name+(st==='aktif' ? ' başlatılsın mı? Günlük oturumlarda bu kampanyaya kişi eklenmeye başlanır.' : ' durdurulsun mu? Yeni kişi eklenmez; dizideki kişilerin hatırlatmaları da bekletilir.'))) return;
+    const { error } = await sb.from('campaigns').update({ status:st, updated_at:new Date().toISOString() }).eq('id', id);
+    if(error){ alert('Kaydedilemedi: '+error.message); return; }
+    await loadCampaigns(); refreshCampBody();
+  }; });
+  q('[data-camp-del]').forEach(b=>{ b.onclick = async ()=>{
+    const c = campaigns.find(x=>x.id===b.dataset.campDel); if(!confirm(c.name+' silinsin mi?')) return;
+    if(c.attachment_path){ try{ await sb.storage.from('campaign-files').remove([c.attachment_path]); }catch(e){} }
+    const { error } = await sb.from('campaigns').delete().eq('id', c.id); if(error){ alert('Silinemedi: '+error.message); return; }
+    await loadCampaigns(); refreshCampBody();
+  }; });
+}
+function openCampaignEditor(src){
+  const isNew = !src;
+  const c = JSON.parse(JSON.stringify(src || { name:'', description:'', status:'taslak', daily_limit:5, signature_html:'', steps:[0,3,7,15,35].map((d,i)=>({ day:d, subject:i===0?'':'', body:'{Selamlama},\n\n', attach:i===0, optout:i<4 })) }));
+  if(!Array.isArray(c.steps)) c.steps = [];
+  let cur = 0, pendingFile = null;
+  const ov = openSimpleModal('', 1180);
+  const draw = ()=>{
+    const s = c.steps[cur] || {};
+    ov.firstElementChild.innerHTML = `
+      <h2>${isNew ? 'Yeni Kampanya' : 'Kampanyayı Düzenle'}</h2>
+      <div class="grid3">
+        <div class="field"><label>Kampanya adı</label><input id="ce-name" value="${escapeAttr(c.name||'')}"></div>
+        <div class="field"><label>Günde en çok yeni kişi</label><input id="ce-limit" type="number" min="1" max="50" value="${escapeAttr(String(c.daily_limit||5))}"></div>
+        <div class="field"><label>Durum</label><select id="ce-status">${['taslak','aktif','durduruldu'].map(k=>`<option value="${k}" ${c.status===k?'selected':''}>${CAMP_STATUS_LABEL[k]}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Hedef kitle / açıklama</label><input id="ce-desc" value="${escapeAttr(c.description||'')}" placeholder="Ör. Ege bölgesi gıda üreticileri; bakım ve satınalma müdürleri"></div>
+      <div style="display:flex;gap:6px;margin:10px 0 12px;flex-wrap:wrap;">${c.steps.map((st,i)=>`<span class="version-pill ${i===cur?'active':''}" data-ce-step="${i}">${st.day}. gün · ${CAMP_STEP_NAMES[i]||'Adım '+(i+1)}</span>`).join('')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">
+        <div>
+          <div class="field"><label>Konu</label>${cur===0 ? `<input id="ce-subject" value="${escapeAttr(s.subject||'')}">` : `<input value="Re: ${escapeAttr((c.steps[0]||{}).subject||'')}" disabled title="Hatırlatmalar aynı dizinin cevabı olarak gider">`}</div>
+          <div class="field"><label>Metin <span style="font-weight:400;color:var(--gray-500);">— {Selamlama} = "Merhaba Cafer Bey" / "Sayın Deniz Yılmaz"; {Ad}, {Firma} de kullanılabilir</span></label>
+            <textarea id="ce-body" rows="16" style="width:100%;font-family:inherit;font-size:13px;line-height:1.55;">${escapeHtml(s.body||'')}</textarea></div>
+          <label style="font-size:12px;display:block;margin:4px 0;"><input type="checkbox" id="ce-optout" ${s.optout?'checked':''}> Sonuna "almak istemiyorum" satırını ekle</label>
+          ${cur===0 ? `<label style="font-size:12px;display:block;margin:4px 0;"><input type="checkbox" id="ce-attach" ${s.attach?'checked':''}> Bu maile PDF eki ekle</label>
+            <div class="field" style="margin-top:8px;"><label>Ek dosya (PDF)</label>
+              <div style="font-size:12px;margin-bottom:6px;">${pendingFile ? 'Yüklenecek: <b>'+escapeHtml(pendingFile.name)+'</b> ('+fmtBytes(pendingFile.size)+')' : c.attachment_path ? 'Yüklü: <b>'+escapeHtml(c.attachment_name||'')+'</b> ('+fmtBytes(c.attachment_size||0)+')' : '<span style="color:var(--danger);">Henüz yüklenmedi</span>'}</div>
+              <input type="file" id="ce-file" accept="application/pdf,.pdf"></div>` : ''}
+          <details style="margin-top:10px;"><summary style="font-size:12px;cursor:pointer;color:var(--gray-500);">İmza (HTML)</summary><textarea id="ce-sig" rows="6" class="code-editor" style="width:100%;margin-top:6px;font-size:11px;">${escapeHtml(c.signature_html||'')}</textarea></details>
+        </div>
+        <div><div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Önizleme · ${escapeHtml(CAMP_SAMPLE.name)} (${escapeHtml(CAMP_SAMPLE.company)})</div>
+          <iframe id="ce-preview" sandbox="" style="width:100%;height:560px;border:1px solid var(--hairline-strong);border-radius:4px;background:#fff;"></iframe>
+          <div style="font-size:10.5px;color:var(--gray-500);margin-top:4px;">Önizlemede logo güvenlik ayarı nedeniyle gösterilmeyebilir; gerçek mailde görünür.</div></div>
+      </div>
+      <div class="actions-row" style="margin-top:16px;"><button class="btn btn-primary" id="ce-save">Kaydet</button><button class="btn btn-ghost" id="ce-cancel">Vazgeç</button></div>`;
+    const $ = id=>ov.querySelector('#'+id);
+    const pull = ()=>{
+      c.name = $('ce-name').value.trim(); c.description = $('ce-desc').value.trim(); c.status = $('ce-status').value;
+      c.daily_limit = Math.max(1, Math.min(50, parseInt($('ce-limit').value)||5)); c.signature_html = $('ce-sig').value;
+      const st = c.steps[cur]; if(!st) return;
+      st.body = $('ce-body').value; st.optout = $('ce-optout').checked;
+      if(cur===0){ st.subject = $('ce-subject').value; st.attach = $('ce-attach').checked; }
+    };
+    const preview = ()=>{ pull(); $('ce-preview').srcdoc = '<!doctype html><meta charset="utf-8"><body style="margin:14px;">'+campEmailHtml(c, c.steps[cur], CAMP_SAMPLE)+'</body>'; };
+    ov.querySelectorAll('input,textarea,select').forEach(i=>i.addEventListener('input', preview));
+    ov.querySelectorAll('[data-ce-step]').forEach(p=>{ p.onclick = ()=>{ pull(); cur = +p.dataset.ceStep; draw(); }; });
+    const f = $('ce-file'); if(f) f.onchange = e=>{ const file = e.target.files[0]; if(!file) return;
+      if(file.type!=='application/pdf' && !/\.pdf$/i.test(file.name)){ alert('Yalnızca PDF yüklenebilir.'); return; }
+      if(file.size > 10*1024*1024){ alert('PDF en fazla 10 MB olabilir.'); return; }
+      pull(); pendingFile = file; draw(); };
+    $('ce-cancel').onclick = ()=>ov.remove();
+    $('ce-save').onclick = async ()=>{
+      pull();
+      if(!c.name){ alert('Kampanya adı gerekli.'); return; }
+      if(!(c.steps[0]||{}).subject){ alert('Tanıtım mailinin konusu gerekli.'); return; }
+      if(c.steps.some(st=>!/\{Selamlama\}/.test(st.body||''))){ alert('Her adımın metninde {Selamlama} geçmeli (hitap oradan gelir).'); return; }
+      const payload = { name:c.name, description:c.description||null, status:c.status, daily_limit:c.daily_limit, steps:c.steps, signature_html:c.signature_html||null, updated_at:new Date().toISOString() };
+      let id = c.id;
+      if(isNew){ const { data, error } = await sb.from('campaigns').insert(payload).select('id').single(); if(error){ alert('Kaydedilemedi: '+error.message); return; } id = data.id; }
+      else { const { error } = await sb.from('campaigns').update(payload).eq('id', id); if(error){ alert('Kaydedilemedi: '+error.message); return; } }
+      if(pendingFile){
+        const safe = pendingFile.name.normalize('NFKD').replace(/[^\w.\-]+/g,'_').slice(-80);
+        const path = currentUser.id+'/'+id+'/'+safe;
+        const up = await sb.storage.from('campaign-files').upload(path, pendingFile, { upsert:true, contentType:'application/pdf' });
+        if(up.error){ alert('PDF yüklenemedi: '+up.error.message); return; }
+        if(c.attachment_path && c.attachment_path!==path){ try{ await sb.storage.from('campaign-files').remove([c.attachment_path]); }catch(e){} }
+        const { error } = await sb.from('campaigns').update({ attachment_path:path, attachment_name:pendingFile.name, attachment_size:pendingFile.size }).eq('id', id);
+        if(error){ alert('Ek bilgisi kaydedilemedi: '+error.message); return; }
+      }
+      ov.remove(); await loadCampaigns(); refreshCampBody();
+    };
+    preview();
+  };
+  draw();
 }
 
 /* ---------------- STOK (açılış, sayım, rezerve, minimum seviye; FIFO) ---------------- */
