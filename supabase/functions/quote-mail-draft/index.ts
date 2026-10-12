@@ -67,9 +67,21 @@ async function refreshGoogleToken(refreshToken: string) {
   return data.access_token as string;
 }
 
+async function assertGmailAccount(token: string) {
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { Authorization: "Bearer " + token },
+  });
+  const profile = await res.json().catch(() => ({}));
+  if (!res.ok || String(profile.emailAddress || "").toLowerCase() !== SENDER) {
+    throw new Error("Gmail OAuth hesabı GMAIL_SENDER adresiyle eşleşmiyor.");
+  }
+  return profile;
+}
+
 async function findReplyThread(to: string, sender: string, quoteNo: string) {
   if (!env("GMAIL_REFRESH_TOKEN_READ")) return null;
   const readToken = await refreshGoogleToken(env("GMAIL_REFRESH_TOKEN_READ"));
+  await assertGmailAccount(readToken);
   const query = new URLSearchParams({ q: "from:" + to + " to:" + sender + " newer_than:365d", maxResults: "20" });
   const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?" + query, {
     headers: { Authorization: "Bearer " + readToken },
@@ -194,6 +206,7 @@ async function createDraft(body: Record<string, unknown>, userId: string) {
   const fileName = String(meta.fileName).replace(/[^A-Za-z0-9._-]/g, "-");
   const raw = buildMime({ to, subject, text, html, fileName, bytes, thread });
   const token = await refreshGoogleToken(env("GMAIL_REFRESH_TOKEN_COMPOSE"));
+  await assertGmailAccount(token);
   const draftRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },

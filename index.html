@@ -6010,6 +6010,10 @@ async function archiveQuotePdf(options){
   return Object.assign({blob:blob,reused:false},meta);
 }
 
+function setQuotePdfActionState(busy){
+  ['btnArchivePdf','btnMailDraft'].forEach(id=>{ const button=document.getElementById(id); if(button) button.disabled=busy; });
+}
+
 function renderPreview(){
   const tokens = buildDocTokens();
   const eff = effectiveTemplate();
@@ -6754,16 +6758,16 @@ function attachHandlers(){
     };
     document.getElementById('btnArchivePdf').onclick = async ()=>{
       const btn = document.getElementById('btnArchivePdf'), status = document.getElementById('quotePdfStatus');
-      btn.disabled = true; btn.textContent = 'PDF oluşturuluyor…';
+      setQuotePdfActionState(true); btn.textContent = 'PDF oluşturuluyor…';
       try{
         const file = await archiveQuotePdf({download:true});
         if(status) status.textContent = (file.reused?'Arşivdeki PDF indirildi. ':'PDF oluşturuldu, Supabase’e arşivlendi ve indirildi. ')+file.fileName+' · '+Math.ceil(file.size/1024)+' KB';
       }catch(e){ alert(e.message||String(e)); }
-      finally{ btn.disabled = false; btn.textContent = 'PDF’yi Arşivle / İndir'; }
+      finally{ setQuotePdfActionState(false); btn.textContent = 'PDF’yi Arşivle / İndir'; }
     };
     document.getElementById('btnMailDraft').onclick = async ()=>{
       const btn = document.getElementById('btnMailDraft'), status = document.getElementById('quotePdfStatus');
-      btn.disabled = true; btn.textContent = 'Gmail taslağı hazırlanıyor…';
+      setQuotePdfActionState(true); btn.textContent = 'Gmail taslağı hazırlanıyor…';
       try{
         const file = await archiveQuotePdf({download:false});
         const {data,error} = await sb.functions.invoke('quote-mail-draft',{body:{quoteId:quote.id,documentHash:file.contentHash}});
@@ -6771,7 +6775,7 @@ function attachHandlers(){
         if(!data || !data.ok) throw new Error((data&&data.error)||'Gmail taslağı oluşturulamadı.');
         if(status) status.innerHTML = 'Gmail taslağı hazır: '+escapeHtml(data.fileName)+' eklendi. <a href="'+escapeAttr(data.gmailUrl)+'" target="_blank" rel="noopener noreferrer">Gmail’de açıp incele</a>.';
       }catch(e){ alert(e.message||String(e)); }
-      finally{ btn.disabled = false; btn.textContent = 'Gmail Taslağı (PDF ekli)'; }
+      finally{ setQuotePdfActionState(false); btn.textContent = 'Gmail Taslağı (PDF ekli)'; }
     };
   }
 }
