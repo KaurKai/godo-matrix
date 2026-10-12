@@ -50,14 +50,18 @@ const emailFromHeader = (value: string) => {
   return (match ? match[1] : value).trim().toLowerCase();
 };
 
-async function refreshGoogleToken(refreshToken: string) {
+async function refreshGoogleToken(
+  refreshToken: string,
+  clientId = env("GMAIL_CLIENT_ID"),
+  clientSecret = env("GMAIL_CLIENT_SECRET"),
+) {
   if (!refreshToken) throw new Error("Gmail taslak yetkisi yapılandırılmamış. GMAIL_REFRESH_TOKEN_COMPOSE secret gerekli.");
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: env("GMAIL_CLIENT_ID"),
-      client_secret: env("GMAIL_CLIENT_SECRET"),
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     }),
@@ -205,7 +209,11 @@ async function createDraft(body: Record<string, unknown>, userId: string) {
     " numaralı teklifimizi ekte bilgilerinize sunarız.</p><p>Sorularınız için bize ulaşabilirsiniz.</p><p>İyi çalışmalar dileriz.</p></div>";
   const fileName = String(meta.fileName).replace(/[^A-Za-z0-9._-]/g, "-");
   const raw = buildMime({ to, subject, text, html, fileName, bytes, thread });
-  const token = await refreshGoogleToken(env("GMAIL_REFRESH_TOKEN_COMPOSE"));
+  const token = await refreshGoogleToken(
+    env("GMAIL_REFRESH_TOKEN_COMPOSE"),
+    env("GMAIL_COMPOSE_CLIENT_ID"),
+    env("GMAIL_COMPOSE_CLIENT_SECRET"),
+  );
   await assertGmailAccount(token);
   const draftRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
@@ -243,7 +251,7 @@ Deno.serve(async (req: Request) => {
     let claims: Record<string, unknown> = {};
     try { claims = decodeClaims(token); } catch { /* token signature was verified above */ }
     if (claims.aal !== "aal2") return response({ ok: false, error: "PDF ve Gmail işlemleri için doğrulanmış MFA oturumu gerekli." }, 403, origin);
-    if (!SENDER || !env("GMAIL_CLIENT_ID") || !env("GMAIL_CLIENT_SECRET")) {
+    if (!SENDER || !env("GMAIL_COMPOSE_CLIENT_ID") || !env("GMAIL_COMPOSE_CLIENT_SECRET")) {
       throw new Error("Gmail sunucu ayarları eksik.");
     }
     const body = await req.json().catch(() => ({}));
