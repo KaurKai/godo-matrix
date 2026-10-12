@@ -85,6 +85,24 @@ async function rfcIdOf(gmailId) {
   } catch (_e) { return null; }
 }
 
+// Dizide bizden başka birinden mesaj var mı? (yalnızca başlıklar okunur: kimden, konu)
+async function threadState(threadId) {
+  if (!threadId) return { reply: false, bounce: false };
+  const tok = await accessToken(env("GMAIL_REFRESH_TOKEN_READ"));
+  const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`, { headers: { Authorization: "Bearer " + tok } });
+  if (!r.ok) throw new Error("Dizi okunamadı: " + r.status);
+  const j = await r.json();
+  let reply = false, bounce = false, from = "", snippet = "";
+  for (const m of j.messages || []) {
+    const h = Object.fromEntries((m.payload?.headers || []).map((x) => [String(x.name).toLowerCase(), String(x.value)]));
+    const f = (h.from || "").toLowerCase();
+    if (!f || f.includes(SENDER.toLowerCase())) continue;
+    if (/mailer-daemon|postmaster|mail delivery/.test(f) || /undeliver|delivery status|teslim edilemedi|failure notice/i.test(h.subject || "")) { bounce = true; snippet = h.subject || ""; continue; }
+    reply = true; from = h.from || ""; snippet = (m.snippet || "").slice(0, 300);
+  }
+  return { reply, bounce, from, snippet };
+}
+
 // ---------- veri ----------
 function adminKey() {
   const legacy = env("SUPABASE_SERVICE_ROLE_KEY");
@@ -148,6 +166,11 @@ async function actionProcess(body) {
           .eq("status", "gonderildi").eq("step_to_send", 1).eq("outreach.campaign_id", campaign.id).gte("sent_at", now.date + "T00:00:00+03:00");
         if ((count || 0) >= campaign.daily_limit) { await sb.from("outreach_queue").update({ status: "bekliyor" }).eq("id", job.id); results.push({ job: job.id, status: "bekletildi", error: "günlük sınır doldu" }); continue; }
       }
+      if (idx > 0) {
+        const st = await threadState(o.thread_id);
+        if (st.reply) { await sb.rpc("engine_record_reply", { p_id: o.id, p_note: (st.from ? st.from + ": " : "") + st.snippet }); results.push({ job: job.id, status: "iptal", error: "cevap geldi, hatırlatma gönderilmedi" }); continue; }
+        if (st.bounce) { await sb.rpc("engine_record_bounce", { p_id: o.id, p_note: "Mail geri döndü: " + st.snippet }); results.push({ job: job.id, status: "iptal", error: "mail geri döndü" }); continue; }
+      }
       const subject = idx === 0 ? step.subject : "Re: " + (campaign.steps[0]?.subject || "");
       const attachment = step.attach ? await attachmentOf(sb, campaign) : null;
       const contact = { name: o.name, company: o.company, greeting: o.greeting };
@@ -171,6 +194,19 @@ Deno.serve(async (req) => {
   try {
     if (body.action === "test") return await actionTest(body);
     if (body.action === "process") return await actionProcess(body);
+    if (body.action === "check_replies") {
+      const sb = SB();
+      const { data: rows } = await sb.from("outreach").select("id, name, company, email, thread_id").eq("status", "aktif").not("thread_id", "is", null).limit(200);
+      const found = [];
+      for (const o of rows || []) {
+        try {
+          const st = await threadState(o.thread_id);
+          if (st.reply) { await sb.rpc("engine_record_reply", { p_id: o.id, p_note: (st.from ? st.from + ": " : "") + st.snippet }); found.push({ id: o.id, name: o.name, company: o.company, tur: "cevap", ozet: st.snippet }); }
+          else if (st.bounce) { await sb.rpc("engine_record_bounce", { p_id: o.id, p_note: "Mail geri döndü: " + st.snippet }); found.push({ id: o.id, name: o.name, company: o.company, email: o.email, tur: "geri_dondu" }); }
+        } catch (e) { found.push({ id: o.id, name: o.name, tur: "hata", ozet: e?.message || String(e) }); }
+      }
+      return json({ ok: true, taranan: (rows || []).length, bulunan: found });
+    }
     if (body.action === "diag") {
       const names = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEYS", "SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEYS"];
       const { error } = await SB().from("allowed_signups").select("email").limit(1);
