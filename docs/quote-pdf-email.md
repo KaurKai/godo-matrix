@@ -11,10 +11,9 @@
 
 Bu PR üretim verisine veya Supabase projesine uygulanmaz. Birleştirme ve dağıtım öncesinde:
 
-1. Supabase Edge Function secret'ı `GMAIL_REFRESH_TOKEN_COMPOSE` tanımlanmalı. Bu refresh token, profil adresi GMAIL_SENDER ile aynı olacak şekilde ve Gmail API'nin `https://www.googleapis.com/auth/gmail.compose` kapsamıyla alınmış olmalı.
-2. Aynı Gmail OAuth istemcisinin `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` ve `GMAIL_SENDER` secret'ları mevcut olmalı.
-3. Yazışma eşlemesi isteniyorsa mevcut `GMAIL_REFRESH_TOKEN_READ` secret'ı okunabilir Gmail izni taşımalı. Eşleşme bulunamazsa yeni bir Gmail taslağı oluşturulur.
-4. `quote-mail-draft` Edge Function deploy edilmeli; uygulama HTML'i GitHub Pages dağıtımıyla yayınlanmalı.
+1. Supabase Edge Function secrets'ına teklif taslağına özel `GMAIL_COMPOSE_CLIENT_ID`, `GMAIL_COMPOSE_CLIENT_SECRET` ve `GMAIL_REFRESH_TOKEN_COMPOSE` eklenmeli. Bu üç değer ayrı bir Google OAuth istemcisinden ve GMAIL_SENDER ile aynı hesapta, `https://www.googleapis.com/auth/gmail.compose` kapsamıyla alınmalı.
+2. Mevcut `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN_READ` ve `GMAIL_SENDER` secret'ları olduğu gibi korunmalı. Teklif taslağı için ayrı istemci kullanılması, mevcut Gmail işlevlerinin kimlik bilgilerine dokunmaz.
+3. `quote-mail-draft` Edge Function deploy edilmeli; uygulama HTML'i GitHub Pages dağıtımıyla yayınlanmalı.
 
 Secret değerleri bu depoya eklenmemelidir.
 
