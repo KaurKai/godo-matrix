@@ -1,0 +1,35 @@
+name: Render Matrix quote PDF
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Short-lived quote PDF job ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quote-pdf-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+      - name: Render and upload the PDF
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          SUPABASE_URL: ${{ secrets.GODO_SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.GODO_SUPABASE_PUBLISHABLE_KEY }}
+          GODO_RENDER_SECRET: ${{ secrets.GODO_RENDER_SECRET }}
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: node scripts/render-quote-pdf.mjs

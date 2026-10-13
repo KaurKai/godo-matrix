@@ -1,0 +1,5 @@
+[functions.gmail-check]
+verify_jwt = false
+
+[functions.quote-pdf-render]
+verify_jwt = false

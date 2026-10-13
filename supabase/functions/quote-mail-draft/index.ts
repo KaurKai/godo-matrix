@@ -82,10 +82,39 @@ async function assertGmailAccount(token: string) {
   return profile;
 }
 
-async function findReplyThread(to: string, sender: string, quoteNo: string) {
+async function findReplyThread(to: string, sender: string, quoteNo: string, sourceEmail?: Record<string, unknown> | null) {
   if (!env("GMAIL_REFRESH_TOKEN_READ")) return null;
   const readToken = await refreshGoogleToken(env("GMAIL_REFRESH_TOKEN_READ"));
   await assertGmailAccount(readToken);
+  const headersOf = (message: { payload?: { headers?: Array<{ name: string; value: string }> } }) =>
+    Object.fromEntries((message.payload?.headers || []).map((h) => [String(h.name).toLowerCase(), String(h.value)]));
+  if (sourceEmail && (!sourceEmail.threadId || !sourceEmail.messageId)) {
+    throw new Error("Kaynak Gmail yazışmasının kimliği eksik; yanıt taslağı güvenle eşleştirilemiyor.");
+  }
+  if (sourceEmail?.threadId && sourceEmail?.messageId) {
+    const threadId = String(sourceEmail.threadId);
+    if (!/^[A-Za-z0-9_-]{6,200}$/.test(threadId)) throw new Error("Kaynak e-posta dizisi geçersiz.");
+    const threadRes = await fetch(
+      "https://gmail.googleapis.com/gmail/v1/users/me/threads/" + encodeURIComponent(threadId) +
+      "?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID",
+      { headers: { Authorization: "Bearer " + readToken } },
+    );
+    if (!threadRes.ok) throw new Error("Kaynak Gmail yazışması doğrulanamadı.");
+    const thread = await threadRes.json().catch(() => ({}));
+    const all = (thread.messages || []).map((m: { internalDate?: string }) => ({ m, h: headersOf(m) }));
+    const sourceId = cleanHeader(sourceEmail.messageId);
+    const source = all.find((entry: { h: Record<string, string> }) => entry.h["message-id"] === sourceId);
+    if (!source || emailFromHeader(source.h.from || "") !== to ||
+        (sourceEmail.fromEmail && String(sourceEmail.fromEmail).toLowerCase() !== to)) {
+      throw new Error("Kaynak e-posta bu müşteri ve Gmail yazışmasıyla eşleşmiyor.");
+    }
+    const incoming = all.filter((entry: { h: Record<string, string> }) => emailFromHeader(entry.h.from || "") === to)
+      .sort((a: { m: { internalDate?: string } }, b: { m: { internalDate?: string } }) => Number(a.m.internalDate || 0) - Number(b.m.internalDate || 0));
+    const latest = incoming[incoming.length - 1];
+    const messageId = cleanHeader(latest?.h["message-id"] || "");
+    if (!messageId) throw new Error("Yanıtlanacak son gelen e-postanın Message-ID bilgisi yok.");
+    return { threadId, subject: cleanHeader(latest.h.subject || source.h.subject || ""), messageId, date: Number(latest.m.internalDate || 0) };
+  }
   const query = new URLSearchParams({ q: "from:" + to + " to:" + sender + " newer_than:365d", maxResults: "20" });
   const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?" + query, {
     headers: { Authorization: "Bearer " + readToken },
@@ -103,8 +132,6 @@ async function findReplyThread(to: string, sender: string, quoteNo: string) {
     if (!threadRes.ok) continue;
     const thread = await threadRes.json().catch(() => ({}));
     const messages = thread.messages || [];
-    const headersOf = (message: { payload?: { headers?: Array<{ name: string; value: string }> } }) =>
-      Object.fromEntries((message.payload?.headers || []).map((h) => [String(h.name).toLowerCase(), String(h.value)]));
     const all = messages.map((m: { internalDate?: string }) => ({ m, h: headersOf(m) }));
     const subject = all.length ? cleanHeader(all[0].h.subject || "") : "";
     if (!/teklif|quotation|quote/i.test(subject) && !subject.includes(quoteNo)) continue;
@@ -162,6 +189,15 @@ function buildMime(args: {
   const raw = headers.join("\r\n") + "\r\n\r\n" + body;
   return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+function textToEmailHtml(text: string) {
+  return String(text || "").trim().split(/\n\s*\n/).map((paragraph) =>
+    "<p style=\"margin:0 0 14px 0;\">" + escapeHtml(paragraph).replace(/\n/g, "<br>") + "</p>").join("");
+}
+function plainTextFromHtml(html: string) {
+  return String(html || "").replace(/<br\s*\/?\s*>/gi, "\n").replace(/<\/(?:div|p|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").trim();
+}
 
 async function createDraft(body: Record<string, unknown>, userId: string) {
   const quoteId = String(body.quoteId || "");
@@ -197,18 +233,25 @@ async function createDraft(body: Record<string, unknown>, userId: string) {
   const actualSha = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
   if (actualSha !== meta.fileSha256) throw new Error("PDF bütünlük kontrolü başarısız.");
 
-  const thread = await findReplyThread(to, SENDER, String(quote.quoteNo));
+  const sourceEmail = body.sourceEmail && typeof body.sourceEmail === "object" ? body.sourceEmail as Record<string, unknown> : null;
+  const thread = await findReplyThread(to, SENDER, String(quote.quoteNo), sourceEmail);
   const subject = thread ? (thread.subject.toLowerCase().startsWith("re:") ? thread.subject : "Re: " + thread.subject)
     : "Teklif " + String(quote.quoteNo);
-  const customerName = cleanHeader(quote.customer.contactName || quote.customer.name || "Mustafa Bey");
-  const greeting = customerName === "Mustafa Bey" ? "Merhaba Mustafa Bey," : "Merhaba " + customerName + ",";
-  const text = greeting + "\n\nTalebiniz için teşekkür ederiz. " + quote.quoteNo +
-    " numaralı teklifimizi ekte bilgilerinize sunarız.\n\nSorularınız için bize ulaşabilirsiniz.\n\nİyi çalışmalar dileriz.";
-  const html = "<div style=\"font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#222\"><p>" +
-    escapeHtml(greeting) + "</p><p>Talebiniz için teşekkür ederiz. " + escapeHtml(quote.quoteNo) +
-    " numaralı teklifimizi ekte bilgilerinize sunarız.</p><p>Sorularınız için bize ulaşabilirsiniz.</p><p>İyi çalışmalar dileriz.</p></div>";
+  const recipientName = cleanHeader(quote.customer.contactName || quote.customer.name || "");
+  const defaultReply = (recipientName ? "Merhaba " + recipientName + "," : "Merhaba,") + "\n\n" +
+    "Talebiniz doğrultusunda hazırladığımız teklifimizi ekte değerlendirmenize sunarız.\n\n" +
+    "Teklifimizle ilgili sorularınız veya ek bilgi talepleriniz olması hâlinde memnuniyetle yardımcı oluruz.\n\n" +
+    "İyi çalışmalar dileriz.";
+  const text = String(body.replyText || defaultReply).slice(0, 12000).trim();
+  const { data: campaign } = await admin.from("campaigns").select("signature_html").eq("user_id", userId)
+    .not("signature_html", "is", null).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  const signatureHtml = String(campaign?.signature_html || "").trim();
+  if (!signatureHtml) throw new Error("Gmail imzası Matrix kampanya ayarlarında bulunamadı.");
+  const html = "<div style=\"font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#222\">" + textToEmailHtml(text) +
+    "</div><div style=\"margin-top:18px;\">" + signatureHtml + "</div>";
+  const textBody = text + "\n\n" + plainTextFromHtml(signatureHtml);
   const fileName = String(meta.fileName).replace(/[^A-Za-z0-9._-]/g, "-");
-  const raw = buildMime({ to, subject, text, html, fileName, bytes, thread });
+  const raw = buildMime({ to, subject, text: textBody, html, fileName, bytes, thread });
   const token = await refreshGoogleToken(
     env("GMAIL_REFRESH_TOKEN_COMPOSE"),
     env("GMAIL_COMPOSE_CLIENT_ID"),
