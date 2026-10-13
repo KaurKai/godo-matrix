@@ -300,7 +300,6 @@
     #printArea{box-shadow:none;max-width:100%;padding:0;margin:0;}
     .preview-toolbar, .screen-only-note{display:none!important;}
     table.doc-items tr{ page-break-inside:avoid; }
-    .doc-terms{ page-break-inside:avoid; }
     .doc-terms .blk{ page-break-inside:avoid; }
     .doc-totals{ page-break-inside:avoid; }
     .doc-simple-table tr{ page-break-inside:avoid; }
@@ -680,6 +679,11 @@ let lastImport = null;
 let productSearch = "";
 let productCategoryFilter = "";
 let saveTimer = null;
+let gmailIntake = [];
+let gmailIntakeCheckedAt = "";
+let gmailIntakeError = "";
+let gmailIntakeBusy = false;
+let gmailIntakeTimer = null;
 
 /* ---------------- STORAGE ADAPTER ----------------
    Kademeli depolama:
@@ -972,6 +976,7 @@ async function loadAll(){
   try{ const pidx = await stGet('godo:proposals-index'); if(pidx && pidx.value) proposalsIndex = JSON.parse(pidx.value); }catch(e){}
   try{ const ts = await stGet('godo:tasks'); if(ts && ts.value) tasks = JSON.parse(ts.value); }catch(e){}
   try{ const tr = await stGet('godo:trash'); if(tr && tr.value) trash = JSON.parse(tr.value); }catch(e){}
+  try{ const gi = await stGet('godo:gmail-intake'); if(gi && gi.value){ const parsed=JSON.parse(gi.value); gmailIntake=Array.isArray(parsed.items)?parsed.items:[]; gmailIntakeCheckedAt=parsed.checkedAt||''; } }catch(e){}
   try{ const tt = await stGet('godo:termTemplates'); if(tt && tt.value) termTemplates = JSON.parse(tt.value); }catch(e){}
   try{
     const newFmt = await stGet('godo:docTemplates');
@@ -1046,18 +1051,18 @@ async function updateOrderField(id, field, value){
   }
 }
 async function saveTasks(){ await stSet('godo:tasks', JSON.stringify(tasks)); }
-function applyCustomerDefaultsToQuote(cust){
+function applyCustomerDefaultsToQuote(cust,targetQuote=quote){
   if(cust.defaultPaymentTplId){
     const pt = termTemplates.payment.find(t=>t.id===cust.defaultPaymentTplId);
-    if(pt) quote.terms.payment = tplText(pt, qLang(quote));
+    if(pt) targetQuote.terms.payment = tplText(pt, qLang(targetQuote));
   }
   if(cust.defaultDeliveryTplId){
     const dt = termTemplates.delivery.find(t=>t.id===cust.defaultDeliveryTplId);
-    if(dt) quote.terms.delivery = tplText(dt, qLang(quote));
+    if(dt) targetQuote.terms.delivery = tplText(dt, qLang(targetQuote));
   }
   if(cust.defaultShippingTplId){
     const st = termTemplates.shipping.find(t=>t.id===cust.defaultShippingTplId);
-    if(st) quote.terms.shipping = tplText(st, qLang(quote));
+    if(st) targetQuote.terms.shipping = tplText(st, qLang(targetQuote));
   }
 }
 
@@ -1121,7 +1126,7 @@ async function persistQuote(){
   await stSet('godo:quote:'+quote.id, JSON.stringify(quote));
   const total = computeTotals(quote).grand;
   const existingIdx = quotesIndex.findIndex(q=>q.id===quote.id);
-  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"", qtyTotal: (quote.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0) };
+  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"", qtyTotal: (quote.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0), sourceThreadId: quote.sourceEmail&&quote.sourceEmail.threadId||null, sourceMessageId: quote.sourceEmail&&quote.sourceEmail.messageId||null };
   if(existingIdx >= 0) quotesIndex[existingIdx] = entry; else quotesIndex.unshift(entry);
   await saveIndex();
   flashSaved();
@@ -1386,6 +1391,7 @@ function navGroups(){
   const editorActive = isEditorTab(activeTab);
   return [
     { key:'satis', label:'Satış', items:[
+      { tab:'gmailInbox', label:'Gmail Talepleri', on: activeTab==='gmailInbox', n: gmailIntake.filter(x=>x.status==='new').length },
       { tab:'list', label:'Teklifler', on: activeTab==='list' || editorActive },
       { tab:'proposalsList', label:'Proje Teklifleri', on: activeTab==='proposalsList' || isProposalTab(activeTab) },
       { tab:'orders', label:'Siparişler', on: activeTab==='orders', n: readyOrders().length },
@@ -1493,6 +1499,7 @@ function render(){
     fillBackupReminder();
   }
   else if(activeTab==='list') c.innerHTML = renderQuotesList();
+  else if(activeTab==='gmailInbox') c.innerHTML = renderGmailIntake();
   else if(activeTab==='proposalsList') c.innerHTML = renderProposalsList();
   else if(activeTab==='pInfo') c.innerHTML = renderProposalInfo();
   else if(activeTab==='pContent') c.innerHTML = renderProposalContent();
@@ -1655,6 +1662,121 @@ function renderDashboard(){
       </div>
     </div>
   </div>`;
+}
+
+function quoteRequestFromEmail(item){
+  const source = String(item.text||'');
+  const lower = source.toLocaleLowerCase('tr-TR');
+  const escRe = s=>String(s||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const matches = [];
+  products.forEach(p=>{
+    const code = String(p.code||'').trim(); if(!code) return;
+    const re = new RegExp('(^|[^\\p{L}\\p{N}])'+escRe(code)+'($|[^\\p{L}\\p{N}])','iu');
+    if(!re.test(lower)) return;
+    const codeRe = escRe(code);
+    const qtyRe = new RegExp('(?:^|[^\\d])([\\d]+(?:[.,][\\d]+)?)\\s*(?:adet|pcs?|x|×)?\\s*'+codeRe+'(?:$|[^\\p{L}\\p{N}])|'+codeRe+'\\s*(?:x|×)?\\s*([\\d]+(?:[.,][\\d]+)?)','iu');
+    const qm = source.match(qtyRe), qtyText = qm && (qm[1]||qm[2]);
+    matches.push({ product:p, qty:qtyText ? parseTRNumber(qtyText) : '', quantityFound:!!qtyText });
+  });
+  return matches;
+}
+function formatGmailIntakeDate(value){
+  const d=new Date(value); return Number.isNaN(d.getTime())?'':new Intl.DateTimeFormat('tr-TR',{dateStyle:'medium',timeStyle:'short'}).format(d);
+}
+function renderGmailIntake(){
+  const pending=gmailIntake.filter(x=>x.status==='new').length;
+  const err=gmailIntakeError?`<div class="ready-note" style="border-left-color:var(--danger);margin-bottom:12px;">${escapeHtml(gmailIntakeError)}</div>`:'';
+  const state=gmailIntakeBusy?'Gmail kontrol ediliyor…':gmailIntakeCheckedAt?'Son kontrol: '+formatGmailIntakeDate(gmailIntakeCheckedAt):'Henüz kontrol edilmedi';
+  return `<div class="panel" style="max-width:1200px;">
+    <div class="subhead-row" style="margin-bottom:8px;align-items:center;"><div><h2 style="margin:0;">Gmail Teklif Talepleri</h2><p class="hint" style="margin:5px 0 0;">${pending} yeni talep · ${escapeHtml(state)} · Gelen kutusu değişiklik yapılmadan okunur.</p></div>
+      <button class="btn btn-ghost" id="gmailIntakeRefresh" ${gmailIntakeBusy?'disabled':''}>${gmailIntakeBusy?'Kontrol ediliyor…':'Şimdi Kontrol Et'}</button></div>
+    ${err}
+    ${gmailIntake.length?gmailIntake.map((m,i)=>{
+      const matches=quoteRequestFromEmail(m), hasQuote=!!m.quoteId||quotesIndex.some(q=>q.sourceMessageId===m.messageId);
+      const label=m.status==='ignored'?'Göz ardı edildi':m.status==='draft-created'?'Yanıt taslağı hazır':m.status==='draft-pending'?'PDF ve yanıt taslağı hazırlanıyor':hasQuote?'Teklif açıldı':'Yeni talep';
+      return `<article style="border:1px solid var(--hairline);border-radius:6px;padding:14px 16px;margin-top:12px;">
+        <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;"><div style="min-width:0;flex:1;">
+          <div style="font-size:13px;font-weight:700;">${escapeHtml(m.subject||'(Konu yok)')}</div>
+          <div class="dqr-meta" style="margin-top:5px;">${escapeHtml(m.from||m.fromEmail||'')} · ${escapeHtml(formatGmailIntakeDate(m.date))} · ${escapeHtml(label)}</div>
+          <p style="font-size:12px;white-space:pre-wrap;line-height:1.55;margin:12px 0 6px;max-height:180px;overflow:auto;">${escapeHtml(m.text||'')}</p>
+          ${m.attachments&&m.attachments.length?`<div class="dqr-meta">Ekler: ${m.attachments.map(escapeHtml).join(', ')} · E-posta eki içeriği otomatik okunmadı.</div>`:''}
+          <div class="dqr-meta" style="margin-top:8px;">${matches.length?`Ürün kodu eşleşmesi: ${matches.map(x=>escapeHtml(x.product.code)+(x.quantityFound?' × '+fmtQty(x.qty):' (adet belirtilmemiş)')).join(', ')}`:'Ürün kodu eşleşmedi; ürün ve fiyatı teklif içinde seçilmeli.'}</div>
+          ${m.error?`<div class="dqr-meta" style="color:var(--danger);margin-top:6px;">Taslak hatası: ${escapeHtml(m.error)}</div>`:''}
+        </div><div style="display:flex;gap:6px;flex-direction:column;min-width:132px;">
+          ${hasQuote?`<button class="btn btn-ghost" data-intake-open-quote="${escapeAttr(m.quoteId||m.messageId||'')}">Teklifi Aç</button>${!['draft-created','draft-pending'].includes(m.status)?`<button class="btn btn-primary" data-intake-mail="${i}">Gmail Taslağı Hazırla</button>`:''}`:m.status==='new'?`<button class="btn btn-primary" data-intake-create="${i}">Teklif Taslağı Aç</button><button class="btn btn-ghost" data-intake-ignore="${i}">Talep Değil</button>`:''}
+          ${m.gmailUrl?`<a class="btn btn-ghost" style="text-align:center;" href="${escapeAttr(m.gmailUrl)}" target="_blank" rel="noopener">Gmail’de Aç</a>`:''}
+          ${m.status==='draft-created'?`<a class="btn btn-ghost" style="text-align:center;" href="${escapeAttr(m.draftUrl||'https://mail.google.com/mail/u/0/#drafts')}" target="_blank" rel="noopener">Yanıt Taslağını Aç</a>`:''}
+        </div></div></article>`;
+    }).join(''):'<p class="hint" style="margin-top:24px;">Henüz tespit edilmiş teklif talebi yok.</p>'}
+  </div>`;
+}
+async function saveGmailIntake(){
+  await stSet('godo:gmail-intake',JSON.stringify({checkedAt:gmailIntakeCheckedAt,items:gmailIntake}));
+}
+async function refreshGmailIntake(){
+  if(gmailIntakeBusy||storageMode!=='supabase'||!sb||!currentUser) return false;
+  gmailIntakeBusy=true; gmailIntakeError=''; if(activeTab==='gmailInbox') render();
+  try{
+    const {data,error}=await sb.functions.invoke('gmail-check',{body:{action:'scan'}});
+    if(error) throw error;
+    if(!data||!data.ok) throw new Error(data&&data.error||'Gmail kontrolü tamamlanamadı.');
+    gmailIntake=data.items||[]; gmailIntakeCheckedAt=data.checkedAt||new Date().toISOString();
+    await saveGmailIntake();
+    await autoCreateClearQuotes();
+    return true;
+  }catch(e){ gmailIntakeError=e.message||String(e); return false; }
+  finally{ gmailIntakeBusy=false; if(activeTab==='gmailInbox') render(); }
+}
+function startGmailIntakeMonitor(){
+  if(gmailIntakeTimer) clearInterval(gmailIntakeTimer);
+  refreshGmailIntake();
+  gmailIntakeTimer=setInterval(()=>{
+    if(document.visibilityState==='visible'&&currentUser) refreshGmailIntake();
+  },15*60*1000);
+}
+function customerForEmail(email){
+  const e=String(email||'').toLowerCase();
+  const found=[];
+  for(const c of customers){ (c.contacts||[]).filter(x=>String(x.email||'').toLowerCase()===e).forEach(contact=>found.push({customer:c,contact})); }
+  return found.length===1?found[0]:null;
+}
+function canAutoCreateQuote(item){
+  if(!item||item.status!=='new'||(item.attachments||[]).length||!customerForEmail(item.fromEmail)) return false;
+  const matches=quoteRequestFromEmail(item);
+  if(!matches.length||matches.length>100||matches.some(m=>!m.quantityFound||!(parseFloat(m.qty)>0)||!(lineUnitPrice({useCalc:true,listPrice:m.product.listPrice,discount:m.product.discount})>0))) return false;
+  const codes=matches.map(m=>String(m.product.code||'').toLocaleLowerCase('tr-TR'));
+  if(new Set(codes).size!==codes.length) return false;
+  for(const code of codes){
+    const pattern=new RegExp('(^|[^\\p{L}\\p{N}])'+String(code).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'($|[^\\p{L}\\p{N}])','giu');
+    if((String(item.text||'').match(pattern)||[]).length!==1) return false;
+  }
+  return true;
+}
+async function autoCreateClearQuotes(){
+  const i=gmailIntake.findIndex(canAutoCreateQuote);
+  if(i>=0) await createQuoteFromIntake(i,{automatic:true});
+}
+async function createQuoteFromIntake(index,opts){
+  opts=opts||{};
+  const item=gmailIntake[index]; if(!item||item.status!=='new') return;
+  const existing=quotesIndex.find(x=>x.sourceMessageId===item.messageId);
+  if(existing){ item.status='quote-created'; item.quoteId=existing.id; await saveGmailIntake(); if(!opts.automatic){ await openQuote(existing.id); activeTab='info'; render(); } return; }
+  const match=customerForEmail(item.fromEmail), senderName=String(item.from||'').replace(/<[^>]*>/g,'').replace(/\([^)]*\)/g,'').trim();
+  const productMatches=quoteRequestFromEmail(item);
+  const draft=emptyQuote(); draft.id=crypto.randomUUID(); draft.rootId=draft.id; draft.quoteNo=nextQuoteNo();
+  draft.customer.contactEmail=item.fromEmail||''; draft.customer.contactName=match?(match.contact.name||senderName):senderName;
+  if(match){ draft.customer.customerId=match.customer.id; draft.customer.name=match.customer.name; draft.customer.address=match.customer.address||''; draft.customer.taxOffice=match.customer.taxOffice||''; draft.customer.taxNo=match.customer.taxNo||''; applyCustomerDefaultsToQuote(match.customer,draft); }
+  draft.items=productMatches.length?productMatches.map(({product:p,qty})=>({ id:crypto.randomUUID(),productId:p.id,code:p.code,desc:p.desc,delivery:p.delivery||'',qty,listPrice:p.listPrice||'',buyDiscount:p.buyDiscount||'',discount:p.discount||'',unitPrice:'',useCalc:!!p.listPrice })): [blankItem()];
+  draft.sourceEmail={threadId:item.threadId,messageId:item.messageId,from:item.from,fromEmail:item.fromEmail,subject:item.subject,date:item.date,attachments:item.attachments||[]};
+  const total=computeTotals(draft).grand;
+  const entry={id:draft.id,rootId:draft.rootId,version:draft.version||1,quoteNo:draft.quoteNo,customerName:draft.customer.name||'İsimsiz Müşteri',customerId:draft.customer.customerId||null,date:draft.date,total,currency:draft.currency,status:draft.status,orderStatus:draft.orderStatus||'',lossReason:draft.lossReason||'',irsaliyeNo:draft.irsaliyeNo||'',invoiceNo:draft.invoiceNo||'',paymentStatus:draft.paymentStatus||'',paidAmount:draft.paidAmount||'',paymentDueDate:draft.paymentDueDate||'',paymentTermDays:draft.paymentTermDays||'',qtyTotal:draft.items.filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0),sourceThreadId:item.threadId||null,sourceMessageId:item.messageId||null};
+  await stSet('godo:quote:'+draft.id,JSON.stringify(draft));
+  quotesIndex.unshift(entry); await saveIndex();
+  item.status='quote-created'; item.quoteId=draft.id; await saveGmailIntake();
+  if(opts.automatic){
+    try{ item.status='draft-pending'; await saveGmailIntake(); await createGmailDraftForQuote(draft,item); }
+    catch(e){ item.status='quote-created'; item.error=e.message||String(e); await saveGmailIntake(); }
+  }else{ await openQuote(draft.id); activeTab='info'; render(); }
 }
 
 function renderQuotesList(){
@@ -5935,11 +6057,27 @@ function buildDocTokens(){
   };
 }
 
-async function quotePdfHash(){
-  const area = document.getElementById('printArea');
-  if(!area) throw new Error('Teklif önizlemesi bulunamadı.');
-  const css = document.getElementById('userDocStyle');
-  const source = [quote.id||'', quote.quoteNo||'', String(quote.version||1), qLang(quote), effectiveTemplate(), css?css.textContent:'', area.innerHTML].join('\n');
+function buildNativeQuoteHtml(q){
+  const previous=quote; quote=q;
+  try{
+    const template=effectiveTemplate(), css=getSlotCSS(template);
+    const content=renderDocHTML(getSlotHTML(template),buildDocTokens(),qLang(q));
+    const area=document.createElement('div'); area.id='printArea'; area.innerHTML=content;
+    area.querySelectorAll('script,iframe,object,embed,form').forEach(x=>x.remove());
+    area.querySelectorAll('*').forEach(el=>[...el.attributes].forEach(attr=>{ if(/^on/i.test(attr.name)) el.removeAttribute(attr.name); }));
+    const normalized=area.innerHTML;
+    const source=['pdf-render-v3-chromium',q.id||'',q.quoteNo||'',String(q.version||1),qLang(q),template,css,normalized].join('\n');
+    const baseStyles=[...document.head.querySelectorAll('style:not(#userDocStyle)')].map(x=>x.outerHTML).join('\n');
+    const baseLinks=[...document.head.querySelectorAll('link[rel="stylesheet"],link[rel="preconnect"]')].map(x=>x.outerHTML).join('\n');
+    const safeCss=String(css||'').replace(/<\/style/gi,'<\\/style');
+    const printCss='@page{size:A4;margin:10mm 12mm 12mm}html,body{margin:0!important;background:#fff!important}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}.preview-wrap{max-width:none!important;margin:0!important;padding:0!important}#printArea{max-width:none!important;width:100%!important;margin:0!important;padding:0!important;box-shadow:none!important}.preview-toolbar,.screen-only-note{display:none!important}';
+    const csp="default-src 'none'; base-uri 'self'; form-action 'none'; script-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:";
+    const html='<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><base href="'+escapeAttr(location.href)+'">'+baseLinks+baseStyles+'<style id="userDocStyle">'+safeCss+'</style><style>'+printCss+'</style></head><body><div class="preview-wrap">'+area.outerHTML+'</div></body></html>';
+    return {source,html};
+  }finally{ quote=previous; }
+}
+async function quotePdfHash(q=quote){
+  const {source}=buildNativeQuoteHtml(q);
   const bytes = new TextEncoder().encode(source);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -5954,12 +6092,12 @@ function downloadQuotePdfBlob(blob, filename){
   a.href = url; a.download = filename; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 30000);
 }
-async function archiveQuotePdf(options){
+async function archiveQuotePdf(options,q=quote){
   options = options||{};
   if(storageMode!=='supabase' || !currentUser || !sb) throw new Error('PDF arşivlemek ve Gmail taslağı oluşturmak için Matrix’e Supabase hesabınla giriş yapmalısın.');
-  await persistQuote();
+  if(q===quote) await persistQuote();
   if(syncFailed) throw new Error('Teklif Supabase’e kaydedilemedi. Bağlantı düzeldiğinde tekrar dene.');
-  const hash = await quotePdfHash(), key = quotePdfStorageKey(quote.id, hash);
+  const hash = await quotePdfHash(q), key = quotePdfStorageKey(q.id, hash);
   const existing = await stGet(key);
   if(existing && existing.value){
     const meta = JSON.parse(existing.value);
@@ -5971,49 +6109,52 @@ async function archiveQuotePdf(options){
       }
     }
   }
-  if(!window.html2pdf) throw new Error('PDF oluşturucu yüklenemedi. Sayfayı yenileyip tekrar dene.');
-  await document.fonts.ready;
-  const original = document.getElementById('printArea');
-  if(!original) throw new Error('Teklif önizlemesi bulunamadı.');
-  const shell = document.createElement('div');
-  shell.className = 'preview-wrap';
-  shell.style.cssText = 'position:fixed;left:-12000px;top:0;width:186mm;min-height:0;padding:0;background:#fff;z-index:-1;overflow:visible;';
-  const clone = original.cloneNode(true);
-  clone.style.maxWidth = 'none'; clone.style.width = '100%'; clone.style.margin = '0'; clone.style.padding = '0'; clone.style.boxShadow = 'none';
-  clone.querySelectorAll('table.doc-items tr,table.doc-simple-table tr,.doc-terms,.doc-terms .blk,.doc-totals,.doc-sig-grid').forEach(el=>{
-    el.style.breakInside = 'avoid'; el.style.pageBreakInside = 'avoid';
-  });
-  clone.querySelectorAll('thead').forEach(el=>{ el.style.display = 'table-header-group'; });
-  shell.appendChild(clone); document.body.appendChild(shell);
-  let blob;
-  try{
-    blob = await window.html2pdf().set({
-      margin:[10,12,12,12], image:{type:'jpeg',quality:0.94},
-      pagebreak:{mode:['css','legacy'],avoid:['table.doc-items tr','table.doc-simple-table tr','.doc-terms .blk','.doc-totals','.doc-sig-grid']},
-      html2canvas:{scale:1.25,backgroundColor:'#ffffff',useCORS:false,logging:false,windowWidth:794,scrollY:0},
-      jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true}
-    }).from(clone).outputPdf('blob');
-  }finally{ shell.remove(); }
-  if(!blob || blob.size<1000) throw new Error('PDF oluşturulamadı; teklif içeriği boş veya oluşturucu başarısız.');
-  if(blob.size>10*1024*1024) throw new Error('PDF 10 MB sınırını aşıyor. Teklif çok uzun; kalem açıklamalarını kısaltıp tekrar dene.');
-  const raw = new Uint8Array(await blob.arrayBuffer());
-  const fileDigest = await crypto.subtle.digest('SHA-256',raw);
-  const fileSha256 = Array.from(new Uint8Array(fileDigest)).map(x=>x.toString(16).padStart(2,'0')).join('');
-  const fileName = String(quote.quoteNo||'Teklif')+'.pdf';
-  const storagePath = quotePdfObjectPath(quote.id,quote.quoteNo,hash);
-  const {error:uploadError} = await sb.storage.from('campaign-files').upload(storagePath,blob,{upsert:true,contentType:'application/pdf'});
-  if(uploadError) throw new Error('PDF Supabase’e yüklenemedi: '+uploadError.message);
-  const meta = {quoteId:quote.id,quoteNo:quote.quoteNo,version:quote.version||1,contentHash:hash,fileSha256:fileSha256,fileName:fileName,storagePath:storagePath,size:blob.size,createdAt:new Date().toISOString()};
-  await stSet(key,JSON.stringify(meta));
-  if(syncFailed) throw new Error('PDF depoya yüklendi ama arşiv kaydı senkronize edilemedi. Tekrar dene; aynı dosya yolu kullanılacak.');
-  if(options.download) downloadQuotePdfBlob(blob,fileName);
-  return Object.assign({blob:blob,reused:false},meta);
+  const {html}=buildNativeQuoteHtml(q);
+  const {data:created,error:createError}=await sb.functions.invoke('quote-pdf-render',{body:{action:'create',quoteId:q.id,contentHash:hash,html}});
+  if(createError) throw createError;
+  if(!created||!created.ok) throw new Error(created&&created.error||'Chrome PDF işi başlatılamadı.');
+  const jobId=created.jobId;
+  let status=created.status;
+  for(let attempt=0;status!=='complete'&&attempt<60;attempt++){
+    if(status==='failed') throw new Error(created.error||'Chrome PDF üretimi başarısız.');
+    await new Promise(resolve=>setTimeout(resolve,2500));
+    const {data:check,error:statusError}=await sb.functions.invoke('quote-pdf-render',{body:{action:'status',jobId}});
+    if(statusError) throw statusError;
+    if(!check||!check.ok) throw new Error(check&&check.error||'PDF üretim durumu okunamadı.');
+    status=check.status;
+    if(status==='failed') throw new Error(check.error||'Chrome PDF üretimi başarısız.');
+  }
+  if(status!=='complete') throw new Error('Chrome PDF üretimi iki dakika içinde tamamlanmadı. Gmail taslağı oluşturulmadı.');
+  const {data:metaRow,error:metaError}=await sb.from('kv_store').select('value').eq('user_id',currentUser.id).eq('key',key).maybeSingle();
+  if(metaError||!metaRow||!metaRow.value) throw new Error('PDF tamamlandı ancak Supabase arşiv kaydı bulunamadı.');
+  const meta=JSON.parse(metaRow.value);
+  const {data:blob,error:downloadError}=await sb.storage.from('campaign-files').download(meta.storagePath);
+  if(downloadError||!blob) throw new Error('Chrome PDF arşivden alınamadı: '+(downloadError&&downloadError.message||''));
+  if(options.download) downloadQuotePdfBlob(blob,meta.fileName);
+  return Object.assign({blob,reused:false},meta);
 }
 
 function setQuotePdfActionState(busy){
   ['btnArchivePdf','btnMailDraft'].forEach(id=>{ const button=document.getElementById(id); if(button) button.disabled=busy; });
 }
 
+function quoteReplyText(q=quote){
+  const who=String(q.customer.contactName||q.customer.name||'').trim();
+  const greeting=who ? 'Merhaba '+who+',' : 'Merhaba,';
+  return greeting+'\n\nTalebiniz doğrultusunda hazırladığımız teklifimizi ekte değerlendirmenize sunarız.\n\nTeklifimizle ilgili sorularınız veya ek bilgi talepleriniz olması hâlinde memnuniyetle yardımcı oluruz.\n\nİyi çalışmalar dileriz.';
+}
+async function createGmailDraftForQuote(q,sourceItem){
+  if(sourceItem){ sourceItem.status='draft-pending'; sourceItem.error=''; await saveGmailIntake(); if(activeTab==='gmailInbox') render(); }
+  try{
+  const file=await archiveQuotePdf({download:false},q);
+  const sourceEmail=sourceItem?{threadId:sourceItem.threadId,messageId:sourceItem.messageId,fromEmail:sourceItem.fromEmail}:q.sourceEmail?{threadId:q.sourceEmail.threadId,messageId:q.sourceEmail.messageId,fromEmail:q.sourceEmail.fromEmail}:null;
+  const {data,error}=await sb.functions.invoke('quote-mail-draft',{body:{quoteId:q.id,documentHash:file.contentHash,sourceEmail,replyText:quoteReplyText(q)}});
+  if(error) throw error;
+  if(!data||!data.ok) throw new Error(data&&data.error||'Gmail yanıt taslağı oluşturulamadı.');
+  if(sourceItem){ sourceItem.status='draft-created'; sourceItem.quoteId=q.id; sourceItem.draftUrl=data.gmailUrl; sourceItem.error=''; await saveGmailIntake(); if(activeTab==='gmailInbox') render(); }
+  return data;
+  }catch(e){ if(sourceItem){ sourceItem.status='quote-created'; sourceItem.error=e.message||String(e); await saveGmailIntake(); if(activeTab==='gmailInbox') render(); } throw e; }
+}
 function renderPreview(){
   const tokens = buildDocTokens();
   const eff = effectiveTemplate();
@@ -6133,6 +6274,15 @@ function buildMailtoLink(to){
 function attachHandlers(){
   document.querySelectorAll('.tab').forEach(t=>{ t.onclick = ()=>{ activeTab = t.dataset.tab; render(); }; });
   bindNavHandlers();
+
+  if(activeTab==='gmailInbox'){
+    const refresh=document.getElementById('gmailIntakeRefresh');
+    if(refresh) refresh.onclick=async()=>{ await refreshGmailIntake(); };
+    document.querySelectorAll('[data-intake-create]').forEach(btn=>{ btn.onclick=()=>createQuoteFromIntake(+btn.dataset.intakeCreate); });
+    document.querySelectorAll('[data-intake-mail]').forEach(btn=>{ btn.onclick=async()=>{ const item=gmailIntake[+btn.dataset.intakeMail]; if(!item)return; try{ const qid=item.quoteId||quotesIndex.find(x=>x.sourceMessageId===item.messageId)?.id; if(!qid) throw new Error('Teklif kaydı bulunamadı.'); await openQuote(qid); await createGmailDraftForQuote(quote,item); render(); }catch(e){ item.status='quote-created'; item.error=e.message||String(e); await saveGmailIntake(); render(); alert(item.error); } }; });
+    document.querySelectorAll('[data-intake-ignore]').forEach(btn=>{ btn.onclick=async()=>{ const x=gmailIntake[+btn.dataset.intakeIgnore]; if(x){ x.status='ignored'; await saveGmailIntake(); render(); } }; });
+    document.querySelectorAll('[data-intake-open-quote]').forEach(btn=>{ btn.onclick=async()=>{ const value=btn.dataset.intakeOpenQuote; const q=quotesIndex.find(x=>x.id===value||x.sourceMessageId===value); if(q){ await openQuote(q.id); activeTab='info'; render(); } }; });
+  }
 
   if(activeTab==='list'){
     const s=document.getElementById('lf-search');
@@ -6769,10 +6919,9 @@ function attachHandlers(){
       const btn = document.getElementById('btnMailDraft'), status = document.getElementById('quotePdfStatus');
       setQuotePdfActionState(true); btn.textContent = 'Gmail taslağı hazırlanıyor…';
       try{
-        const file = await archiveQuotePdf({download:false});
-        const {data,error} = await sb.functions.invoke('quote-mail-draft',{body:{quoteId:quote.id,documentHash:file.contentHash}});
-        if(error) throw error;
-        if(!data || !data.ok) throw new Error((data&&data.error)||'Gmail taslağı oluşturulamadı.');
+        await persistQuote();
+        const sourceItem=quote.sourceEmail&&gmailIntake.find(x=>x.messageId===quote.sourceEmail.messageId);
+        const data=await createGmailDraftForQuote(quote,sourceItem||null);
         if(status) status.innerHTML = 'Gmail taslağı hazır: '+escapeHtml(data.fileName)+' eklendi. <a href="'+escapeAttr(data.gmailUrl)+'" target="_blank" rel="noopener noreferrer">Gmail’de açıp incele</a>.';
       }catch(e){ alert(e.message||String(e)); }
       finally{ setQuotePdfActionState(false); btn.textContent = 'Gmail Taslağı (PDF ekli)'; }
@@ -7870,6 +8019,7 @@ async function enterApp(user){
   startIdleWatcher();
   const ct = document.getElementById('content'); if(ct) ct.innerHTML = '<div class="panel"><p class="hint">Veriler yükleniyor…</p></div>';
   await loadAll();
+  if(storageMode==='supabase') startGmailIntakeMonitor();
 }
 async function boot(){
   // Varsayılan durum "kilitli": giriş ekranı görünür, uygulama gizli. Yalnızca doğrulanmış oturum uygulamayı açar.
