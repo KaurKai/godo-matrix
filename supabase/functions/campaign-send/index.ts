@@ -200,6 +200,42 @@ async function actionProcess(body) {
   return json({ ok: true, tr: now, results });
 }
 
+// Onaylı tekil mail (ör. teklif cevabı): ek, depoya şifreli konmuş dosyadan alınır; SHA-256 tutmazsa gönderilmez
+const hex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+async function actionSendOutbox(body) {
+  const sb = SB();
+  const { data: m } = await sb.from("mail_outbox").select("*").eq("id", body.id).single();
+  if (!m) return json({ ok: false, error: "kayıt yok" }, 404);
+  if (m.status !== "bekliyor") return json({ ok: false, error: "durum: " + m.status }, 409);
+  let attachment = null;
+  if (m.attachment_name) {
+    const url = String(body.file_url || "");
+    if (!/^https:\/\/raw\.githubusercontent\.com\/KaurKai\/godo-matrix\/[0-9a-f]{40}\/tmp\/q-[0-9a-f]{12}\.bin$/.test(url)) return json({ ok: false, error: "dosya adresi geçersiz" }, 400);
+    const r = await fetch(url);
+    if (!r.ok) return json({ ok: false, error: "dosya indirilemedi: " + r.status }, 502);
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let plain;
+    try {
+      const keyRaw = Uint8Array.from(atob(String(body.key || "")), (c) => c.charCodeAt(0));
+      const key = await crypto.subtle.importKey("raw", keyRaw, "AES-GCM", false, ["decrypt"]);
+      plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12)));
+    } catch (_e) { return json({ ok: false, error: "dosya çözülemedi" }, 400); }
+    const sha = hex(await crypto.subtle.digest("SHA-256", plain));
+    if (!m.attachment_sha256 || sha !== m.attachment_sha256) return json({ ok: false, error: "dosya doğrulanamadı" }, 400);
+    attachment = { name: m.attachment_name, bytes: plain };
+  }
+  try {
+    const rfc = m.reply_message_id ? await rfcIdOf(m.reply_message_id) : null;
+    const { raw } = buildMime({ to: m.to_email, subject: m.subject, html: m.html, text: m.text_body, attachment, inReplyTo: rfc, references: rfc });
+    const sent = await gmailSend(raw, m.reply_thread_id || null);
+    await sb.from("mail_outbox").update({ status: "gonderildi", gmail_id: sent.id, sent_at: new Date().toISOString(), error: null }).eq("id", m.id);
+    return json({ ok: true, gmail_id: sent.id, thread_id: sent.threadId, in_reply_to: rfc, attachment_bytes: attachment?.bytes.length || 0 });
+  } catch (e) {
+    await sb.from("mail_outbox").update({ status: "hata", error: String(e?.message || e).slice(0, 500) }).eq("id", m.id);
+    return json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ ok: false }, 405);
   let body = {};
@@ -207,6 +243,7 @@ Deno.serve(async (req) => {
   try {
     if (body.action === "test") return await actionTest(body);
     if (body.action === "process") return await actionProcess(body);
+    if (body.action === "send_outbox") return await actionSendOutbox(body);
     if (body.action === "check_replies") {
       const sb = SB();
       const { data: rows } = await sb.from("outreach").select("id, name, company, email, thread_id").eq("status", "aktif").not("thread_id", "is", null).limit(200);
