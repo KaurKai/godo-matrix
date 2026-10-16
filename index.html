@@ -310,6 +310,9 @@
 
   /* ---------- DASHBOARD ---------- */
   .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0 32px;}
+  .invoice-kpis{grid-template-columns:repeat(5,minmax(0,1fr));}
+  @media (max-width:1000px){.invoice-kpis{grid-template-columns:repeat(3,minmax(0,1fr));}}
+  @media (max-width:640px){.invoice-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}
   .kpi-card{border:1px solid var(--hairline-strong);border-radius:4px;padding:16px 16px 14px;background:var(--white);}
   .kpi-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-500);font-weight:700;margin-bottom:8px;}
   .kpi-value{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--ink);}
@@ -3681,6 +3684,31 @@ function purchaseItems(){
       docNo:pi.invoiceNo, date:pi.date, due:piDueDate(pi), cur:pi.currency||'€', total, paid, remaining:Math.max(0,total-paid), state:piPayState(pi), booked:piBooked(pi), obj:pi };
   });
 }
+function openInvoiceDueDateModal(kind, id){
+  const isSale = kind==='sale';
+  const obj = isSale ? shipments.find(x=>x.id===id) : purchaseInvoices.find(x=>x.id===id);
+  if(!obj) return;
+  const due = isSale ? shipDueDate(obj) : piDueDate(obj);
+  const automatic = obj.dueDateOverride ? 'Elle belirlenen tarih' : (due ? 'Otomatik hesaplanan tarih' : 'Vade tanımsız');
+  const basis = isSale
+    ? `Fatura tarihi ${formatDate(obj.invoiceDate||'')} + ${obj.termDays ? escapeHtml(String(obj.termDays))+' gün' : 'teklifte vade günü tanımlanmamış'}`
+    : `Fatura tarihi ${formatDate(obj.date||'')} + ${obj.termDays ? escapeHtml(String(obj.termDays))+' gün' : 'faturada vade günü tanımlanmamış'}`;
+  const ov = openSimpleModal(`
+    <h2>Fatura Vadesini Düzenle</h2>
+    <p class="hint">${escapeHtml(obj.invoiceNo||'Fatura')} · ${escapeHtml(isSale ? (obj.customer&&obj.customer.name||'') : (supplierName(obj.supplierId)||''))}</p>
+    <div class="field"><label>Vade tarihi</label><input id="inv-due-date" type="date" value="${escapeAttr(due||'')}"></div>
+    <p class="hint" style="margin-top:-4px;">Mevcut durum: <b>${automatic}</b>. ${basis}. Tarihi silip kaydedersen otomatik hesaba dönülür; gün tanımlı değilse fatura vadesiz kalır.</p>
+    <div class="actions-row" style="margin-top:14px;">
+      <button class="btn btn-primary" id="inv-due-save">Kaydet</button>
+      <button class="btn btn-ghost" id="inv-due-cancel">Vazgeç</button>
+    </div>`, 520);
+  ov.querySelector('#inv-due-cancel').onclick = ()=>ov.remove();
+  ov.querySelector('#inv-due-save').onclick = async ()=>{
+    obj.dueDateOverride = ov.querySelector('#inv-due-date').value;
+    if(isSale) await saveShipments(); else await savePurchaseInvoices();
+    ov.remove(); render();
+  };
+}
 function bucketOf(due){ if(!due) return 'none'; const d = diffDaysStr(due, todayStr()); return d < 0 ? 'overdue' : (d <= 30 ? 'soon' : 'later'); }
 function itemRate(i){ return i.cur==='₺' ? 1 : (i.booked ? i.booked.rate : null); }
 function groupParties(items){
@@ -4127,26 +4155,28 @@ function renderInvoicesPage(){
     overdue: items.filter(i=>isOpen(i) && i.due && i.due < today),
     week:    items.filter(i=>isOpen(i) && i.due && i.due >= today && i.due <= d7),
     next:    items.filter(i=>isOpen(i) && i.due && i.due > d7 && i.due <= d14),
-    later:   items.filter(i=>isOpen(i) && (!i.due || i.due > d14))
+    noDue:   items.filter(i=>isOpen(i) && !i.due),
+    later:   items.filter(i=>isOpen(i) && i.due && i.due > d14)
   };
   const amt = arr=>curText(sumByCur(arr.map(i=>({ currency:i.cur, v:i.remaining })), x=>x.v));
-  const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, paid:items.filter(i=>!isOpen(i)).length };
-  let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : !isOpen(i));
+  const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, noDue:bucket.noDue.length, paid:items.filter(i=>!isOpen(i)).length };
+  let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : invFilter==='noDue' ? bucket.noDue.includes(i) : !isOpen(i));
   if(invSearch){ const q = foldTR(invSearch.trim()); list = list.filter(i=>foldTR(i.partyName+' '+i.docNo+' '+((i.obj.poNo)||(i.obj.orderNo)||'')).includes(q)); }
   list.sort((a,b)=> (isOpen(b)-isOpen(a)) || (isOpen(a) ? (a.due||'9999-99-99').localeCompare(b.due||'9999-99-99') : (b.date||'').localeCompare(a.date||'')));
   const word = kind==='sale' ? { open:'Tahsilat', paid:'Tahsil edilen', party:'Müşteri', pay:'Tahsilat' } : { open:'Ödeme', paid:'Ödenen', party:'Tedarikçi', pay:'Ödeme' };
-  const FILTERS = [['open','Açık'],['overdue','Vadesi geçmiş'],['week','Bu hafta'],['paid',kind==='sale'?'Tahsil edilen':'Ödenen'],['','Tümü']];
+  const FILTERS = [['open','Açık'],['overdue','Vadesi geçmiş'],['week','Bu hafta'],['noDue','Vadesiz'],['paid',kind==='sale'?'Tahsil edilen':'Ödenen'],['','Tümü']];
   const waitingShips = uninvoicedShipments(), recs = kind==='purchase' ? uninvoicedReceipts() : [];
   return `
   <div class="panel" style="max-width:1160px;">
     <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Faturalar</h2>
       <div style="display:flex;gap:8px;"><span class="version-pill ${invView==='sale'?'active':''}" data-inv-view="sale">Satış Faturaları</span><span class="version-pill ${invView==='purchase'?'active':''}" data-inv-view="purchase">Alış Faturaları</span></div></div>
     <p class="hint">${kind==='sale' ? 'Kestiğin faturalar ve tahsilat vadeleri.' : 'Girdiğin tedarikçi faturaları ve ödeme tarihlerin.'} Vade, fatura tarihi + ödeme vadesi olarak otomatik hesaplanır.</p>
-    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:16px 0 22px;">
+    <div class="kpi-grid invoice-kpis" style="margin:16px 0 22px;">
       <div class="kpi-card"><div class="kpi-label">Vadesi Geçmiş</div><div class="kpi-value" style="font-size:17px;color:${bucket.overdue.length?'var(--danger)':'var(--ink)'};">${amt(bucket.overdue)}</div><div class="kpi-sub">${bucket.overdue.length} fatura</div></div>
       <div class="kpi-card"><div class="kpi-label">Bu Hafta (7 gün)</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.week)}</div><div class="kpi-sub">${bucket.week.length} fatura</div></div>
       <div class="kpi-card"><div class="kpi-label">Gelecek Hafta</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.next)}</div><div class="kpi-sub">${bucket.next.length} fatura</div></div>
-      <div class="kpi-card"><div class="kpi-label">Daha Sonra / Vadesiz</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.later)}</div><div class="kpi-sub">${bucket.later.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Vadesiz</div><div class="kpi-value" style="font-size:17px;color:${bucket.noDue.length?'var(--danger)':'var(--ink)'};">${amt(bucket.noDue)}</div><div class="kpi-sub">${bucket.noDue.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Daha Sonra</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.later)}</div><div class="kpi-sub">${bucket.later.length} fatura</div></div>
     </div>
     ${kind==='sale' && waitingShips.length ? `<div class="ready-note" style="margin-bottom:14px;"><b>${waitingShips.length} sevkiyat faturalanmayı bekliyor.</b> <span class="link-btn" data-go-ship="1" style="margin-left:8px;cursor:pointer;">Sevkiyatlar sayfasında faturaya çevir →</span></div>` : ''}
     ${kind==='purchase' && recs.length ? `<div class="subhead" style="margin-top:0;">Faturası Girilmemiş Mal Kabuller</div>
@@ -4163,9 +4193,10 @@ function renderInvoicesPage(){
         <td style="font-size:12px;">${escapeHtml(i.partyName)}<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${escapeHtml(kind==='sale'?(i.obj.orderNo||''):(i.obj.poNo||''))}</div></td>
         <td class="num mono" style="font-size:12px;">${i.cur} ${fmt(i.total)}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${i.paid>0.005?i.cur+' '+fmt(i.paid):'—'}</td>
         <td class="num mono" style="font-size:12px;font-weight:700;">${isOpen(i)?i.cur+' '+fmt(i.remaining):'—'}</td>
-        <td style="font-size:11.5px;">${i.due?formatDate(i.due):'<span style="color:var(--gray-300);">tanımsız</span>'}<div>${dueBadgeHtml(i.due, !isOpen(i))}</div></td>
+        <td style="font-size:11.5px;">${i.due?formatDate(i.due):'<span style="color:var(--gray-300);">tanımsız</span>'}<div>${i.due && i.obj.dueDateOverride ? '<span style="font-size:10px;color:var(--ink);">elle belirlendi</span>' : dueBadgeHtml(i.due, !isOpen(i))}</div></td>
         <td style="font-size:11.5px;color:${i.state==='overdue'?'var(--danger)':'var(--gray-500)'};font-weight:${i.state==='overdue'?'700':'400'};">${invoiceStateLabel(kind, i.state)}</td>
         <td style="white-space:nowrap;"><span data-inv-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">${word.pay}</span>
+          <span data-inv-edit-due="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;margin-left:10px;">Vade</span>
           <span data-inv-edit="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:10px;">Fatura</span></td></tr>`).join('')}
     </tbody></table>` : `<p class="hint">${(invSearch||invFilter) ? 'Filtreyle eşleşen fatura yok.' : (kind==='sale'?'Henüz faturalanmış sevkiyat yok.':'Henüz tedarikçi faturası yok.')}</p>`}
   </div>`;
@@ -4176,6 +4207,7 @@ function attachInvoicesHandlers(){
   const s = document.getElementById('invSearch');
   if(s) s.oninput = e=>{ invSearch = e.target.value; render(); const el = document.getElementById('invSearch'); if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; } };
   document.querySelectorAll('[data-inv-pay]').forEach(el=>{ el.onclick = ()=>{ const [k,id] = el.dataset.invPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else openPurchasePaymentsModal(id); }; });
+  document.querySelectorAll('[data-inv-edit-due]').forEach(el=>{ el.onclick = ()=>{ const [k,id] = el.dataset.invEditDue.split('|'); openInvoiceDueDateModal(k,id); }; });
   document.querySelectorAll('[data-inv-edit]').forEach(el=>{ el.onclick = ()=>{ const [k,id] = el.dataset.invEdit.split('|'); if(k==='sale') openShipmentInvoiceModal(id); else { const pi = purchaseInvoices.find(x=>x.id===id); if(pi) openPurchaseInvoiceModal(pi.poId, pi.id); } }; });
   document.querySelectorAll('[data-recv-invoice]').forEach(el=>{ el.onclick = ()=>openPurchaseInvoiceModal(el.dataset.recvInvoice); });
   document.querySelectorAll('[data-go-ship]').forEach(el=>{ el.onclick = ()=>{ shipFilter = 'faturalanacak'; activeTab = 'shipments'; render(); }; });
