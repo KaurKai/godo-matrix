@@ -614,6 +614,7 @@ function emptyProposal(){
   return {
     id: null,
     proposalNo: "",
+    lang: "tr",
     date: new Date().toISOString().slice(0,10),
     validityDays: 30,
     title: "",
@@ -641,6 +642,37 @@ function emptyProposal(){
 }
 function blankProposalItem(){ return { id: crypto.randomUUID(), desc:"[Kalem / iş kalemi açıklaması]", qty:1, unitPrice:"" }; }
 function blankOptionalItem(){ return { id: crypto.randomUUID(), desc:"[Opsiyonel hizmet / ekipman]", duration:"[--]", price:"" }; }
+function proposalLang(p=proposal){ return p && p.lang==='en' ? 'en' : 'tr'; }
+function proposalL(tr, en, p=proposal){ return proposalLang(p)==='en' ? en : tr; }
+const PROPOSAL_SECTIONS_EN = ["Introduction","Project Scope","Technical Solution","Delivery & Project Schedule","Pricing","Optional Items","General Terms","Closing"];
+const PROPOSAL_TIMELINE_EN = [
+  "Engineering and detailed design (electrical / panel / PLC software diagrams)",
+  "Material procurement and panel assembly",
+  "Site installation and wiring",
+  "Commissioning, tests and SAT",
+  "Training and project handover"
+];
+const PROPOSAL_DEFAULTS_EN = new Map([
+  [DEFAULT_PROPOSAL_INTRO, "We are pleased to present our project proposal prepared for [Customer Company Name] in response to your request for [project name / scope]. As Godo Industrial Automation, our aim is to provide a reliable, sustainable and high-performance automation solution by accurately analysing your project's technical requirements.\n\nThe following pages outline the project scope, proposed technical solution, delivery schedule and pricing. We would be pleased to discuss any questions or requests for further information regarding our proposal."],
+  [DEFAULT_PROPOSAL_SCOPE_INTRO, "[Summarize the project's overall objective, current situation, a brief description of the need and the boundaries covered by this proposal here.]"],
+  [DEFAULT_PROPOSAL_ARCH, "[Overview of the proposed automation architecture: PLC/SCADA/HMI selections, control philosophy and integration approach.]\n\nSystem Architecture: [Control architecture, communication protocols (Profinet / Profibus / Ethernet IP, etc.) and network topology.]"],
+  [DEFAULT_PROPOSAL_SOFTWARE, "[Description of PLC software, HMI screens, parameterization, test scenarios and on-site commissioning.]"],
+  [DEFAULT_PROPOSAL_TIMELINE_NOTE, "The project is planned according to the stages below. Durations are calculated in business days starting from the business day following order confirmation and receipt of the advance payment."],
+  [DEFAULT_PROPOSAL_PRICING_NOTE, "The table below lists the items included in the project scope and the total price. Unless stated otherwise, prices exclude VAT."],
+  [DEFAULT_PROPOSAL_EXCLUDED_NOTE, "[scaffolding, crane, electrical / pneumatic utility supply, permit and license fees, etc.]"],
+  [DEFAULT_PROPOSAL_OPTIONAL_NOTE, "The items below are not included in the main proposal scope. If requested, they can be priced separately and added to the agreement."],
+  [DEFAULT_PROPOSAL_TERMS.payment, "[...% advance, ...% upon delivery, ...% upon commissioning]"],
+  [DEFAULT_PROPOSAL_TERMS.delivery, "[... business days from order confirmation]"],
+  [DEFAULT_PROPOSAL_TERMS.priceKur, "Quoted in [TRY / EUR / USD] and subject / not subject to exchange-rate differences."],
+  [DEFAULT_PROPOSAL_CLOSING, "We would be pleased to support your project with the assurance of Godo Industrial Automation. Please contact us to discuss our proposal or request any questions, revisions or meetings."]
+]);
+DEFAULT_PROPOSAL_TIMELINE.forEach((item,i)=>PROPOSAL_DEFAULTS_EN.set(item.activity,PROPOSAL_TIMELINE_EN[i]));
+[
+  ["[Marka / Model — PLC]","[Brand / Model — PLC]"],
+  ["[Marka / Model — Sürücü / Motor]","[Brand / Model — Drive / Motor]"],
+  ["[Marka / Model — HMI / SCADA]","[Brand / Model — HMI / SCADA]"],
+  ["[Pano, kablo, saha ekipmanları]","[Panel, cabling and field equipment]"]
+].forEach(([tr,en])=>PROPOSAL_DEFAULTS_EN.set(tr,en));
 function computeProposalTotals(p){
   const sub = p.items.reduce((s,it)=> s + (parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0), 0);
   const vat = p.vatEnabled ? sub*(parseFloat(p.vatRate)||0)/100 : 0;
@@ -1889,6 +1921,10 @@ function renderProposalInfo(){
         <select id="p-status">${PROPOSAL_STATUS_OPTIONS.map(s=>`<option ${proposal.status===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
       <div class="field"><label>Hazırlayan | Unvan</label><input id="p-preparedBy" placeholder="Furkan Özbent | Kurucu" value="${escapeAttr(proposal.preparedBy)}"></div>
+      <div class="field" style="max-width:220px;"><label>Teklif Dili</label>
+        <select id="p-lang"><option value="tr" ${proposalLang()==='tr'?'selected':''}>Türkçe</option><option value="en" ${proposalLang()==='en'?'selected':''}>English</option></select>
+        <div class="hint">Varsayılan metinler ve belge başlıkları seçilen dile çevrilir. Sonradan yazdığın özel içerikler aynı kalır.</div>
+      </div>
     </div>
 
     <div class="section-div"></div>
@@ -2038,32 +2074,44 @@ function renderProposalTerms(){
 }
 
 function renderProposalPreview(){
+  const en = proposalLang()==='en';
+  const label = (tr,english)=>proposalL(tr,english);
+  const docText = value=>en ? (PROPOSAL_DEFAULTS_EN.get(value)||value) : value;
+  const dateText = value=>formatDateL(value,proposalLang());
+  const moneyText = value=>`${proposal.currency} ${fmtL(value,proposalLang())}`;
   const t = computeProposalTotals(proposal);
   const validUntil = (()=>{
     if(!proposal.date) return '—';
     const d = new Date(proposal.date+'T00:00:00');
     d.setDate(d.getDate() + (parseInt(proposal.validityDays)||30));
-    return formatDate(d.toISOString().slice(0,10));
+    return dateText(d.toISOString().slice(0,10));
   })();
   const itemsRows = proposal.items.map((it,i)=>`
-    <tr><td class="pos">${i+1}</td><td>${escapeHtml(it.desc||'—')}</td><td class="center">${it.qty||0}</td><td class="num">${proposal.currency} ${fmt(parseFloat(it.unitPrice)||0)}</td><td class="num">${proposal.currency} ${fmt((parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0))}</td></tr>`).join('');
+    <tr><td class="pos">${i+1}</td><td>${escapeHtml(docText(it.desc||'—'))}</td><td class="center">${it.qty||0}</td><td class="num">${moneyText(parseFloat(it.unitPrice)||0)}</td><td class="num">${moneyText((parseFloat(it.unitPrice)||0)*(parseFloat(it.qty)||0))}</td></tr>`).join('');
   const optRows = (proposal.optionalItems||[]).filter(it=>it.desc).map(it=>`
-    <tr><td>${escapeHtml(it.desc)}</td><td class="center">${escapeHtml(it.duration||'—')}</td><td class="num">${proposal.currency} ${fmt(parseFloat(it.price)||0)}</td></tr>`).join('');
+    <tr><td>${escapeHtml(docText(it.desc))}</td><td class="center">${escapeHtml(it.duration||'—')}</td><td class="num">${moneyText(parseFloat(it.price)||0)}</td></tr>`).join('');
   const timelineRows = proposal.timeline.filter(tl=>tl.activity).map((tl,i)=>`
-    <tr><td class="pos">${i+1}</td><td>${escapeHtml(tl.activity)}</td><td class="num">${escapeHtml(tl.duration||'—')}</td></tr>`).join('');
-  const scopeInHtml = proposal.scopeIncluded.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
-  const scopeOutHtml = proposal.scopeExcluded.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
-  const equipHtml = proposal.techEquipment.filter(Boolean).map(s=>`<li>${escapeHtml(s)}</li>`).join('') || '<li>—</li>';
-  const warrantyText = `Teslim edilen ekipman ve işçilik ${proposal.terms.warranty ? '['+escapeHtml(proposal.terms.warranty)+']' : '[--]'} ay garanti kapsamındadır.`;
-  const validityText = `Bu teklif, teklif tarihinden itibaren [${escapeHtml(String(proposal.validityDays||30))}] gün süreyle geçerlidir.`;
+    <tr><td class="pos">${i+1}</td><td>${escapeHtml(docText(tl.activity))}</td><td class="num">${escapeHtml(tl.duration||'—')}</td></tr>`).join('');
+  const scopeInHtml = proposal.scopeIncluded.filter(Boolean).map(s=>`<li>${escapeHtml(docText(s))}</li>`).join('') || '<li>—</li>';
+  const scopeOutHtml = proposal.scopeExcluded.filter(Boolean).map(s=>`<li>${escapeHtml(docText(s))}</li>`).join('') || '<li>—</li>';
+  const equipHtml = proposal.techEquipment.filter(Boolean).map(s=>`<li>${escapeHtml(docText(s))}</li>`).join('') || '<li>—</li>';
+  const warrantyText = en
+    ? `The supplied equipment and workmanship are covered by a [${escapeHtml(proposal.terms.warranty||'--')}] month warranty.`
+    : `Teslim edilen ekipman ve işçilik ${proposal.terms.warranty ? '['+escapeHtml(proposal.terms.warranty)+']' : '[--]'} ay garanti kapsamındadır.`;
+  const validityText = en
+    ? `This proposal is valid for [${escapeHtml(String(proposal.validityDays||30))}] days from the proposal date.`
+    : `Bu teklif, teklif tarihinden itibaren [${escapeHtml(String(proposal.validityDays||30))}] gün süreyle geçerlidir.`;
 
   return `
   <div class="preview-wrap">
     <div class="preview-toolbar">
-      <button class="btn btn-ghost" id="p-btnBackEdit">← Düzenlemeye Dön</button>
+      <button class="btn btn-ghost" id="p-btnBackEdit">${label('← Düzenlemeye Dön','← Back to editing')}</button>
       <div style="display:flex;gap:10px;">
-        <button class="btn btn-ghost" id="p-btnMailDraft">E-posta Taslağı Oluştur</button>
-        <button class="btn btn-primary" id="p-btnPrint">Yazdır / PDF Kaydet</button>
+        <select id="p-lang-prev" style="padding:8px 10px;border:1px solid var(--hairline-strong);border-radius:3px;font-size:12px;font-family:var(--font-sans);">
+          <option value="tr" ${!en?'selected':''}>Dil: Türkçe</option><option value="en" ${en?'selected':''}>Language: English</option>
+        </select>
+        <button class="btn btn-ghost" id="p-btnMailDraft">${label('E-posta Taslağı Oluştur','Create Email Draft')}</button>
+        <button class="btn btn-primary" id="p-btnPrint">${label('Yazdır / PDF Kaydet','Print / Save PDF')}</button>
       </div>
     </div>
     <div id="printArea">
@@ -2076,134 +2124,134 @@ function renderProposalPreview(){
           <div class="doc-tagline">${escapeHtml(company.tagline||'')}</div>
         </div>
       </div>
-      <div class="doc-cover-title">${escapeHtml(proposal.title||'Proje Teklifi')}</div>
+      <div class="doc-cover-title">${escapeHtml(proposal.title||label('Proje Teklifi','Project Proposal'))}</div>
       <div class="doc-cover-table">
-        <div><div class="doc-info-h">Hazırlanan Firma</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div></div>
-        <div><div class="doc-info-h">Teklif No</div><div class="doc-info-v mono">${escapeHtml(proposal.proposalNo||'—')}</div></div>
-        <div><div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div></div>
-        <div><div class="doc-info-h">Teklif Tarihi</div><div class="doc-info-v">${formatDate(proposal.date)}</div></div>
-        <div><div class="doc-info-h">Hazırlayan</div><div class="doc-info-v">${escapeHtml(proposal.preparedBy||'—')}</div></div>
-        <div><div class="doc-info-h">Geçerlilik</div><div class="doc-info-v">${validUntil}</div></div>
+        <div><div class="doc-info-h">${label('Hazırlanan Firma','Prepared For')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div></div>
+        <div><div class="doc-info-h">${label('Teklif No','Proposal No')}</div><div class="doc-info-v mono">${escapeHtml(proposal.proposalNo||'—')}</div></div>
+        <div><div class="doc-info-h">${label('Yetkili','Contact')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div></div>
+        <div><div class="doc-info-h">${label('Teklif Tarihi','Proposal Date')}</div><div class="doc-info-v">${dateText(proposal.date)}</div></div>
+        <div><div class="doc-info-h">${label('Hazırlayan','Prepared By')}</div><div class="doc-info-v">${escapeHtml(proposal.preparedBy||'—')}</div></div>
+        <div><div class="doc-info-h">${label('Geçerlilik','Valid Until')}</div><div class="doc-info-v">${validUntil}</div></div>
       </div>
-      <div class="doc-cover-note">Bu doküman yalnızca yukarıda belirtilen firmaya özel hazırlanmıştır.</div>
+      <div class="doc-cover-note">${label('Bu doküman yalnızca yukarıda belirtilen firmaya özel hazırlanmıştır.','This document has been prepared exclusively for the company named above.')}</div>
 
       <div style="page-break-before:always;"></div>
 
       <!-- DOKÜMAN BİLGİLERİ -->
-      <div class="doc-page-header">${escapeHtml((company.name||'GODO').toUpperCase())} PROJE TEKLİFİ</div>
-      <div class="doc-sub-h">Doküman Bilgileri</div>
+      <div class="doc-page-header">${escapeHtml((company.name||'GODO').toUpperCase())} ${label('PROJE TEKLİFİ','PROJECT PROPOSAL')}</div>
+      <div class="doc-sub-h">${label('Doküman Bilgileri','Document Information')}</div>
       <div class="doc-info-grid">
         <div>
-          <div class="doc-info-block-h">Firma Bilgileri</div>
-          <div class="doc-info-h">Firma</div><div class="doc-info-v">${escapeHtml(company.name||'—')}</div>
-          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(company.contactName||proposal.preparedBy||'—')}</div>
-          <div class="doc-info-h">Adres</div><div class="doc-info-v">${escapeHtml(company.address||'—')}</div>
-          <div class="doc-info-h">Telefon</div><div class="doc-info-v">${escapeHtml(company.phone||'—')}</div>
-          <div class="doc-info-h">E-posta</div><div class="doc-info-v">${escapeHtml(company.email||'—')}</div>
+          <div class="doc-info-block-h">${label('Firma Bilgileri','Company Information')}</div>
+          <div class="doc-info-h">${label('Firma','Company')}</div><div class="doc-info-v">${escapeHtml(company.name||'—')}</div>
+          <div class="doc-info-h">${label('Yetkili','Contact')}</div><div class="doc-info-v">${escapeHtml(company.contactName||proposal.preparedBy||'—')}</div>
+          <div class="doc-info-h">${label('Adres','Address')}</div><div class="doc-info-v">${escapeHtml(company.address||'—')}</div>
+          <div class="doc-info-h">${label('Telefon','Phone')}</div><div class="doc-info-v">${escapeHtml(company.phone||'—')}</div>
+          <div class="doc-info-h">${label('E-posta','Email')}</div><div class="doc-info-v">${escapeHtml(company.email||'—')}</div>
           <div class="doc-info-h">Web</div><div class="doc-info-v">${escapeHtml(company.website||'—')}</div>
-          <div class="doc-info-h">Vergi Dairesi / No</div><div class="doc-info-v">${escapeHtml(company.taxOffice||'—')} ${company.taxNo?'/ '+escapeHtml(company.taxNo):''}</div>
+          <div class="doc-info-h">${label('Vergi Dairesi / No','Tax Office / ID')}</div><div class="doc-info-v">${escapeHtml(company.taxOffice||'—')} ${company.taxNo?'/ '+escapeHtml(company.taxNo):''}</div>
         </div>
         <div>
-          <div class="doc-info-block-h">Müşteri Bilgileri</div>
-          <div class="doc-info-h">Firma</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div>
-          <div class="doc-info-h">Yetkili</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div>
-          <div class="doc-info-h">Adres</div><div class="doc-info-v">${escapeHtml(proposal.customer.address||'—')}</div>
-          <div class="doc-info-h">Telefon</div><div class="doc-info-v">${escapeHtml(proposal.customer.phone||'—')}</div>
-          <div class="doc-info-h">E-posta</div><div class="doc-info-v">${escapeHtml(proposal.customer.email||'—')}</div>
-          <div class="doc-info-h">Web</div><div class="doc-info-v">${escapeHtml(proposal.customer.website||'[Müşteri Web]')}</div>
-          <div class="doc-info-h">Vergi Dairesi / No</div><div class="doc-info-v">${escapeHtml(proposal.customer.taxOffice||'[Müşteri Vergi Dairesi]')} / ${escapeHtml(proposal.customer.taxNo||'[Müşteri Vergi No]')}</div>
+          <div class="doc-info-block-h">${label('Müşteri Bilgileri','Customer Information')}</div>
+          <div class="doc-info-h">${label('Firma','Company')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.name||'—')}</div>
+          <div class="doc-info-h">${label('Yetkili','Contact')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.contactName||'—')}</div>
+          <div class="doc-info-h">${label('Adres','Address')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.address||'—')}</div>
+          <div class="doc-info-h">${label('Telefon','Phone')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.phone||'—')}</div>
+          <div class="doc-info-h">${label('E-posta','Email')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.email||'—')}</div>
+          <div class="doc-info-h">Web</div><div class="doc-info-v">${escapeHtml(proposal.customer.website||(en?'[Customer Website]':'[Müşteri Web]'))}</div>
+          <div class="doc-info-h">${label('Vergi Dairesi / No','Tax Office / ID')}</div><div class="doc-info-v">${escapeHtml(proposal.customer.taxOffice||label('[Müşteri Vergi Dairesi]','[Customer Tax Office]'))} / ${escapeHtml(proposal.customer.taxNo||label('[Müşteri Vergi No]','[Customer Tax ID]'))}</div>
         </div>
       </div>
 
-      <div class="doc-sub-h">İçindekiler</div>
+      <div class="doc-sub-h">${label('İçindekiler','Contents')}</div>
       <div class="doc-toc">
-        ${PROPOSAL_SECTIONS.map((s,i)=>`<div class="doc-toc-row"><span class="doc-toc-num">${i+1}</span><span>${s.toUpperCase()}</span></div>`).join('')}
+        ${(en?PROPOSAL_SECTIONS_EN:PROPOSAL_SECTIONS).map((s,i)=>`<div class="doc-toc-row"><span class="doc-toc-num">${i+1}</span><span>${s.toUpperCase()}</span></div>`).join('')}
       </div>
 
       <!-- 1. GİRİŞ -->
       <div class="doc-section">
-        <div class="doc-section-h"><span class="n">1</span> Giriş</div>
-        <div class="doc-section-t" style="margin-bottom:10px;font-weight:700;">Sayın ${escapeHtml(proposal.customer.contactName||'[Müşteri Yetkilisi Ad Soyad]')},</div>
-        <div class="doc-section-t">${proseHtml(proposal.intro)}</div>
+        <div class="doc-section-h"><span class="n">1</span> ${label('Giriş','Introduction')}</div>
+        <div class="doc-section-t" style="margin-bottom:10px;font-weight:700;">${label('Sayın','Dear')} ${escapeHtml(proposal.customer.contactName||label('[Müşteri Yetkilisi Ad Soyad]','[Customer Contact Name]'))},</div>
+        <div class="doc-section-t">${proseHtml(docText(proposal.intro))}</div>
       </div>
 
       <!-- 2. PROJE KAPSAMI (her zaman yeni sayfadan başlar) -->
       <div class="doc-section" style="page-break-before:always;break-before:page;margin-top:0;">
-        <div class="doc-section-h"><span class="n">2</span> Proje Kapsamı</div>
-        <div class="doc-section-t">${proseHtml(proposal.scopeIntro)}</div>
+        <div class="doc-section-h"><span class="n">2</span> ${label('Proje Kapsamı','Project Scope')}</div>
+        <div class="doc-section-t">${proseHtml(docText(proposal.scopeIntro))}</div>
         <div class="doc-info-grid" style="border-bottom:none;padding-bottom:0;">
-          <div><div class="doc-info-block-h">Kapsam Dahilinde Olanlar</div><ul class="doc-list">${scopeInHtml}</ul></div>
-          <div><div class="doc-info-block-h">Kapsam Dışında Olanlar</div><ul class="doc-list">${scopeOutHtml}</ul></div>
+          <div><div class="doc-info-block-h">${label('Kapsam Dahilinde Olanlar','Included in Scope')}</div><ul class="doc-list">${scopeInHtml}</ul></div>
+          <div><div class="doc-info-block-h">${label('Kapsam Dışında Olanlar','Excluded from Scope')}</div><ul class="doc-list">${scopeOutHtml}</ul></div>
         </div>
       </div>
 
       <!-- 3. TEKNİK ÇÖZÜM -->
       <div class="doc-section">
-        <div class="doc-section-h"><span class="n">3</span> Teknik Çözüm</div>
-        <div class="doc-section-t">${proseHtml(proposal.techArchitecture)}</div>
-        <div class="doc-info-block-h" style="margin-top:16px;">Kullanılacak Ekipmanlar</div>
+        <div class="doc-section-h"><span class="n">3</span> ${label('Teknik Çözüm','Technical Solution')}</div>
+        <div class="doc-section-t">${proseHtml(docText(proposal.techArchitecture))}</div>
+        <div class="doc-info-block-h" style="margin-top:16px;">${label('Kullanılacak Ekipmanlar','Equipment to Be Used')}</div>
         <ul class="doc-list">${equipHtml}</ul>
-        <div class="doc-info-block-h" style="margin-top:16px;">Yazılım ve Devreye Alma</div>
-        <div class="doc-section-t">${proseHtml(proposal.techSoftware)}</div>
+        <div class="doc-info-block-h" style="margin-top:16px;">${label('Yazılım ve Devreye Alma','Software and Commissioning')}</div>
+        <div class="doc-section-t">${proseHtml(docText(proposal.techSoftware))}</div>
       </div>
 
       <!-- 4. TESLİMAT VE PROJE TAKVİMİ -->
       <div class="doc-section" style="page-break-inside:avoid;">
-        <div class="doc-section-h"><span class="n">4</span> Teslimat ve Proje Takvimi</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(proposal.timelineNote)}</div>
+        <div class="doc-section-h"><span class="n">4</span> ${label('Teslimat ve Proje Takvimi','Delivery & Project Schedule')}</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(docText(proposal.timelineNote))}</div>
         <table class="doc-simple-table" style="table-layout:fixed;">
           <colgroup><col style="width:9%"><col style="width:67%"><col style="width:24%"></colgroup>
-          <thead><tr><th>Aşama</th><th>Faaliyet</th><th class="num">Tahmini Süre</th></tr></thead>
+          <thead><tr><th>${label('Aşama','Stage')}</th><th>${label('Faaliyet','Activity')}</th><th class="num">${label('Tahmini Süre','Estimated Duration')}</th></tr></thead>
           <tbody>${timelineRows || '<tr><td colspan="3">—</td></tr>'}</tbody>
         </table>
       </div>
 
       <!-- 5. FİYATLANDIRMA -->
       <div class="doc-section" style="page-break-inside:avoid;">
-        <div class="doc-section-h"><span class="n">5</span> Fiyatlandırma</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(DEFAULT_PROPOSAL_PRICING_NOTE)}</div>
+        <div class="doc-section-h"><span class="n">5</span> ${label('Fiyatlandırma','Pricing')}</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(docText(DEFAULT_PROPOSAL_PRICING_NOTE))}</div>
         <table class="doc-items">
           <colgroup><col style="width:7%"><col style="width:45%"><col style="width:10%"><col style="width:19%"><col style="width:19%"></colgroup>
-          <thead><tr><th>No</th><th>Açıklama</th><th class="center">Miktar</th><th class="num">Birim Fiyat</th><th class="num">Toplam</th></tr></thead>
+          <thead><tr><th>No</th><th>${label('Açıklama','Description')}</th><th class="center">${label('Miktar','Qty')}</th><th class="num">${label('Birim Fiyat','Unit Price')}</th><th class="num">${label('Toplam','Total')}</th></tr></thead>
           <tbody>${itemsRows}</tbody>
         </table>
         <div class="doc-totals">
-          <div class="r"><span>Ara Toplam</span><span>${proposal.currency} ${fmt(t.sub)}</span></div>
-          <div class="r"><span>KDV${proposal.vatEnabled?' (%'+proposal.vatRate+')':''}</span><span>${proposal.vatEnabled?proposal.currency+' '+fmt(t.vat):'Hariçtir'}</span></div>
-          <div class="r grand"><span>Genel Toplam</span><span>${proposal.currency} ${fmt(t.grand)}</span></div>
+          <div class="r"><span>${label('Ara Toplam','Subtotal')}</span><span>${moneyText(t.sub)}</span></div>
+          <div class="r"><span>${proposalL(`KDV${proposal.vatEnabled?' (%'+proposal.vatRate+')':''}`,`VAT${proposal.vatEnabled?' ('+proposal.vatRate+'%)':''}`)}</span><span>${proposal.vatEnabled?moneyText(t.vat):label('Hariçtir','Excluded')}</span></div>
+          <div class="r grand"><span>${label('Genel Toplam','Grand Total')}</span><span>${moneyText(t.grand)}</span></div>
         </div>
-        ${proposal.excludedNote ? `<div class="doc-note">Fiyatlara dahil olmayanlar: ${escapeHtml(proposal.excludedNote)}</div>` : ''}
+        ${proposal.excludedNote ? `<div class="doc-note">${label('Fiyatlara dahil olmayanlar:','Not included in the price:')} ${escapeHtml(docText(proposal.excludedNote))}</div>` : ''}
       </div>
 
       <!-- 6. OPSİYONEL KALEMLER -->
       ${(proposal.optionalItems||[]).some(it=>it.desc) ? `
       <div class="doc-section" style="page-break-inside:avoid;">
-        <div class="doc-section-h"><span class="n">6</span> Opsiyonel Kalemler</div>
-        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(DEFAULT_PROPOSAL_OPTIONAL_NOTE)}</div>
+        <div class="doc-section-h"><span class="n">6</span> ${label('Opsiyonel Kalemler','Optional Items')}</div>
+        <div class="doc-section-t" style="margin-bottom:6px;">${proseHtml(docText(DEFAULT_PROPOSAL_OPTIONAL_NOTE))}</div>
         <table class="doc-simple-table">
-          <thead><tr><th>Opsiyonel Kalem</th><th class="center">Süre</th><th class="num">Ek Bedel</th></tr></thead>
+          <thead><tr><th>${label('Opsiyonel Kalem','Optional Item')}</th><th class="center">${label('Süre','Duration')}</th><th class="num">${label('Ek Bedel','Additional Price')}</th></tr></thead>
           <tbody>${optRows}</tbody>
         </table>
       </div>` : ''}
 
       <!-- 7. GENEL ŞARTLAR -->
       <div class="doc-section">
-        <div class="doc-section-h"><span class="n">7</span> Genel Şartlar</div>
+        <div class="doc-section-h"><span class="n">7</span> ${label('Genel Şartlar','General Terms')}</div>
         <ul class="doc-list">
-          <li><strong>Ödeme Koşulları:</strong> ${escapeHtml(proposal.terms.payment)}</li>
-          <li><strong>Teslim Süresi:</strong> ${escapeHtml(proposal.terms.delivery)}</li>
-          <li><strong>Geçerlilik Süresi:</strong> ${validityText}</li>
-          <li><strong>Garanti:</strong> ${warrantyText}</li>
-          <li><strong>Fiyat ve Kur:</strong> Fiyatlar ${escapeHtml(proposal.terms.priceKur)}</li>
-          ${proposal.terms.other ? `<li><strong>Diğer:</strong> ${escapeHtml(proposal.terms.other)}</li>` : ''}
+          <li><strong>${label('Ödeme Koşulları','Payment Terms')}:</strong> ${escapeHtml(docText(proposal.terms.payment))}</li>
+          <li><strong>${label('Teslim Süresi','Lead Time')}:</strong> ${escapeHtml(docText(proposal.terms.delivery))}</li>
+          <li><strong>${label('Geçerlilik Süresi','Validity')}:</strong> ${validityText}</li>
+          <li><strong>${label('Garanti','Warranty')}:</strong> ${warrantyText}</li>
+          <li><strong>${label('Fiyat ve Kur','Price and Currency')}:</strong> ${label('Fiyatlar','Prices')} ${escapeHtml(docText(proposal.terms.priceKur))}</li>
+          ${proposal.terms.other ? `<li><strong>${label('Diğer','Other')}:</strong> ${escapeHtml(proposal.terms.other)}</li>` : ''}
         </ul>
       </div>
 
       <!-- 8. KAPANIŞ -->
       <div class="doc-section" style="page-break-inside:avoid;">
-        <div class="doc-section-h"><span class="n">8</span> Kapanış</div>
-        <div class="doc-section-t">${proseHtml(proposal.closing)}</div>
-        <div style="margin-top:14px;font-size:12.5px;">Saygılarımızla,</div>
+        <div class="doc-section-h"><span class="n">8</span> ${label('Kapanış','Closing')}</div>
+        <div class="doc-section-t">${proseHtml(docText(proposal.closing))}</div>
+        <div style="margin-top:14px;font-size:12.5px;">${label('Saygılarımızla,','Kind regards,')}</div>
         <div style="margin-top:2px;font-weight:700;font-size:13px;">${escapeHtml(company.name||'Godo Endüstriyel Otomasyon')}</div>
       </div>
 
@@ -2211,14 +2259,14 @@ function renderProposalPreview(){
         <div>
           <div class="doc-sig-h">${escapeHtml((company.name||'Godo Endüstriyel Otomasyon').toUpperCase())}</div>
           <div class="doc-sig-line"></div>
-          <div class="doc-sig-sub">Ad Soyad / Unvan</div>
-          <div class="doc-sig-sub">Tarih</div>
+          <div class="doc-sig-sub">${label('Ad Soyad / Unvan','Name / Title')}</div>
+          <div class="doc-sig-sub">${label('Tarih','Date')}</div>
         </div>
         <div>
-          <div class="doc-sig-h">MÜŞTERİ ONAYI</div>
+          <div class="doc-sig-h">${label('MÜŞTERİ ONAYI','CUSTOMER APPROVAL')}</div>
           <div class="doc-sig-line"></div>
-          <div class="doc-sig-sub">Ad Soyad / Unvan</div>
-          <div class="doc-sig-sub">Tarih</div>
+          <div class="doc-sig-sub">${label('Ad Soyad / Unvan','Name / Title')}</div>
+          <div class="doc-sig-sub">${label('Tarih','Date')}</div>
         </div>
       </div>
 
@@ -6375,6 +6423,7 @@ function attachHandlers(){
     document.getElementById('p-date').onchange = e=>{ proposal.date=e.target.value; scheduleProposalSave(); };
     document.getElementById('p-validity').oninput = e=>{ proposal.validityDays=e.target.value; scheduleProposalSave(); };
     document.getElementById('p-currency').onchange = e=>{ proposal.currency=e.target.value; scheduleProposalSave(); };
+    document.getElementById('p-lang').onchange = e=>{ proposal.lang=e.target.value; scheduleProposalSave(); render(); };
     document.getElementById('p-status').onchange = e=>{ proposal.status=e.target.value; scheduleProposalSave(); render(); };
     document.getElementById('p-btnManageCustomers').onclick = ()=>{ activeTab='customers'; render(); };
     attachCustomerPicker('p-custSearch', ()=>proposal.customer.customerId, id=>{
@@ -6464,6 +6513,7 @@ function attachHandlers(){
 
   if(activeTab==='pPreview'){
     document.getElementById('p-btnBackEdit').onclick = ()=>{ activeTab='pInfo'; render(); };
+    document.getElementById('p-lang-prev').onchange = e=>{ proposal.lang=e.target.value; scheduleProposalSave(); render(); };
     document.getElementById('p-btnPrint').onclick = ()=>{ persistProposal(); window.print(); };
     document.getElementById('p-btnMailDraft').onclick = ()=>{
       const to = proposal.customer.email || '';
