@@ -1,3 +1,6 @@
+[functions.edocument-gateway]
+verify_jwt = true
+
 [functions.gmail-check]
 verify_jwt = false
 

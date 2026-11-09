@@ -2764,7 +2764,7 @@ let shipments = [];
 let shipPrintId = null;
 let orderSearch = '';
 let orderFilter = '';
-const PAY_STATE_LABEL = { noinvoice:'Fatura bekliyor', waiting:'Ödeme bekleniyor', partial:'Kısmi ödeme', paid:'Ödendi', overdue:'Vadesi geçti' };
+const PAY_STATE_LABEL = { noinvoice:'Fatura bekliyor', waiting:'Ödeme bekleniyor', partial:'Kısmi ödeme', paid:'Ödendi', overdue:'Vadesi geçti', overpaid:'Fazla tahsilat' };
 
 async function saveShipments(){ await stSet('godo:shipments', JSON.stringify(shipments)); }
 function todayStr(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -2785,6 +2785,14 @@ function shipNet(s){ return (s.lines||[]).reduce((t,l)=>t+(parseFloat(l.qty)||0)
 function shipIsInvoiced(s){ return !!(s.invoiceNo || s.invoiceDate); }
 function shipTotal(s){ const v = shipIsInvoiced(s) ? (parseFloat(s.vatRate)||0) : 0; return shipNet(s) * (1 + v/100); }
 function shipPaid(s){ return (s.payments||[]).reduce((t,p)=>t+(parseFloat(p.amount)||0),0); }
+function invoiceNumberKey(value){ return String(value||'').trim().toLocaleUpperCase('tr-TR').replace(/[^A-Z0-9]/g,''); }
+function salesInvoiceNumberConflicts(){
+  const map = new Map();
+  shipments.filter(s=>shipIsInvoiced(s)&&invoiceNumberKey(s.invoiceNo)).forEach(s=>{
+    const key = invoiceNumberKey(s.invoiceNo); if(!map.has(key)) map.set(key,[]); map.get(key).push(s);
+  });
+  return [...map.values()].filter(rows=>rows.length>1);
+}
 function shipDueDate(s){
   if(!shipIsInvoiced(s)) return '';
   if(s.dueDateOverride) return s.dueDateOverride;
@@ -2795,6 +2803,7 @@ function shipDueDate(s){
 function shipPayState(s){
   if(!shipIsInvoiced(s)) return 'noinvoice';
   const total = shipTotal(s), paid = shipPaid(s);
+  if(paid > total + 0.01) return 'overpaid';
   if(total > 0 && paid >= total - 0.01) return 'paid';
   const due = shipDueDate(s);
   if(due && due < todayStr()) return 'overdue';
@@ -3077,7 +3086,13 @@ function openShipmentInvoiceModal(id){
     const no = ov.querySelector('#iv-no').value.trim(), date = ov.querySelector('#iv-date').value;
     if(!no){ alert('Fatura numarası gerekli.'); return; }
     if(!date){ alert('Fatura tarihi gerekli.'); return; }
-    s.invoiceNo = no; s.invoiceDate = date; s.vatRate = String(parseFloat(ov.querySelector('#iv-vat').value)||0);
+    const vat = Number(ov.querySelector('#iv-vat').value);
+    if(!Number.isFinite(vat) || vat < 0 || vat > 100){ alert('KDV oranı 0 ile 100 arasında olmalı.'); return; }
+    const invoiceKey = invoiceNumberKey(no);
+    if(shipments.some(other=>other.id!==s.id && shipIsInvoiced(other) && invoiceNumberKey(other.invoiceNo)===invoiceKey)){
+      alert('Bu satış fatura numarası başka bir sevkiyatta kayıtlı. Aynı numarayı yeniden kullanma; gerekiyorsa önce hangi sevkiyata ait olduğunu kontrol et.'); return;
+    }
+    s.invoiceNo = no; s.invoiceDate = date; s.vatRate = String(vat);
     await afterShipmentChange(s.orderId); ov.remove(); render();
   };
   const rm = ov.querySelector('#iv-remove');
@@ -3098,14 +3113,15 @@ function openShipmentPaymentsModal(id){
     ov.firstElementChild.innerHTML = `
       <h2>Tahsilat — ${escapeHtml(s.invoiceNo||s.irsaliyeNo||'')}</h2>
       <p class="hint">${escapeHtml(s.orderNo)} · ${escapeHtml(s.customer.name||'')} · Fatura toplamı <b class="mono">${cur} ${fmt(total)}</b> · Tahsil edilen <b class="mono">${cur} ${fmt(paid)}</b> · Kalan <b class="mono">${cur} ${fmt(rest)}</b> · <b>${PAY_STATE_LABEL[st]}</b> ${dueBadgeHtml(shipDueDate(s), st==='paid')}</p>
-      ${(s.payments||[]).length ? `<table class="items-table"><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Not</th><th></th></tr></thead><tbody>
-        ${s.payments.map(p=>`<tr><td class="mono" style="font-size:12px;">${formatDate(p.date)}</td><td class="num mono">${cur} ${fmt(parseFloat(p.amount)||0)}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml(p.note||'')}</td><td><span class="row-remove" data-del-pay="${p.id}">✕</span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">Henüz tahsilat kaydı yok.</p>'}
+      ${(s.payments||[]).length ? `<table class="items-table"><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Yöntem</th><th>Referans / Not</th><th></th></tr></thead><tbody>
+        ${s.payments.map(p=>`<tr><td class="mono" style="font-size:12px;">${formatDate(p.date)}</td><td class="num mono">${cur} ${fmt(parseFloat(p.amount)||0)}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml(p.method||'—')}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml([p.reference,p.note].filter(Boolean).join(' · ')||'—')}</td><td><span class="row-remove" data-del-pay="${p.id}">✕</span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">Henüz tahsilat kaydı yok.</p>'}
       ${rest > 0.005 ? `<div class="subhead" style="margin-top:16px;">Tahsilat Ekle</div>
       <div class="grid3">
         <div class="field mono"><label>Tutar (${cur})</label><input id="py-amt" type="number" step="0.01" min="0" value="${Math.round(rest*100)/100}"></div>
         <div class="field"><label>Tarih</label><input id="py-date" type="date" value="${todayStr()}"></div>
-        <div class="field"><label>Not</label><input id="py-note" placeholder="havale, çek..."></div>
+        <div class="field"><label>Yöntem</label><select id="py-method"><option value="">Seçiniz</option><option>Havale / EFT</option><option>Kredi kartı</option><option>Çek</option><option>Nakit</option><option>Diğer</option></select></div>
       </div>` : ''}
+      ${rest > 0.005 ? `<div class="grid2"><div class="field"><label>Referans / Dekont No</label><input id="py-reference" maxlength="120"></div><div class="field"><label>Not</label><input id="py-note" maxlength="300"></div></div>` : ''}
       <div class="actions-row" style="margin-top:10px;">
         ${rest > 0.005 ? '<button class="btn btn-primary" id="py-add">Tahsilatı Kaydet</button>' : ''}
         <button class="btn btn-ghost" id="py-close">Kapat</button>
@@ -3113,9 +3129,12 @@ function openShipmentPaymentsModal(id){
     ov.querySelector('#py-close').onclick = ()=>{ ov.remove(); render(); };
     const add = ov.querySelector('#py-add');
     if(add) add.onclick = async ()=>{
-      const amt = parseFloat(ov.querySelector('#py-amt').value);
+      const amt = round2(Number(ov.querySelector('#py-amt').value)), date = ov.querySelector('#py-date').value;
+      const currentRest = Math.max(0, shipTotal(s)-shipPaid(s));
       if(!(amt > 0)){ alert('Geçerli bir tutar gir.'); return; }
-      s.payments = (s.payments||[]).concat([{ id:crypto.randomUUID(), date:ov.querySelector('#py-date').value||todayStr(), amount:Math.round(amt*100)/100, note:ov.querySelector('#py-note').value.trim() }]);
+      if(!date){ alert('Tahsilat tarihi gerekli.'); return; }
+      if(amt > currentRest + 0.004){ alert('Tahsilat kalan tutarı aşamaz ('+cur+' '+fmt(currentRest)+').'); return; }
+      s.payments = (s.payments||[]).concat([{ id:crypto.randomUUID(), date, amount:amt, method:ov.querySelector('#py-method').value, reference:ov.querySelector('#py-reference').value.trim(), note:ov.querySelector('#py-note').value.trim() }]);
       await afterShipmentChange(s.orderId); draw();
     };
     ov.querySelectorAll('[data-del-pay]').forEach(b=>{
@@ -3604,6 +3623,7 @@ function piDueDate(pi){
 }
 function piPayState(pi){
   const total = piTotal(pi), paid = piPaid(pi);
+  if(paid > total + 0.01) return 'overpaid';
   if(total > 0 && paid >= total - 0.01) return 'paid';
   const due = piDueDate(pi);
   if(due && due < todayStr()) return 'overdue';
@@ -3619,7 +3639,7 @@ function openPurchaseInvoiceModal(poId, invId){
     const ordered = parseFloat(it.qty)||0, rec = parseFloat(it.receivedQty)||0, done = invoicedBy[it.id]||0;
     const old = ex && (ex.lines||[]).find(l=>l.poItemId===it.id);
     const def = ex ? (old ? parseFloat(old.qty)||0 : 0) : Math.max(0, (rec > 0 ? rec : ordered) - done);
-    return { it, ordered, rec, done, def, cost: old ? old.unitCost : it.unitCost };
+    return { it, ordered, rec, done, def, limit:Math.max(0,(rec>0?rec:ordered)-done), cost: old ? old.unitCost : it.unitCost };
   });
   const sup = suppliers.find(s=>s.id===po.supplierId);
   const ov = openSimpleModal(`
@@ -3634,7 +3654,7 @@ function openPurchaseInvoiceModal(poId, invId){
     <table class="items-table"><thead><tr><th>Ürün</th><th class="num">SAS</th><th class="num">Gelen</th><th class="num">Önceki faturalı</th><th class="num" style="width:90px;">Bu faturada</th><th class="num" style="width:110px;">Birim fiyat (${escapeHtml(po.currency)})</th></tr></thead><tbody>
       ${rows.map((r,i)=>`<tr data-i="${i}"><td><div class="mono" style="font-size:12px;">${escapeHtml(r.it.code||'')}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(r.it.desc||'')}</div></td>
         <td class="num mono">${fmtQty(r.ordered)}</td><td class="num mono">${fmtQty(r.rec)}</td><td class="num mono">${fmtQty(r.done)}</td>
-        <td class="num"><input class="pi-qty mono" type="number" min="0" step="1" value="${r.def}" style="width:80px;text-align:right;font-size:12px;"></td>
+        <td class="num"><input class="pi-qty mono" type="number" min="0" max="${r.limit}" step="1" value="${r.def}" style="width:80px;text-align:right;font-size:12px;"></td>
         <td class="num"><input class="pi-cost mono" type="number" min="0" step="0.01" value="${escapeAttr(String(r.cost===undefined?'':r.cost))}" style="width:100px;text-align:right;font-size:12px;"></td></tr>`).join('')}
     </tbody></table>
     <div id="pi-sum" style="margin-top:10px;font-size:13px;background:var(--paper-2);padding:10px 14px;border-radius:4px;"></div>
@@ -3654,14 +3674,22 @@ function openPurchaseInvoiceModal(poId, invId){
     const no = ov.querySelector('#pi-no').value.trim(), date = ov.querySelector('#pi-date').value;
     if(!no){ alert('Fatura numarası gerekli.'); return; }
     if(!date){ alert('Fatura tarihi gerekli.'); return; }
-    if(purchaseInvoices.some(x=>x.id!==invId && x.supplierId===po.supplierId && x.invoiceNo===no)){ alert('Bu tedarikçiden aynı numaralı fatura zaten kayıtlı.'); return; }
+    const vat = Number(ov.querySelector('#pi-vat').value);
+    if(!Number.isFinite(vat) || vat < 0 || vat > 100){ alert('KDV oranı 0 ile 100 arasında olmalı.'); return; }
+    const invoiceKey = invoiceNumberKey(no);
+    if(purchaseInvoices.some(x=>x.id!==invId && x.supplierId===po.supplierId && invoiceNumberKey(x.invoiceNo)===invoiceKey)){ alert('Bu tedarikçiden aynı numaralı fatura zaten kayıtlı.'); return; }
     const lines = [];
-    ov.querySelectorAll('tbody tr').forEach(tr=>{
+    for(const tr of ov.querySelectorAll('tbody tr')){
       const r = rows[+tr.dataset.i], qty = parseFloat(tr.querySelector('.pi-qty').value);
-      if(qty > 0) lines.push({ poItemId:r.it.id, productId:r.it.productId||null, code:r.it.code||'', desc:r.it.desc||'', qty, unitCost: parseFloat(tr.querySelector('.pi-cost').value)||0 });
-    });
+      const unitCost = Number(tr.querySelector('.pi-cost').value);
+      if(!Number.isFinite(qty) || qty < 0 || qty > r.limit + 1e-9){ alert((r.it.code||'Kalem')+' için fatura miktarı kalan izinli miktarı ('+fmtQty(r.limit)+') aşamaz.'); return; }
+      if(!Number.isFinite(unitCost) || unitCost < 0){ alert((r.it.code||'Kalem')+' için geçerli birim fiyat gir.'); return; }
+      if(qty > 0) lines.push({ poItemId:r.it.id, productId:r.it.productId||null, code:r.it.code||'', desc:r.it.desc||'', qty, unitCost });
+    }
     if(!lines.length){ alert('Faturada en az bir kalem olmalı.'); return; }
-    const data = { poId:po.id, poNo:po.poNo, supplierId:po.supplierId, invoiceNo:no, date, currency:po.currency||'€', vatRate:String(parseFloat(ov.querySelector('#pi-vat').value)||0), termDays:ov.querySelector('#pi-term').value, lines };
+    const termDaysRaw = ov.querySelector('#pi-term').value.trim();
+    if(termDaysRaw && (!Number.isInteger(Number(termDaysRaw)) || Number(termDaysRaw)<0)){ alert('Ödeme vadesi 0 veya daha büyük tam gün olmalı.'); return; }
+    const data = { poId:po.id, poNo:po.poNo, supplierId:po.supplierId, invoiceNo:no, date, currency:po.currency||'€', vatRate:String(vat), termDays:termDaysRaw, lines };
     if(ex) Object.assign(ex, data); else purchaseInvoices.push(Object.assign({ id:crypto.randomUUID(), dueDateOverride:'', payments:[] }, data));
     await savePurchaseInvoices(); ov.remove(); render();
   };
@@ -3680,14 +3708,15 @@ function openPurchasePaymentsModal(id){
     ov.firstElementChild.innerHTML = `
       <h2>Ödeme — ${escapeHtml(pi.invoiceNo)}</h2>
       <p class="hint">${escapeHtml(supplierName(pi.supplierId))} · ${escapeHtml(pi.poNo||'')} · Fatura toplamı <b class="mono">${cur} ${fmt(total)}</b> · Ödenen <b class="mono">${cur} ${fmt(paid)}</b> · Kalan <b class="mono">${cur} ${fmt(rest)}</b> · <b>${PAY_STATE_LABEL[st].replace('Ödeme bekleniyor','Ödeme yapılacak').replace('Ödendi','Ödendi')}</b> ${dueBadgeHtml(piDueDate(pi), st==='paid')}</p>
-      ${(pi.payments||[]).length ? `<table class="items-table"><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Not</th><th></th></tr></thead><tbody>
-        ${pi.payments.map(p=>`<tr><td class="mono" style="font-size:12px;">${formatDate(p.date)}</td><td class="num mono">${cur} ${fmt(parseFloat(p.amount)||0)}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml(p.note||'')}</td><td><span class="row-remove" data-del-pay="${p.id}">✕</span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">Henüz ödeme kaydı yok.</p>'}
+      ${(pi.payments||[]).length ? `<table class="items-table"><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Yöntem</th><th>Referans / Not</th><th></th></tr></thead><tbody>
+        ${pi.payments.map(p=>`<tr><td class="mono" style="font-size:12px;">${formatDate(p.date)}</td><td class="num mono">${cur} ${fmt(parseFloat(p.amount)||0)}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml(p.method||'—')}</td><td style="font-size:12px;color:var(--gray-500);">${escapeHtml([p.reference,p.note].filter(Boolean).join(' · ')||'—')}</td><td><span class="row-remove" data-del-pay="${p.id}">✕</span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">Henüz ödeme kaydı yok.</p>'}
       ${rest > 0.005 ? `<div class="subhead" style="margin-top:16px;">Ödeme Ekle</div>
       <div class="grid3">
         <div class="field mono"><label>Tutar (${cur})</label><input id="pp-amt" type="number" step="0.01" min="0" value="${round2(rest)}"></div>
         <div class="field"><label>Tarih</label><input id="pp-date" type="date" value="${todayStr()}"></div>
-        <div class="field"><label>Not</label><input id="pp-note" placeholder="havale, çek..."></div>
+        <div class="field"><label>Yöntem</label><select id="pp-method"><option value="">Seçiniz</option><option>Havale / EFT</option><option>Kredi kartı</option><option>Çek</option><option>Nakit</option><option>Diğer</option></select></div>
       </div>` : ''}
+      ${rest > 0.005 ? `<div class="grid2"><div class="field"><label>Referans / Dekont No</label><input id="pp-reference" maxlength="120"></div><div class="field"><label>Not</label><input id="pp-note" maxlength="300"></div></div>` : ''}
       <div class="actions-row" style="margin-top:10px;">
         ${rest > 0.005 ? '<button class="btn btn-primary" id="pp-add">Ödemeyi Kaydet</button>' : ''}
         <button class="btn btn-ghost" id="pp-close">Kapat</button>
@@ -3695,9 +3724,12 @@ function openPurchasePaymentsModal(id){
     ov.querySelector('#pp-close').onclick = ()=>{ ov.remove(); render(); };
     const add = ov.querySelector('#pp-add');
     if(add) add.onclick = async ()=>{
-      const amt = parseFloat(ov.querySelector('#pp-amt').value);
+      const amt = round2(Number(ov.querySelector('#pp-amt').value)), date = ov.querySelector('#pp-date').value;
+      const currentRest = Math.max(0, piTotal(pi)-piPaid(pi));
       if(!(amt > 0)){ alert('Geçerli bir tutar gir.'); return; }
-      pi.payments = (pi.payments||[]).concat([{ id:crypto.randomUUID(), date:ov.querySelector('#pp-date').value||todayStr(), amount:round2(amt), note:ov.querySelector('#pp-note').value.trim() }]);
+      if(!date){ alert('Ödeme tarihi gerekli.'); return; }
+      if(amt > currentRest + 0.004){ alert('Ödeme kalan tutarı aşamaz ('+cur+' '+fmt(currentRest)+').'); return; }
+      pi.payments = (pi.payments||[]).concat([{ id:crypto.randomUUID(), date, amount:amt, method:ov.querySelector('#pp-method').value, reference:ov.querySelector('#pp-reference').value.trim(), note:ov.querySelector('#pp-note').value.trim() }]);
       await savePurchaseInvoices(); draw();
     };
     ov.querySelectorAll('[data-del-pay]').forEach(b=>{ b.onclick = async ()=>{ if(!confirm('Bu ödeme kaydı silinsin mi?')) return; pi.payments = pi.payments.filter(p=>p.id!==b.dataset.delPay); await savePurchaseInvoices(); draw(); }; });
@@ -3788,12 +3820,13 @@ function renderFinancePage(){
   const kind = financeView==='payable' ? 'purchase' : 'sale';
   const items = kind==='sale' ? saleItems() : purchaseItems();
   const groups = groupParties(items);
+  const invoiceConflicts = kind==='sale' ? salesInvoiceNumberConflicts() : [];
   const tot = { remaining:0, overdue:0, soon:0, later:0, none:0, missing:0 };
   groups.forEach(g=>{ tot.remaining += g.remainingTL; ['overdue','soon','later','none'].forEach(k=>tot[k]+=g.buckets[k]); tot.missing += g.missing; });
   const word = kind==='sale' ? { open:'Alacak', paid:'Tahsil Edilen', pay:'Toplu Tahsilat', party:'Müşteri', doc:'Satış Faturası' } : { open:'Borç', paid:'Ödenen', pay:'Toplu Ödeme', party:'Tedarikçi', doc:'Alış Faturası' };
   const cell = n=>n > 0.005 ? fmtTL(n) : '<span style="color:var(--gray-300);">—</span>';
   const curSub = (g,field)=>Object.entries(g.byCur).filter(([c,v])=>c!=='₺' && v[field] > 0.005).map(([c,v])=>`<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${c} ${fmt(v[field])}</div>`).join('');
-  const stLabel = { waiting:kind==='sale'?'Ödeme bekleniyor':'Ödeme yapılacak', partial:'Kısmi', overdue:'Vadesi geçti', paid:'Ödendi' };
+  const stLabel = { waiting:kind==='sale'?'Ödeme bekleniyor':'Ödeme yapılacak', partial:'Kısmi', overdue:'Vadesi geçti', paid:'Ödendi', overpaid:'Fazla ödeme/tahsilat — incele' };
   const calendar = kind==='purchase' ? items.filter(i=>i.remaining>0.005 && (!i.due || i.due <= addDaysStr(todayStr(), 60))).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999')) : [];
   return `
   <div class="panel" style="max-width:1160px;">
@@ -3806,6 +3839,7 @@ function renderFinancePage(){
       <div class="kpi-card"><div class="kpi-label">30 Gün İçinde</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.soon)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Sonrası${tot.none>0.005?' · vade tanımsız '+fmtTL(tot.none):''}</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.later)}</div></div>
     </div>
+    ${invoiceConflicts.length ? `<div class="ready-note" style="border-left-color:var(--danger);margin-bottom:12px;"><b>Mükerrer satış fatura numarası:</b> ${invoiceConflicts.map(rows=>escapeHtml(rows[0].invoiceNo)+' ('+rows.length+' sevkiyat kaydı)').join(' · ')}. Belgeler ayrı ayrı toplamlara giriyor; fatura asıllarıyla eşleştirip kayıtları düzeltmeden alacak, KDV ve muhasebe toplamlarını kesin kabul etme.</div>` : ''}
     ${tot.missing ? `<p class="hint" style="color:var(--danger);">${tot.missing} belgede belge tarihi için TCMB kuru kayıtlı değil; bu belgeler TL toplamlara girmiyor. Kurlar TCMB'den otomatik alınır; alınamadıysa Muhasebe sayfasındaki "Kurlar" bölümünden elle ekle.</p>` : ''}
     ${groups.length ? `<table class="items-table"><thead><tr><th>${word.party}</th><th class="num">Fatura</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th class="num">Vadesi geçmiş</th><th class="num">30 gün içinde</th><th class="num">Sonrası</th><th></th></tr></thead><tbody>
       ${groups.map(g=>{
@@ -3848,7 +3882,7 @@ function openBulkPaymentModal(kind, partyKey){
       <div class="field mono"><label>Tutar</label><input id="bp-amt" type="number" step="0.01" min="0"></div>
       <div class="field"><label>Tarih</label><input id="bp-date" type="date" value="${todayStr()}"></div>
     </div>
-    <div class="field"><label>Not</label><input id="bp-note" placeholder="havale, çek..."></div>
+    <div class="grid3"><div class="field"><label>Yöntem</label><select id="bp-method"><option value="">Seçiniz</option><option>Havale / EFT</option><option>Kredi kartı</option><option>Çek</option><option>Nakit</option><option>Diğer</option></select></div><div class="field"><label>Referans / Dekont No</label><input id="bp-reference" maxlength="120"></div><div class="field"><label>Not</label><input id="bp-note" maxlength="300"></div></div>
     <div id="bp-preview"></div>
     <div class="actions-row" style="margin-top:12px;"><button class="btn btn-primary" id="bp-save" disabled>Dağıt ve Kaydet</button><button class="btn btn-ghost" id="bp-cancel">Vazgeç</button></div>`, 720);
   const upd = ()=>{
@@ -3867,7 +3901,8 @@ function openBulkPaymentModal(kind, partyKey){
     const { allocations, left } = allocatePayment(all.filter(i=>i.cur===cur), amt);
     if(left > 0.004 || !allocations.length) return;
     const date = ov.querySelector('#bp-date').value || todayStr(), note = (ov.querySelector('#bp-note').value.trim()+' (toplu)').trim();
-    allocations.forEach(a=>{ a.item.obj.payments = (a.item.obj.payments||[]).concat([{ id:crypto.randomUUID(), date, amount:a.amount, note }]); });
+    const method = ov.querySelector('#bp-method').value, reference = ov.querySelector('#bp-reference').value.trim();
+    allocations.forEach(a=>{ a.item.obj.payments = (a.item.obj.payments||[]).concat([{ id:crypto.randomUUID(), date, amount:a.amount, method, reference, note }]); });
     if(isSale){ await saveShipments(); for(const oid of new Set(allocations.map(a=>a.item.obj.orderId))) await syncOrderPipelineStatus(oid); }
     else await savePurchaseInvoices();
     ov.remove(); render();
@@ -3919,7 +3954,8 @@ function buildJournal(from, to){
       ? [ ln('bankalar', payTL, 0), ln('alicilar', 0, bookedTL) ].concat(diff > 0 ? [ln('kurGelir', 0, diff)] : diff < 0 ? [ln('kurGider', -diff, 0)] : [])
       : [ ln('saticilar', bookedTL, 0), ln('bankalar', 0, payTL) ].concat(diff > 0 ? [ln('kurGider', diff, 0)] : diff < 0 ? [ln('kurGelir', 0, -diff)] : []);
     lines.sort((x,y)=>(y.debit>0) - (x.debit>0));      // önce borç satırları
-    entries.push({ date:p.date, no:(kind==='sale'?'TH-':'OD-')+no+'-'+(i+1), source:no, desc:party+(kind==='sale'?' — tahsilat':' — ödeme')+(p.note?' ('+p.note+')':'')+fxNote(rp.date, p.date), kind:kind==='sale'?'Tahsilat':'Ödeme', lines });
+    const paymentEvidence = [p.method, p.reference, p.note].filter(Boolean).join(' · ');
+    entries.push({ date:p.date, no:(kind==='sale'?'TH-':'OD-')+no+'-'+(i+1), source:no, desc:party+(kind==='sale'?' — tahsilat':' — ödeme')+(paymentEvidence?' ('+paymentEvidence+')':'')+fxNote(rp.date, p.date), kind:kind==='sale'?'Tahsilat':'Ödeme', lines });
     stmt.push({ partyType:kind==='sale'?'Müşteri':'Tedarikçi', party, date:p.date, docType:kind==='sale'?'Tahsilat':'Ödeme', docNo:no, cur, fx:amt, rate:rp.rate, debit:kind==='sale'?0:bookedTL, credit:kind==='sale'?bookedTL:0 });
   };
   shipments.filter(shipIsInvoiced).forEach(s=>{
@@ -4036,6 +4072,7 @@ function renderAccountingPage(){
       <div class="kpi-card"><div class="kpi-label">Toplam Alacak</div><div class="kpi-value" style="font-size:18px;">${fmtTL(j.totals.credit)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Denge</div><div class="kpi-value" style="font-size:18px;color:${balanced?'var(--ink)':'var(--danger)'};">${balanced?'Tutuyor':'FARK '+fmtTL(Math.abs(j.totals.debit-j.totals.credit))}</div></div>
     </div>
+    ${salesInvoiceNumberConflicts().length ? `<div class="ready-note" style="border-left-color:var(--danger);margin-bottom:10px;"><b>Mükerrer satış fatura numarası:</b> ${salesInvoiceNumberConflicts().map(rows=>escapeHtml(rows[0].invoiceNo)+' ('+rows.length+' sevkiyat kaydı)').join(' · ')}. Yevmiye ve KDV dökümleri aynı numarayı her sevkiyat için ayrı sayıyor; mutabakat yapılana kadar çıktıları kesin defter gibi kullanma.</div>` : ''}
     ${j.warnings.fx.length ? `<div class="ready-note" style="border-left-color:var(--danger);margin-bottom:10px;"><b>Kur eksik:</b> ${j.warnings.fx.slice(0,12).map(w=>w.cur+' · '+formatDate(w.date)).join(' | ')}${j.warnings.fx.length>12?' …':''}. Bu belgelerin fişleri üretilmedi; aşağıdaki "Kurlar" bölümünden ekle.</div>` : ''}
     ${j.warnings.cogsUnknown.length ? `<div class="ready-note" style="margin-bottom:10px;"><b>Maliyeti bilinmeyen sevkiyat:</b> ${j.warnings.cogsUnknown.slice(0,6).map(w=>escapeHtml((w.shipment||w.order)+(w.party?' ('+upperCompanyName(w.party)+')':''))).join(', ')} — SAS maliyeti ya da stok kaydı olmadığı için satış maliyeti fişi çıkmadı.</div>` : ''}
     <div class="actions-row" style="margin:6px 0 20px;flex-wrap:wrap;">
