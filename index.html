@@ -2962,7 +2962,7 @@ function applyShipmentStock(s){
   (s.lines||[]).forEach(l=>{
     const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
     const q = parseFloat(l.qty)||0;
-    if(!p || q<=0 || !stockMoves.some(m=>m.productId===p.id)) return;
+    if(!p || q<=0) return;
     stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:s.date, type:'cikis', qty:-q, unitCost:0, currency:s.currency||'€', srcDoc:s.officialIrsaliyeNo||s.irsaliyeNo||'', note:'Sevkiyat '+(s.irsaliyeNo||''), shipmentId:s.id, createdAt:new Date().toISOString() });
   });
   stockReservedCache = null;
@@ -2971,7 +2971,7 @@ function shipStockPending(s){
   const codes = productCodeMap();
   return (s.lines||[]).some(l=>{
     const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
-    if(!p || !stockMoves.some(m=>m.productId===p.id)) return false;
+    if(!p) return false;
     const posted = stockMoves.filter(m=>m.shipmentId===s.id && m.productId===p.id && m.type==='cikis').reduce((n,m)=>n+Math.abs(Number(m.qty)||0),0);
     return posted + 1e-9 < (parseFloat(l.qty)||0);
   });
