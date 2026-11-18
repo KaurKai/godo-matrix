@@ -2831,16 +2831,16 @@ function orderAgg(q){
     const v = parseFloat(l.qty)||0; shippedQty += v; if(shipIsInvoiced(s)) invoicedQty += v;
     const k = l.quoteItemId || l.code; shpByItem[k] = (shpByItem[k]||0) + v;
   }));
-  let purchased = 0, received = 0; const recvByItem = {};
+  let purchased = 0, received = 0; const boughtByItem = {}, recvByItem = {};
   purchaseOrders.forEach(po=>{
     if(po.salesOrderId!==q.id || po.status==='İptal') return;
     (po.items||[]).forEach(it=>{
       const pq = parseFloat(it.qty)||0, rq = parseFloat(it.receivedQty)||0;
       purchased += pq; received += rq;
-      if(it.quoteItemId) recvByItem[it.quoteItemId] = (recvByItem[it.quoteItemId]||0) + rq;
+      if(it.quoteItemId){ boughtByItem[it.quoteItemId] = (boughtByItem[it.quoteItemId]||0) + pq; recvByItem[it.quoteItemId] = (recvByItem[it.quoteItemId]||0) + rq; }
     });
   });
-  let ready = 0; Object.keys(recvByItem).forEach(k=>{ ready += Math.max(0, recvByItem[k] - (shpByItem[k]||0)); });
+  let ready = 0; Object.keys(recvByItem).forEach(k=>{ ready += Math.max(0, Math.min(recvByItem[k], boughtByItem[k]||0) - (shpByItem[k]||0)); });
   const invShips = ships.filter(shipIsInvoiced);
   const invoicedTotal = invShips.reduce((t,s)=>t+shipTotal(s),0);
   const paidTotal = invShips.reduce((t,s)=>t+shipPaid(s),0);
@@ -2872,12 +2872,12 @@ function orderMatchesFilter(q, a, f){
 }
 function readyLinesForOrder(orderId){
   const shp = {}; shipsOf(orderId).forEach(s=>(s.lines||[]).forEach(l=>{ const k = l.quoteItemId||l.code; shp[k] = (shp[k]||0) + (parseFloat(l.qty)||0); }));
-  const recv = {}, info = {};
+  const recv = {}, bought = {}, info = {};
   purchaseOrders.forEach(po=>{
     if(po.salesOrderId!==orderId || po.status==='İptal') return;
-    (po.items||[]).forEach(it=>{ if(!it.quoteItemId) return; recv[it.quoteItemId] = (recv[it.quoteItemId]||0) + (parseFloat(it.receivedQty)||0); info[it.quoteItemId] = { code:it.code, desc:it.desc }; });
+    (po.items||[]).forEach(it=>{ if(!it.quoteItemId) return; bought[it.quoteItemId] = (bought[it.quoteItemId]||0) + (parseFloat(it.qty)||0); recv[it.quoteItemId] = (recv[it.quoteItemId]||0) + (parseFloat(it.receivedQty)||0); info[it.quoteItemId] = { code:it.code, desc:it.desc }; });
   });
-  return Object.keys(recv).map(k=>({ code:info[k].code, desc:info[k].desc, qty: recv[k] - (shp[k]||0) })).filter(x=>x.qty > 1e-9);
+  return Object.keys(recv).map(k=>({ code:info[k].code, desc:info[k].desc, qty: Math.min(recv[k],bought[k]||0) - (shp[k]||0) })).filter(x=>x.qty > 1e-9);
 }
 function readyOrders(){
   return quotesIndex.filter(q=>isOrderStatus(q.status)).map(q=>({ q, lines:readyLinesForOrder(q.id) })).filter(x=>x.lines.length);
@@ -2955,24 +2955,26 @@ async function migrateOrdersToShipments(){
   if(changed) await saveShipments();
 }
 
-/* ---- Stok çıkışı: yalnızca resmi irsaliye no girilince ---- */
+/* ---- Stok çıkışı: sevkiyat kaydedilince, resmi belge numarasından bağımsız ---- */
 function applyShipmentStock(s){
   stockMoves = stockMoves.filter(m=>m.shipmentId!==s.id);
-  if((s.officialIrsaliyeNo||'').trim()){
-    const codes = productCodeMap();
-    (s.lines||[]).forEach(l=>{
-      const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
-      const q = parseFloat(l.qty)||0;
-      if(!p || q<=0 || !stockMoves.some(m=>m.productId===p.id)) return;
-      stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:s.date, type:'cikis', qty:-q, unitCost:0, currency:'€', srcDoc:s.officialIrsaliyeNo, note:'Sevkiyat '+(s.irsaliyeNo||''), shipmentId:s.id, createdAt:new Date().toISOString() });
-    });
-  }
+  const codes = productCodeMap();
+  (s.lines||[]).forEach(l=>{
+    const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
+    const q = parseFloat(l.qty)||0;
+    if(!p || q<=0) return;
+    stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:s.date, type:'cikis', qty:-q, unitCost:0, currency:s.currency||'€', srcDoc:s.officialIrsaliyeNo||s.irsaliyeNo||'', note:'Sevkiyat '+(s.irsaliyeNo||''), shipmentId:s.id, createdAt:new Date().toISOString() });
+  });
   stockReservedCache = null;
 }
 function shipStockPending(s){
-  if((s.officialIrsaliyeNo||'').trim()) return false;
   const codes = productCodeMap();
-  return (s.lines||[]).some(l=>{ const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim())); return p && stockMoves.some(m=>m.productId===p.id); });
+  return (s.lines||[]).some(l=>{
+    const p = (l.productId && products.find(x=>x.id===l.productId)) || codes.get(foldTR((l.code||'').trim()));
+    if(!p) return false;
+    const posted = stockMoves.filter(m=>m.shipmentId===s.id && m.productId===p.id && m.type==='cikis').reduce((n,m)=>n+Math.abs(Number(m.qty)||0),0);
+    return posted + 1e-9 < (parseFloat(l.qty)||0);
+  });
 }
 async function afterShipmentChange(orderId){
   stockReservedCache = null;
@@ -3023,35 +3025,52 @@ async function openShipmentModal(orderId){
       <div class="field"><label>Sevk Tarihi</label><input id="sl-date" type="date" value="${todayStr()}"></div>
       <div class="field"><label>Not (araç plaka, şoför vb. — opsiyonel)</label><input id="sl-note"></div>
     </div>
-    <div class="field"><label>Resmi e-irsaliye no (opsiyonel — girilince stoktan düşülür)</label><input id="sl-official" placeholder="Portalda kestiysen numarasını yaz"></div>
+    <div class="field"><label>Resmi e-irsaliye no (opsiyonel — sevkiyat kaydedilince stoktan düşer)</label><input id="sl-official" placeholder="Portalda kestiysen numarasını yaz"></div>
     <div class="actions-row" style="margin-top:14px;">
       <button class="btn btn-primary" id="sl-create">Sevkiyat Oluştur</button>
       <button class="btn btn-ghost" id="sl-cancel">Vazgeç</button>
     </div>`, 880);
   ov.querySelector('#sl-cancel').onclick = ()=>ov.remove();
-  ov.querySelector('#sl-create').onclick = async ()=>{
-    const out = [];
-    for(const tr of ov.querySelectorAll('tbody tr')){
-      if(!tr.querySelector('.sl-on').checked) continue;
-      const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.sl-qty').value);
-      if(!(qty > 0)) continue;
-      if(qty > l.remaining + 1e-9){ alert((l.it.code||'Kalem')+' için kalan miktardan ('+fmtQty(l.remaining)+') fazla girdin.'); return; }
-      out.push({ quoteItemId:l.it.id, productId:l.it.productId||null, code:l.it.code||'', desc:l.it.desc||'', qty, unitPrice:lineUnitPrice(l.it) });
+  const createBtn = ov.querySelector('#sl-create');
+  let creating = false;
+  createBtn.onclick = async ()=>{
+    if(creating) return;
+    creating = true; createBtn.disabled = true; createBtn.textContent = 'Kaydediliyor…';
+    try{
+      const out = [];
+      for(const tr of ov.querySelectorAll('tbody tr')){
+        if(!tr.querySelector('.sl-on').checked) continue;
+        const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.sl-qty').value);
+        if(!(qty > 0)) continue;
+        const itemKey = l.it.id||l.it.code;
+        const shippedNow = shipsOf(orderId).reduce((sum,sh)=>sum+(sh.lines||[]).filter(x=>(x.quoteItemId||x.code)===itemKey).reduce((n,x)=>n+(parseFloat(x.qty)||0),0),0);
+        const remainingNow = Math.max(0,l.ordered-shippedNow);
+        if(qty > remainingNow + 1e-9){ alert((l.it.code||'Kalem')+' için güncel kalan sipariş miktarından ('+fmtQty(remainingNow)+') fazla girdin.'); return; }
+        if(l.hasPO){
+          const receivedNow = purchaseOrders.filter(po=>po.salesOrderId===orderId && po.status!=='İptal').reduce((sum,po)=>sum+(po.items||[]).filter(it=>it.quoteItemId===l.it.id).reduce((n,it)=>n+(parseFloat(it.receivedQty)||0),0),0);
+          const readyNow = Math.max(0,receivedNow-shippedNow);
+          if(qty > readyNow + 1e-9){ alert((l.it.code||'Kalem')+' için mal kabul sonrası güncel sevke hazır miktar ('+fmtQty(readyNow)+') aşılmış.'); return; }
+        }
+        out.push({ quoteItemId:l.it.id, productId:l.it.productId||null, code:l.it.code||'', desc:l.it.desc||'', qty, unitPrice:lineUnitPrice(l.it) });
+      }
+      if(!out.length){ alert('Sevk edilecek miktar girilmedi.'); return; }
+      const cu = full.customer||{};
+      const lang = full.lang==='en';
+      const vatDefault = full.vatEnabled ? (parseFloat(full.vatRate)||0) : (lang ? 0 : (parseFloat(full.vatRate)||20));
+      const s = {
+        id:crypto.randomUUID(), orderId, orderNo:full.quoteNo||'',
+        customer:{ name:upperCompanyName(cu.name||''), taxOffice:cu.taxOffice||'', taxNo:cu.taxNo||'', address:cu.address||'', contactName:cu.contactName||'', phone:cu.contactPhone||'' },
+        currency:full.currency||'€', date:ov.querySelector('#sl-date').value||todayStr(), irsaliyeNo:nextShipmentIrsaliyeNo(), irsaliyeNote:ov.querySelector('#sl-note').value.trim(),
+        officialIrsaliyeNo:ov.querySelector('#sl-official').value.trim(), lines:out, termDays:q.paymentTermDays||full.paymentTermDays||'',
+        vatDefault, vatRate:'', invoiceNo:'', invoiceDate:'', dueDateOverride:'', payments:[]
+      };
+      shipments.push(s); applyShipmentStock(s);
+      await afterShipmentChange(orderId);
+      ov.remove(); shipPrintId = s.id; activeTab = 'irsaliyePrint'; render();
+    } finally {
+      creating = false;
+      if(ov.isConnected){ createBtn.disabled = false; createBtn.textContent = 'Sevkiyat Oluştur'; }
     }
-    if(!out.length){ alert('Sevk edilecek miktar girilmedi.'); return; }
-    const cu = full.customer||{};
-    const lang = full.lang==='en';
-    const vatDefault = full.vatEnabled ? (parseFloat(full.vatRate)||0) : (lang ? 0 : (parseFloat(full.vatRate)||20));
-    const s = {
-      id:crypto.randomUUID(), orderId, orderNo:full.quoteNo||'',
-      customer:{ name:upperCompanyName(cu.name||''), taxOffice:cu.taxOffice||'', taxNo:cu.taxNo||'', address:cu.address||'', contactName:cu.contactName||'', phone:cu.contactPhone||'' },
-      currency:full.currency||'€', date:ov.querySelector('#sl-date').value||todayStr(), irsaliyeNo:nextShipmentIrsaliyeNo(), irsaliyeNote:ov.querySelector('#sl-note').value.trim(),
-      officialIrsaliyeNo:ov.querySelector('#sl-official').value.trim(), lines:out, termDays:q.paymentTermDays||full.paymentTermDays||'',
-      vatDefault, vatRate:'', invoiceNo:'', invoiceDate:'', dueDateOverride:'', payments:[]
-    };
-    shipments.push(s); applyShipmentStock(s);
-    await afterShipmentChange(orderId);
-    ov.remove(); shipPrintId = s.id; activeTab = 'irsaliyePrint'; render();
   };
 }
 
@@ -3155,7 +3174,7 @@ function openShipmentEditModal(id){
       <div class="field"><label>Sevk Tarihi</label><input id="se2-date" type="date" value="${escapeAttr(s.date||'')}"></div>
       <div class="field"><label>Ödeme Vadesi (gün)</label><input id="se2-term" type="number" min="0" value="${escapeAttr(String(s.termDays||''))}" placeholder="tekliften geldi"></div>
     </div>
-    <div class="field"><label>Resmi e-irsaliye no (girilince stoktan düşülür, silinince geri eklenir)</label><input id="se2-off" value="${escapeAttr(s.officialIrsaliyeNo||'')}"></div>
+    <div class="field"><label>Resmi e-irsaliye no (bilgi amaçlı; stok hareketi sevkiyat kaydına bağlıdır)</label><input id="se2-off" value="${escapeAttr(s.officialIrsaliyeNo||'')}"></div>
     <div class="field"><label>Not (irsaliyede görünür)</label><input id="se2-note" value="${escapeAttr(s.irsaliyeNote||'')}"></div>
     <div class="field"><label>Vade tarihini elle belirle (boş bırak = otomatik)</label><input id="se2-due" type="date" value="${escapeAttr(s.dueDateOverride||'')}"></div>
     <div class="actions-row" style="margin-top:12px;">
@@ -3416,28 +3435,40 @@ function openGoodsReceiptModal(poId){
       <button class="btn btn-ghost" id="gr-cancel">Vazgeç</button>
     </div>`, 760);
   ov.querySelector('#gr-cancel').onclick = ()=>ov.remove();
-  ov.querySelector('#gr-save').onclick = async ()=>{
-    const recLines = [];
-    for(const tr of ov.querySelectorAll('tbody tr')){
-      const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.gr-qty').value);
-      if(!(qty > 0)) continue;
-      if(qty > l.ordered - l.got + 1e-9){ alert((l.it.code||'Kalem')+' için kalan miktardan ('+fmtQty(l.ordered-l.got)+') fazla girdin.'); return; }
-      recLines.push({ poItemId:l.it.id, qty });
+  const saveBtn = ov.querySelector('#gr-save');
+  let saving = false;
+  saveBtn.onclick = async ()=>{
+    if(saving) return;
+    saving = true; saveBtn.disabled = true; saveBtn.textContent = 'Kaydediliyor…';
+    try{
+      recalcPoReceived(po);
+      const recLines = [];
+      for(const tr of ov.querySelectorAll('tbody tr')){
+        const l = lines[+tr.dataset.i]; const qty = parseFloat(tr.querySelector('.gr-qty').value);
+        if(!(qty > 0)) continue;
+        const currentReceived = (po.receipts||[]).reduce((sum,r)=>sum+(r.lines||[]).filter(x=>x.poItemId===l.it.id).reduce((n,x)=>n+(parseFloat(x.qty)||0),0),0);
+        const remaining = Math.max(0,l.ordered-currentReceived);
+        if(qty > remaining + 1e-9){ alert((l.it.code||'Kalem')+' için güncel kalan miktardan ('+fmtQty(remaining)+') fazla girdin.'); return; }
+        recLines.push({ poItemId:l.it.id, qty });
+      }
+      if(!recLines.length){ alert('Gelen miktar girilmedi.'); return; }
+      const receipt = { id:crypto.randomUUID(), date:ov.querySelector('#gr-date').value||todayStr(), irsaliyeNo:ov.querySelector('#gr-no').value.trim(), lines:recLines, createdAt:new Date().toISOString() };
+      po.receipts = (po.receipts||[]).concat([receipt]);
+      recLines.forEach(rl=>{
+        const it = po.items.find(x=>x.id===rl.poItemId); const p = ensureProductForPoItem(it);
+        if(!it.productId) it.productId = p.id;
+        stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:receipt.date, type:'giris', qty:rl.qty, unitCost:parseFloat(it.unitCost)||0, currency:po.currency||'€',
+          srcDoc:po.poNo+(receipt.irsaliyeNo?' · '+receipt.irsaliyeNo:''), note:'Mal kabul', poReceiptId:receipt.id, createdAt:new Date().toISOString() });
+      });
+      recalcPoReceived(po);
+      stockReservedCache = null;
+      await savePurchaseOrders(); await saveStockMoves(); await saveProducts();
+      ov.remove();
+      showReceiptNotice(po, recLines);
+    } finally {
+      saving = false;
+      if(ov.isConnected){ saveBtn.disabled = false; saveBtn.textContent = 'Mal Kabulü Kaydet'; }
     }
-    if(!recLines.length){ alert('Gelen miktar girilmedi.'); return; }
-    const receipt = { id:crypto.randomUUID(), date:ov.querySelector('#gr-date').value||todayStr(), irsaliyeNo:ov.querySelector('#gr-no').value.trim(), lines:recLines, createdAt:new Date().toISOString() };
-    po.receipts = (po.receipts||[]).concat([receipt]);
-    recLines.forEach(rl=>{
-      const it = po.items.find(x=>x.id===rl.poItemId); const p = ensureProductForPoItem(it);
-      if(!it.productId) it.productId = p.id;
-      stockMoves.push({ id:crypto.randomUUID(), productId:p.id, code:p.code, date:receipt.date, type:'giris', qty:rl.qty, unitCost:parseFloat(it.unitCost)||0, currency:po.currency||'€',
-        srcDoc:po.poNo+(receipt.irsaliyeNo?' · '+receipt.irsaliyeNo:''), note:'Mal kabul', poReceiptId:receipt.id, createdAt:new Date().toISOString() });
-    });
-    recalcPoReceived(po);
-    stockReservedCache = null;
-    await savePurchaseOrders(); await saveStockMoves(); await saveProducts();
-    ov.remove();
-    showReceiptNotice(po, recLines);
   };
 }
 function showReceiptNotice(po, recLines){
