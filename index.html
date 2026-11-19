@@ -3819,13 +3819,13 @@ function openInvoiceDueDateModal(kind, id){
     ov.remove(); render();
   };
 }
-function bucketOf(due){ if(!due) return 'none'; const d = diffDaysStr(due, todayStr()); return d < 0 ? 'overdue' : (d <= 30 ? 'soon' : 'later'); }
+function bucketOf(due){ if(!due) return 'none'; const d = diffDaysStr(due, todayStr()); return d < 0 ? 'overdue' : (d <= 7 ? 'week' : (d <= 15 ? 'days8to15' : 'later')); }
 function itemRate(i){ return i.cur==='₺' ? 1 : (i.booked ? i.booked.rate : null); }
 function groupParties(items){
   const map = new Map();
   items.forEach(i=>{
     let g = map.get(i.partyKey);
-    if(!g){ g = { partyKey:i.partyKey, name:i.partyName, items:[], count:0, totalTL:0, paidTL:0, remainingTL:0, buckets:{overdue:0,soon:0,later:0,none:0}, missing:0, byCur:{} }; map.set(i.partyKey, g); }
+    if(!g){ g = { partyKey:i.partyKey, name:i.partyName, items:[], count:0, totalTL:0, paidTL:0, remainingTL:0, buckets:{overdue:0,week:0,days8to15:0,later:0,none:0}, missing:0, byCur:{} }; map.set(i.partyKey, g); }
     g.items.push(i); g.count++;
     const c = g.byCur[i.cur] = g.byCur[i.cur] || { total:0, paid:0, remaining:0 };
     c.total += i.total; c.paid += i.paid; c.remaining += i.remaining;
@@ -3852,7 +3852,7 @@ function renderFinancePage(){
   const groups = groupParties(items);
   const invoiceConflicts = kind==='sale' ? salesInvoiceNumberConflicts() : [];
   const tot = { remaining:0, overdue:0, soon:0, later:0, none:0, missing:0 };
-  groups.forEach(g=>{ tot.remaining += g.remainingTL; ['overdue','soon','later','none'].forEach(k=>tot[k]+=g.buckets[k]); tot.missing += g.missing; });
+  groups.forEach(g=>{ tot.remaining += g.remainingTL; ['overdue','week','days8to15','later','none'].forEach(k=>tot[k]+=g.buckets[k]); tot.missing += g.missing; });
   const word = kind==='sale' ? { open:'Alacak', paid:'Tahsil Edilen', pay:'Toplu Tahsilat', party:'Müşteri', doc:'Satış Faturası' } : { open:'Borç', paid:'Ödenen', pay:'Toplu Ödeme', party:'Tedarikçi', doc:'Alış Faturası' };
   const cell = n=>n > 0.005 ? fmtTL(n) : '<span style="color:var(--gray-300);">—</span>';
   const curSub = (g,field)=>Object.entries(g.byCur).filter(([c,v])=>c!=='₺' && v[field] > 0.005).map(([c,v])=>`<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${c} ${fmt(v[field])}</div>`).join('');
@@ -3863,27 +3863,29 @@ function renderFinancePage(){
     <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Alacak / Borç</h2>
       <div style="display:flex;gap:8px;"><span class="version-pill ${financeView==='receivable'?'active':''}" data-fin-view="receivable">Alacaklar</span><span class="version-pill ${financeView==='payable'?'active':''}" data-fin-view="payable">Borçlar</span></div></div>
     <p class="hint">${kind==='sale' ? 'Müşteri bazında fatura, tahsilat ve vade dağılımı.' : 'Tedarikçi bazında alış faturası, ödeme ve ödeme takvimi.'} Tutarlar TL gösterilir (belge tarihindeki TCMB kuruyla), döviz tutarı altında ayrıca yazar. Rakamlar yalnızca fatura ve ${kind==='sale'?'tahsilat':'ödeme'} kayıtlarından hesaplanır.</p>
-    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:16px 0 22px;">
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:16px 0 22px;">
       <div class="kpi-card"><div class="kpi-label">Toplam Kalan ${word.open}</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.remaining)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Vadesi Geçmiş</div><div class="kpi-value" style="font-size:19px;color:${tot.overdue>0.005?'var(--danger)':'var(--ink)'};">${fmtTL(tot.overdue)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">30 Gün İçinde</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.soon)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Sonrası${tot.none>0.005?' · vade tanımsız '+fmtTL(tot.none):''}</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.later)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Bugün–7 gün</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.week)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">8–15 gün</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.days8to15)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">15 gün sonrası</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.later)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Vadesi tanımsız</div><div class="kpi-value" style="font-size:19px;color:${tot.none>0.005?'var(--danger)':'var(--ink)'};">${fmtTL(tot.none)}</div></div>
     </div>
     ${invoiceConflicts.length ? `<div class="ready-note" style="border-left-color:var(--danger);margin-bottom:12px;"><b>Mükerrer satış fatura numarası:</b> ${invoiceConflicts.map(rows=>escapeHtml(rows[0].invoiceNo)+' ('+rows.length+' sevkiyat kaydı)').join(' · ')}. Belgeler ayrı ayrı toplamlara giriyor; fatura asıllarıyla eşleştirip kayıtları düzeltmeden alacak, KDV ve muhasebe toplamlarını kesin kabul etme.</div>` : ''}
     ${tot.missing ? `<p class="hint" style="color:var(--danger);">${tot.missing} belgede belge tarihi için TCMB kuru kayıtlı değil; bu belgeler TL toplamlara girmiyor. Kurlar TCMB'den otomatik alınır; alınamadıysa Muhasebe sayfasındaki "Kurlar" bölümünden elle ekle.</p>` : ''}
-    ${groups.length ? `<table class="items-table"><thead><tr><th>${word.party}</th><th class="num">Fatura</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th class="num">Vadesi geçmiş</th><th class="num">30 gün içinde</th><th class="num">Sonrası</th><th></th></tr></thead><tbody>
+    ${groups.length ? `<table class="items-table"><thead><tr><th>${word.party}</th><th class="num">Fatura</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th class="num">Vadesi geçmiş</th><th class="num">Bugün–7 gün</th><th class="num">8–15 gün</th><th class="num">15 gün sonrası</th><th class="num">Vade tanımsız</th><th></th></tr></thead><tbody>
       ${groups.map(g=>{
         const openItems = g.items.filter(i=>i.remaining>0.005).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
         return `<tr style="background:var(--paper-2);"><td><b>${escapeHtml(g.name)}</b></td><td class="num mono">${g.count}</td>
           <td class="num mono" style="font-size:12px;">${fmtTL(g.totalTL)}${curSub(g,'total')}</td><td class="num mono" style="font-size:12px;">${fmtTL(g.paidTL)}${curSub(g,'paid')}</td>
           <td class="num mono" style="font-size:12px;font-weight:700;">${fmtTL(g.remainingTL)}${curSub(g,'remaining')}</td>
-          <td class="num mono" style="font-size:12px;color:var(--danger);">${cell(g.buckets.overdue)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.soon)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.later+g.buckets.none)}</td>
+          <td class="num mono" style="font-size:12px;color:var(--danger);">${cell(g.buckets.overdue)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.week)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.days8to15)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.later)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.none)}</td>
           <td style="white-space:nowrap;">${openItems.length ? `<span data-bulk="${kind}|${escapeAttr(g.partyKey)}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">${word.pay}</span>` : ''}</td></tr>
           ${openItems.map(i=>{ const r = itemRate(i);
             return `<tr class="fin-inv"><td style="padding-left:26px;font-size:12px;"><span class="mono">${escapeHtml(i.docNo)}</span> <span style="color:var(--gray-500);">· ${formatDate(i.date)}</span></td>
               <td colspan="3" style="font-size:11.5px;color:var(--gray-500);">${stLabel[i.state]||''} ${dueBadgeHtml(i.due,false)}${i.due?' <span style="color:var(--gray-300);">· vade '+formatDate(i.due)+'</span>':''}</td>
               <td class="num mono" style="font-size:12px;">${r===null?'<span style="color:var(--danger);">kur eksik</span>':fmtTL(i.remaining*r)}${i.cur!=='₺'?`<div style="font-size:10.5px;color:var(--gray-500);">${i.cur} ${fmt(i.remaining)}</div>`:''}</td>
-              <td colspan="3"></td><td style="white-space:nowrap;"><span data-fin-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">${kind==='sale'?'Tahsilat':'Ödeme'}</span>${kind==='purchase'?` <span data-fin-edit="${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:10px;">Fatura</span>`:''}</td></tr>`; }).join('')}`;
+              <td colspan="5"></td><td style="white-space:nowrap;"><span data-fin-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">${kind==='sale'?'Tahsilat':'Ödeme'}</span>${kind==='purchase'?` <span data-fin-edit="${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:10px;">Fatura</span>`:''}</td></tr>`; }).join('')}`;
       }).join('')}
     </tbody></table>` : `<p class="hint">${kind==='sale'?'Henüz faturalanmış sevkiyat yok.':'Henüz tedarikçi faturası yok. Satın Alma sayfasındaki SAS satırından "Fatura" ile gir.'}</p>`}
     ${kind==='purchase' && calendar.length ? `<div class="subhead" style="margin-top:28px;">Ödeme Takvimi (60 gün + gecikenler)</div>
@@ -4265,21 +4267,21 @@ function renderInvoicesPage(){
   const kind = invView==='purchase' ? 'purchase' : 'sale';
   const items = kind==='sale' ? saleItems() : purchaseItems();
   const today = todayStr(), isOpen = i=>i.remaining > 0.005;
-  const d7 = addDaysStr(today, 6), d14 = addDaysStr(today, 13);
+  const d7 = addDaysStr(today, 7), d15 = addDaysStr(today, 15);
   const bucket = {
     overdue: items.filter(i=>isOpen(i) && i.due && i.due < today),
     week:    items.filter(i=>isOpen(i) && i.due && i.due >= today && i.due <= d7),
-    next:    items.filter(i=>isOpen(i) && i.due && i.due > d7 && i.due <= d14),
+    next:    items.filter(i=>isOpen(i) && i.due && i.due > d7 && i.due <= d15),
     noDue:   items.filter(i=>isOpen(i) && !i.due),
-    later:   items.filter(i=>isOpen(i) && i.due && i.due > d14)
+    later:   items.filter(i=>isOpen(i) && i.due && i.due > d15)
   };
   const amt = arr=>curText(sumByCur(arr.map(i=>({ currency:i.cur, v:i.remaining })), x=>x.v));
-  const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, noDue:bucket.noDue.length, paid:items.filter(i=>!isOpen(i)).length };
-  let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : invFilter==='noDue' ? bucket.noDue.includes(i) : !isOpen(i));
+  const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, next:bucket.next.length, noDue:bucket.noDue.length, paid:items.filter(i=>!isOpen(i)).length };
+  let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : invFilter==='next' ? bucket.next.includes(i) : invFilter==='noDue' ? bucket.noDue.includes(i) : !isOpen(i));
   if(invSearch){ const q = foldTR(invSearch.trim()); list = list.filter(i=>foldTR(i.partyName+' '+i.docNo+' '+((i.obj.poNo)||(i.obj.orderNo)||'')).includes(q)); }
   list.sort((a,b)=> (isOpen(b)-isOpen(a)) || (isOpen(a) ? (a.due||'9999-99-99').localeCompare(b.due||'9999-99-99') : (b.date||'').localeCompare(a.date||'')));
   const word = kind==='sale' ? { open:'Tahsilat', paid:'Tahsil edilen', party:'Müşteri', pay:'Tahsilat' } : { open:'Ödeme', paid:'Ödenen', party:'Tedarikçi', pay:'Ödeme' };
-  const FILTERS = [['open','Açık'],['overdue','Vadesi geçmiş'],['week','Bu hafta'],['noDue','Vadesiz'],['paid',kind==='sale'?'Tahsil edilen':'Ödenen'],['','Tümü']];
+  const FILTERS = [['open','Açık'],['overdue','Vadesi geçmiş'],['week','Bugün–7 gün'],['next','8–15 gün'],['noDue','Vadesiz'],['paid',kind==='sale'?'Tahsil edilen':'Ödenen'],['','Tümü']];
   const waitingShips = uninvoicedShipments(), recs = kind==='purchase' ? uninvoicedReceipts() : [];
   return `
   <div class="panel" style="max-width:1160px;">
@@ -4288,8 +4290,8 @@ function renderInvoicesPage(){
     <p class="hint">${kind==='sale' ? 'Kestiğin faturalar ve tahsilat vadeleri.' : 'Girdiğin tedarikçi faturaları ve ödeme tarihlerin.'} Vade, fatura tarihi + ödeme vadesi olarak otomatik hesaplanır.</p>
     <div class="kpi-grid invoice-kpis" style="margin:16px 0 22px;">
       <div class="kpi-card"><div class="kpi-label">Vadesi Geçmiş</div><div class="kpi-value" style="font-size:17px;color:${bucket.overdue.length?'var(--danger)':'var(--ink)'};">${amt(bucket.overdue)}</div><div class="kpi-sub">${bucket.overdue.length} fatura</div></div>
-      <div class="kpi-card"><div class="kpi-label">Bu Hafta (7 gün)</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.week)}</div><div class="kpi-sub">${bucket.week.length} fatura</div></div>
-      <div class="kpi-card"><div class="kpi-label">Gelecek Hafta</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.next)}</div><div class="kpi-sub">${bucket.next.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">Bugün–7 gün</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.week)}</div><div class="kpi-sub">${bucket.week.length} fatura</div></div>
+      <div class="kpi-card"><div class="kpi-label">8–15 gün</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.next)}</div><div class="kpi-sub">${bucket.next.length} fatura</div></div>
       <div class="kpi-card"><div class="kpi-label">Vadesiz</div><div class="kpi-value" style="font-size:17px;color:${bucket.noDue.length?'var(--danger)':'var(--ink)'};">${amt(bucket.noDue)}</div><div class="kpi-sub">${bucket.noDue.length} fatura</div></div>
       <div class="kpi-card"><div class="kpi-label">Daha Sonra</div><div class="kpi-value" style="font-size:17px;">${amt(bucket.later)}</div><div class="kpi-sub">${bucket.later.length} fatura</div></div>
     </div>
