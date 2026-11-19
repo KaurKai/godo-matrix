@@ -1585,7 +1585,6 @@ function render(){
   else if(activeTab==='openOrders'){ c.innerHTML = renderOpenOrdersShell(); loadOpenOrderBodies(true).then(()=>{ if(activeTab==='openOrders') refreshOpenBody(); }); }
   else if(activeTab==='shipments') c.innerHTML = renderShipmentsPage();
   else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
-  else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
   else if(activeTab==='edocuments'){
     c.innerHTML = renderEDocumentsPage();
     if(!eDocumentLoaded && !eDocumentBusy) loadEDocumentCenter();
