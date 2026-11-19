@@ -421,6 +421,23 @@
 .side-primary-nav .tab.nav-settings{margin-top:16px;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;}
 </style>
 <style id="userDocStyle"></style>
+<style>
+.edoc-page{max-width:1240px;}
+.edoc-status{display:flex;align-items:flex-start;gap:11px;padding:13px 15px;margin:18px 0;background:var(--paper-2);border-left:3px solid var(--gray-500);font-size:12px;line-height:1.55;}
+.edoc-status.ready{border-left-color:#426f50;}.edoc-status b{display:block;font-size:12.5px;margin-bottom:2px;}
+.edoc-status-dot{width:9px;height:9px;border-radius:50%;background:#a68c4b;flex:none;margin-top:4px;}.edoc-status.ready .edoc-status-dot{background:#426f50;}
+.edoc-error{padding:10px 12px;margin:10px 0;background:#f7e9e7;color:var(--danger);font-size:12px;}
+.edoc-kpis{margin:16px 0 20px;}.edoc-kpis .kpi-card{padding:13px 15px;}.edoc-kpis .kpi-value{font-size:20px;}
+.edoc-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 20px;}.edoc-actions .btn:disabled{opacity:.45;cursor:not-allowed;}
+.edoc-workflows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:18px 0 22px;}
+.edoc-workflows>div{display:flex;flex-direction:column;gap:6px;padding:12px;background:var(--paper-2);font-size:11.5px;line-height:1.5;}.edoc-workflows b{font-size:11px;text-transform:uppercase;letter-spacing:.06em;}
+.edoc-filters{display:flex;flex-direction:column;gap:9px;margin-bottom:14px;}.edoc-chip-row{display:flex;gap:6px;flex-wrap:wrap;}
+.edoc-chip{border:1px solid var(--hairline-strong);background:transparent;border-radius:20px;padding:6px 11px;font:11.5px var(--font-sans);color:var(--gray-500);cursor:pointer;}
+.edoc-chip.active{background:var(--ink);border-color:var(--ink);color:#fff;}.edoc-filters input{max-width:360px;padding:8px 10px;border:1px solid var(--hairline-strong);border-radius:3px;font:12px var(--font-sans);}
+.edoc-state{display:inline-block;padding:3px 7px;border:1px solid var(--hairline-strong);border-radius:10px;font-size:10px;white-space:nowrap;}.edoc-failed,.edoc-rejected{color:var(--danger);border-color:var(--danger);}
+.edoc-empty{display:flex;flex-direction:column;gap:5px;padding:22px 14px;color:var(--gray-500);font-size:12px;background:var(--paper-2);}.edoc-empty b{color:var(--ink);font-size:13px;}
+.edoc-event-list{display:flex;flex-direction:column;gap:7px;padding:8px 4px;}.edoc-event-list>div{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;}.edoc-event-list .mono{color:var(--gray-500);}.edoc-note{font-size:11px;line-height:1.55;color:var(--gray-500);border-top:1px solid var(--hairline);padding-top:13px;margin-top:20px;}.edoc-note b{color:var(--ink);}
+</style>
 </head>
 <body>
 
@@ -717,6 +734,14 @@ let saveTimer = null;
 let gmailIntake = [];
 let gmailIntakeCheckedAt = "";
 let gmailIntakeError = "";
+let eDocumentRows = [];
+let eDocumentEvents = [];
+let eDocumentStatus = null;
+let eDocumentBusy = false;
+let eDocumentLoaded = false;
+let eDocumentError = "";
+let eDocumentFilter = { direction:'all', type:'all', status:'all', search:'' };
+let eDocumentExpandedId = "";
 let gmailIntakeBusy = false;
 let gmailIntakeTimer = null;
 
@@ -1442,6 +1467,7 @@ function navGroups(){
       { tab:'stock', label:'Stok', on: activeTab==='stock' },
       { tab:'products', label:'Ürünler', on: activeTab==='products' } ]},
     { key:'finans', label:'Finans', items:[
+      { tab:'edocuments', label:'e-Belgeler', on: activeTab==='edocuments' },
       { tab:'invoices', label:'Faturalar', on: activeTab==='invoices' },
       { tab:'finance', label:'Alacak / Borç', on: activeTab==='finance' },
       { tab:'accounting', label:'Muhasebe', on: activeTab==='accounting' },
@@ -1559,6 +1585,10 @@ function render(){
   else if(activeTab==='openOrders'){ c.innerHTML = renderOpenOrdersShell(); loadOpenOrderBodies(true).then(()=>{ if(activeTab==='openOrders') refreshOpenBody(); }); }
   else if(activeTab==='shipments') c.innerHTML = renderShipmentsPage();
   else if(activeTab==='invoices') c.innerHTML = renderInvoicesPage();
+  else if(activeTab==='edocuments'){
+    c.innerHTML = renderEDocumentsPage();
+    if(!eDocumentLoaded && !eDocumentBusy) loadEDocumentCenter();
+  }
   else if(activeTab==='finance') c.innerHTML = renderFinancePage();
   else if(activeTab==='accounting') c.innerHTML = renderAccountingPage();
   else if(activeTab==='suppliers') c.innerHTML = renderSuppliersPage();
@@ -4286,6 +4316,69 @@ function renderInvoicesPage(){
     </tbody></table>` : `<p class="hint">${(invSearch||invFilter) ? 'Filtreyle eşleşen fatura yok.' : (kind==='sale'?'Henüz faturalanmış sevkiyat yok.':'Henüz tedarikçi faturası yok.')}</p>`}
   </div>`;
 }
+const EDOC_TYPE_LABEL = { e_invoice:'e-Fatura', e_archive_invoice:'e-Arşiv Fatura', e_despatch:'e-İrsaliye' };
+const EDOC_STATUS_LABEL = { draft:'Taslak', queued:'Kuyrukta', sending:'Gönderiliyor', submitted:'İletildi', received:'Geldi', awaiting_response:'Yanıt bekliyor', responded:'Yanıtlandı', accepted:'Kabul edildi', rejected:'Reddedildi', cancelled:'İptal', failed:'Hata' };
+async function loadEDocumentCenter(opts={}){
+  if(eDocumentBusy) return;
+  eDocumentBusy=true; eDocumentError='';
+  if(activeTab==='edocuments') render();
+  try{
+    if(!sb) throw new Error('Supabase bağlantısı hazır değil.');
+    const [statusResult, docsResult] = await Promise.all([
+      sb.functions.invoke('edocument-gateway',{body:{action:'status'}}),
+      sb.from('e_documents').select('id,direction,document_type,source_kind,source_id,source_revision,status,provider_key,provider_document_id,ettn,document_number,issue_date,currency,total_amount,attempt_count,last_error,submitted_at,accepted_at,rejected_at,created_at,updated_at').order('created_at',{ascending:false}).limit(200)
+    ]);
+    if(statusResult.error) eDocumentStatus={providerConfigured:false,providerAdapterReady:false,canSubmit:false,canRefresh:false,canReceive:false};
+    else eDocumentStatus=statusResult.data||{};
+    if(docsResult.error) throw new Error('E-belge kayıtları okunamadı. Oturum/MFA durumunu kontrol edip yeniden dene.');
+    eDocumentRows=docsResult.data||[];
+    const ids=eDocumentRows.map(x=>x.id);
+    if(ids.length){
+      const eventResult=await sb.from('e_document_events').select('id,document_id,event_key,event_type,from_status,to_status,created_at').in('document_id',ids).order('created_at',{ascending:false}).limit(500);
+      if(eventResult.error) throw new Error('E-belge olay geçmişi okunamadı.');
+      eDocumentEvents=eventResult.data||[];
+    }else eDocumentEvents=[];
+    eDocumentLoaded=true;
+  }catch(err){ eDocumentError=err&&err.message?err.message:'E-belge merkezi yüklenemedi.'; eDocumentLoaded=true; }
+  finally{ eDocumentBusy=false; if(activeTab==='edocuments') render(); }
+}
+function edocIsReady(){ return !!(eDocumentStatus&&eDocumentStatus.providerConfigured&&eDocumentStatus.providerAdapterReady); }
+function renderEDocumentsRows(){
+  let rows=eDocumentRows.slice();
+  if(eDocumentFilter.direction!=='all') rows=rows.filter(x=>x.direction===eDocumentFilter.direction);
+  if(eDocumentFilter.type!=='all') rows=rows.filter(x=>x.document_type===eDocumentFilter.type);
+  if(eDocumentFilter.status!=='all') rows=rows.filter(x=>x.status===eDocumentFilter.status);
+  if(eDocumentFilter.search){ const needle=foldTR(eDocumentFilter.search.trim()); rows=rows.filter(x=>foldTR([x.document_number,x.ettn,x.provider_document_id,x.source_id,x.provider_key,EDOC_TYPE_LABEL[x.document_type],x.status].join(' ')).includes(needle)); }
+  if(!rows.length) return `<div class="edoc-empty"><b>${eDocumentRows.length?'Filtreyle eşleşen belge yok.':'Henüz e-belge kaydı yok.'}</b><span>Giden taslaklar, gönderim durumları ve gelen belgeler bu listede tek akışta izlenecek.</span></div>`;
+  return `<div class="table-wrap"><table class="items-table"><thead><tr><th>Yön / Tür</th><th>Belge no / ETTN</th><th>Kaynak</th><th>Tarih</th><th class="num">Tutar</th><th>Durum</th><th></th></tr></thead><tbody>${rows.map(doc=>{
+    const events=eDocumentEvents.filter(ev=>ev.document_id===doc.id);
+    return `<tr><td><b>${doc.direction==='inbound'?'Gelen':'Giden'}</b><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(EDOC_TYPE_LABEL[doc.document_type]||doc.document_type)}</div></td>
+      <td><span class="mono" style="font-size:11.5px;">${escapeHtml(doc.document_number||'—')}</span><div class="mono" style="font-size:10px;color:var(--gray-500);">${escapeHtml(doc.ettn||doc.provider_document_id||'')}</div></td>
+      <td><span class="mono" style="font-size:11px;">${escapeHtml(doc.source_kind||'—')}</span><div class="mono" style="font-size:10px;color:var(--gray-500);">${escapeHtml(String(doc.source_id||'').slice(0,16))}</div></td>
+      <td class="mono" style="font-size:11px;">${doc.issue_date?formatDate(doc.issue_date):formatDate((doc.created_at||'').slice(0,10))}</td>
+      <td class="num mono" style="font-size:11px;">${doc.total_amount===null?'—':escapeHtml(doc.currency||'')+' '+fmt(Number(doc.total_amount)||0)}</td>
+      <td><span class="edoc-state edoc-${escapeAttr(doc.status)}">${escapeHtml(EDOC_STATUS_LABEL[doc.status]||doc.status)}</span>${doc.last_error?`<div style="font-size:10px;color:var(--danger);margin-top:4px;">İşlem hatası</div>`:''}</td>
+      <td><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-events="${escapeAttr(doc.id)}">${eDocumentExpandedId===doc.id?'Geçmişi gizle':`Geçmiş (${events.length})`}</button></td></tr>
+      ${eDocumentExpandedId===doc.id?`<tr><td colspan="7"><div class="edoc-event-list">${events.length?events.map(ev=>{const d=ev.created_at?new Date(ev.created_at):null;const stamp=d&&!isNaN(d.getTime())?d.toLocaleString('tr-TR',{timeZone:'Europe/Istanbul',dateStyle:'short',timeStyle:'short'}):'—';return `<div><span class="mono">${escapeHtml(stamp)}</span><b>${escapeHtml(ev.event_type||'Olay')}</b><span>${escapeHtml(ev.from_status?((EDOC_STATUS_LABEL[ev.from_status]||ev.from_status)+' → '):'')}${escapeHtml(EDOC_STATUS_LABEL[ev.to_status]||ev.to_status||'')}</span></div>`;}).join(''):'Bu belge için olay kaydı yok.'}</div></td></tr>`:''}`;
+  }).join('')}</tbody></table></div>`;
+}
+function renderEDocumentsBody(){ const el=document.getElementById('edoc-rows'); if(el) el.innerHTML=renderEDocumentsRows(); }
+function renderEDocumentsPage(){
+  const ready=edocIsReady(), incoming=eDocumentRows.filter(x=>x.direction==='inbound').length, outgoing=eDocumentRows.filter(x=>x.direction==='outbound').length;
+  const chips=(key,items)=>items.map(([value,label])=>`<button class="edoc-chip ${eDocumentFilter[key]===value?'active':''}" data-edoc-filter="${key}|${value}">${label}</button>`).join('');
+  return `<div class="panel edoc-page" style="max-width:1240px;">
+    <div class="subhead-row"><div><h2 style="margin:0;">e-Belge Merkezi</h2><p class="hint" style="margin:5px 0 0;">Satış e-Faturaları, e-İrsaliyeler ve tedarikçilerden gelen belgeler.</p></div><button id="edoc-refresh" class="btn btn-ghost" ${eDocumentBusy?'disabled':''}>${eDocumentBusy?'Yükleniyor…':'Yenile'}</button></div>
+    <div class="edoc-status ${ready?'ready':'waiting'}"><span class="edoc-status-dot"></span><div><b>${ready?'Sağlayıcı bağlantısı hazır':'Sağlayıcı API bağlantısı bekleniyor'}</b><div>${ready?'Gönderim ve gelen kutusu yetenekleri sağlayıcı durumuna göre kullanılabilir.':'Bu Matrix sürümünde dış API çağrısı ve gerçek belge gönderimi kapalı. API anahtarı tarayıcıya girilmez; sağlayıcı bağlantısı sunucu tarafında kurulur.'}</div></div></div>
+    ${eDocumentError?`<div class="edoc-error">${escapeHtml(eDocumentError)}</div>`:''}
+    <div class="kpi-grid edoc-kpis"><div class="kpi-card"><div class="kpi-label">Kayıtlı belgeler</div><div class="kpi-value">${eDocumentRows.length}</div></div><div class="kpi-card"><div class="kpi-label">Giden</div><div class="kpi-value">${outgoing}</div></div><div class="kpi-card"><div class="kpi-label">Gelen kutusu</div><div class="kpi-value">${incoming}</div></div><div class="kpi-card"><div class="kpi-label">Bekleyen işlem</div><div class="kpi-value">${eDocumentRows.filter(x=>['queued','sending','submitted'].includes(x.status)).length}</div></div></div>
+    <div class="edoc-actions"><button id="edoc-send-queue" class="btn btn-primary" ${ready?'':'disabled title="Sağlayıcı adaptörü henüz bağlı değil"'}>e-Belge gönderimi</button><button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&eDocumentStatus&&eDocumentStatus.canReceive?'':'disabled title="Gelen kutusu API adaptörü henüz bağlı değil"'}>Gelen e-Fatura / e-İrsaliye kontrolü</button><button class="btn btn-ghost" disabled title="Sağlayıcı adaptörü henüz bağlı değil">Gönderim durumlarını sorgula</button></div>
+    <div class="edoc-workflows"><div><b>Giden</b><span>Sevkiyat veya satış faturası → e-Fatura / e-Arşiv seçimi → doğrulama → gönderim → GİB ve alıcı yanıtı.</span></div><div><b>Gelen</b><span>Gelen belgeyi al → tedarikçi ve SAS ile eşleştir → XML/PDF’yi sakla → kabul/ret yanıtını ve süresini izle.</span></div><div><b>e-İrsaliye</b><span>Sevkiyat kaynağından gönder → durum ve yanıtları takip et; tedarikçiden gelen irsaliyeyi SAS/mal kabul ile bağla.</span></div></div>
+    <div class="edoc-filters"><div class="edoc-chip-row">${chips('direction',[['all','Tümü'],['outbound','Giden'],['inbound','Gelen']])}</div><div class="edoc-chip-row">${chips('type',[['all','Tüm türler'],['e_invoice','e-Fatura'],['e_archive_invoice','e-Arşiv'],['e_despatch','e-İrsaliye']])}</div><input id="edoc-search" placeholder="Belge no, ETTN veya kaynak ara" value="${escapeAttr(eDocumentFilter.search)}" /></div>
+    <div id="edoc-rows">${eDocumentBusy?'<div class="edoc-empty">E-belge kayıtları yükleniyor…</div>':renderEDocumentsRows()}</div>
+    <div class="edoc-note"><b>Entegrasyon açılmadan önce:</b> sağlayıcı test ortamı, e-Fatura mükellef sorgusu, UBL-TR alan eşlemesi, belge serileri, imza/mali mühür sorumluluğu, durum kodları, gelen belge yanıtları ve webhook doğrulaması netleşmeli. API kimlik bilgileri Supabase Edge Function Secrets’ta tutulacak.</div>
+  </div>`;
+}
+
 function attachInvoicesHandlers(){
   document.querySelectorAll('[data-inv-view]').forEach(el=>{ el.onclick = ()=>{ invView = el.dataset.invView; invFilter = 'open'; invSearch = ''; render(); }; });
   document.querySelectorAll('[data-inv-filter]').forEach(el=>{ el.onclick = ()=>{ invFilter = el.dataset.invFilter; render(); }; });
@@ -6399,6 +6492,19 @@ function attachHandlers(){
     document.querySelectorAll('[data-intake-mail]').forEach(btn=>{ btn.onclick=async()=>{ const item=gmailIntake[+btn.dataset.intakeMail]; if(!item)return; try{ const qid=item.quoteId||quotesIndex.find(x=>x.sourceMessageId===item.messageId)?.id; if(!qid) throw new Error('Teklif kaydı bulunamadı.'); await openQuote(qid); await createGmailDraftForQuote(quote,item); render(); }catch(e){ item.status='quote-created'; item.error=e.message||String(e); await saveGmailIntake(); render(); alert(item.error); } }; });
     document.querySelectorAll('[data-intake-ignore]').forEach(btn=>{ btn.onclick=async()=>{ const x=gmailIntake[+btn.dataset.intakeIgnore]; if(x){ x.status='ignored'; await saveGmailIntake(); render(); } }; });
     document.querySelectorAll('[data-intake-open-quote]').forEach(btn=>{ btn.onclick=async()=>{ const value=btn.dataset.intakeOpenQuote; const q=quotesIndex.find(x=>x.id===value||x.sourceMessageId===value); if(q){ await openQuote(q.id); activeTab='info'; render(); } }; });
+  }
+
+if(activeTab==='edocuments'){
+    const refresh=document.getElementById('edoc-refresh');
+    if(refresh) refresh.onclick=()=>loadEDocumentCenter({force:true});
+    const search=document.getElementById('edoc-search');
+    if(search) search.oninput=e=>{ eDocumentFilter.search=e.target.value; renderEDocumentsBody(); };
+    document.querySelectorAll('[data-edoc-filter]').forEach(el=>{ el.onclick=()=>{ const [key,value]=el.dataset.edocFilter.split('|'); eDocumentFilter[key]=value; render(); }; });
+    document.querySelectorAll('[data-edoc-events]').forEach(el=>{ el.onclick=()=>{ eDocumentExpandedId=eDocumentExpandedId===el.dataset.edocEvents?'':el.dataset.edocEvents; render(); }; });
+    const sync=document.getElementById('edoc-sync-incoming');
+    if(sync) sync.onclick=()=>alert('Gelen belge kontrolü, sağlayıcı API adaptörü bağlandıktan sonra etkinleşecek.');
+    const send=document.getElementById('edoc-send-queue');
+    if(send) send.onclick=()=>alert('Belge gönderimi, sağlayıcı API adaptörü bağlandıktan sonra etkinleşecek.');
   }
 
   if(activeTab==='list'){
