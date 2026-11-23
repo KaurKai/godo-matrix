@@ -740,6 +740,7 @@ let eDocumentStatus = null;
 let eDocumentBusy = false;
 let eDocumentLoaded = false;
 let eDocumentError = "";
+let eDocumentProbe = { busy:false, result:null };
 let eDocumentFilter = { direction:'all', type:'all', status:'all', search:'' };
 let eDocumentExpandedId = "";
 let gmailIntakeBusy = false;
@@ -4345,6 +4346,29 @@ async function loadEDocumentCenter(opts={}){
   finally{ eDocumentBusy=false; if(activeTab==='edocuments') render(); }
 }
 function edocIsReady(){ return !!(eDocumentStatus&&eDocumentStatus.providerConfigured&&eDocumentStatus.providerAdapterReady); }
+async function testEDocumentConnection(){
+  if(eDocumentProbe.busy) return;
+  eDocumentProbe={busy:true,result:null}; render();
+  try{
+    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'probe'}});
+    if(error) throw error;
+    eDocumentProbe={busy:false,result:data||{ok:false,connection:{code:'unknown'}}};
+  }catch(err){
+    eDocumentProbe={busy:false,result:{ok:false,connection:{code:'request_failed'}}};
+  }
+  if(activeTab==='edocuments') render();
+}
+function edocProbeMessage(){
+  const r=eDocumentProbe.result, c=r&&r.connection&&r.connection.code;
+  if(!r) return '';
+  if(r.ok) return 'Nilvera API anahtarı test ortamında doğrulandı. Belge gönderimi, durum sorgulama ve gelen kutusu akışları ayrıca tamamlanıp doğrulanmalı.';
+  if(c==='not_configured') return 'Sunucu ayarlarında NILVERA_API_KEY bulunamadı. Anahtarı Matrix’e veya sohbete değil, Supabase Edge Function Secrets’a ekle.';
+  if(c==='key_rejected') return 'Nilvera bu anahtarı test ortamında tanımadı. Anahtarın doğru ortam için üretildiğini ve eksiksiz kopyalandığını kontrol et.';
+  if(c==='scope_missing') return 'Nilvera API erişimi reddetti. Anahtarın süresi ve API tanımındaki izinleri kontrol et.';
+  if(c==='timeout') return 'Nilvera bağlantısı zaman aşımına uğradı. Biraz sonra tekrar dene.';
+  if(c==='unreachable') return 'Nilvera API adresine ulaşılamadı.';
+  return 'Bağlantı kontrolü tamamlanamadı. Anahtarın ortamını ve Nilvera API izinlerini kontrol et.';
+}
 function renderEDocumentsRows(){
   let rows=eDocumentRows.slice();
   if(eDocumentFilter.direction!=='all') rows=rows.filter(x=>x.direction===eDocumentFilter.direction);
@@ -4370,7 +4394,12 @@ function renderEDocumentsPage(){
   const chips=(key,items)=>items.map(([value,label])=>`<button class="edoc-chip ${eDocumentFilter[key]===value?'active':''}" data-edoc-filter="${key}|${value}">${label}</button>`).join('');
   return `<div class="panel edoc-page" style="max-width:1240px;">
     <div class="subhead-row"><div><h2 style="margin:0;">e-Belge Merkezi</h2><p class="hint" style="margin:5px 0 0;">Satış e-Faturaları, e-İrsaliyeler ve tedarikçilerden gelen belgeler.</p></div><button id="edoc-refresh" class="btn btn-ghost" ${eDocumentBusy?'disabled':''}>${eDocumentBusy?'Yükleniyor…':'Yenile'}</button></div>
-    <div class="edoc-status ${ready?'ready':'waiting'}"><span class="edoc-status-dot"></span><div><b>${ready?'Sağlayıcı bağlantısı hazır':'Sağlayıcı API bağlantısı bekleniyor'}</b><div>${ready?'Gönderim ve gelen kutusu yetenekleri sağlayıcı durumuna göre kullanılabilir.':'Bu Matrix sürümünde dış API çağrısı ve gerçek belge gönderimi kapalı. API anahtarı tarayıcıya girilmez; sağlayıcı bağlantısı sunucu tarafında kurulur.'}</div></div></div>
+    <div class="edoc-status ${ready?'ready':'waiting'}"><span class="edoc-status-dot"></span><div><b>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Nilvera API anahtarı sunucuda tanımlı':'Nilvera API anahtarı bekleniyor'}</b><div>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Ortam: '+(eDocumentStatus.providerEnvironment==='live'?'Canlı':'Test')+'. Anahtar tarayıcıya aktarılmaz. Gönderim ve gelen belge işlemleri adaptör doğrulaması tamamlanana kadar kapalı.':'API anahtarı Matrix ekranına veya sohbete girilmez; Supabase Edge Function Secrets’a NILVERA_API_KEY adıyla eklenir. Varsayılan ortam testtir.'}</div></div></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-8px 0 18px;">
+      <button id="edoc-test-connection" class="btn btn-ghost" ${!eDocumentStatus||!eDocumentStatus.providerKeyConfigured||eDocumentProbe.busy?'disabled':''}>${eDocumentProbe.busy?'Kontrol ediliyor…':'API bağlantısını test et'}</button>
+      <a href="https://supabase.com/dashboard/project/laopdoxuxvcwgcjghdim/functions/secrets" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--ink);font-weight:700;">Güvenli anahtar ayarını aç ↗</a>
+      ${edocProbeMessage()?'<span style="font-size:12px;color:'+(eDocumentProbe.result&&eDocumentProbe.result.ok?'var(--ink)':'var(--danger)')+';">'+escapeHtml(edocProbeMessage())+'</span>':''}
+    </div>
     ${eDocumentError?`<div class="edoc-error">${escapeHtml(eDocumentError)}</div>`:''}
     <div class="kpi-grid edoc-kpis"><div class="kpi-card"><div class="kpi-label">Kayıtlı belgeler</div><div class="kpi-value">${eDocumentRows.length}</div></div><div class="kpi-card"><div class="kpi-label">Giden</div><div class="kpi-value">${outgoing}</div></div><div class="kpi-card"><div class="kpi-label">Gelen kutusu</div><div class="kpi-value">${incoming}</div></div><div class="kpi-card"><div class="kpi-label">Bekleyen işlem</div><div class="kpi-value">${eDocumentRows.filter(x=>['queued','sending','submitted'].includes(x.status)).length}</div></div></div>
     <div class="edoc-actions"><button id="edoc-send-queue" class="btn btn-primary" ${ready?'':'disabled title="Sağlayıcı adaptörü henüz bağlı değil"'}>e-Belge gönderimi</button><button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&eDocumentStatus&&eDocumentStatus.canReceive?'':'disabled title="Gelen kutusu API adaptörü henüz bağlı değil"'}>Gelen e-Fatura / e-İrsaliye kontrolü</button><button class="btn btn-ghost" disabled title="Sağlayıcı adaptörü henüz bağlı değil">Gönderim durumlarını sorgula</button></div>
@@ -6503,10 +6532,12 @@ if(activeTab==='edocuments'){
     if(search) search.oninput=e=>{ eDocumentFilter.search=e.target.value; renderEDocumentsBody(); };
     document.querySelectorAll('[data-edoc-filter]').forEach(el=>{ el.onclick=()=>{ const [key,value]=el.dataset.edocFilter.split('|'); eDocumentFilter[key]=value; render(); }; });
     document.querySelectorAll('[data-edoc-events]').forEach(el=>{ el.onclick=()=>{ eDocumentExpandedId=eDocumentExpandedId===el.dataset.edocEvents?'':el.dataset.edocEvents; render(); }; });
+    const probe=document.getElementById('edoc-test-connection');
+    if(probe) probe.onclick=()=>testEDocumentConnection();
     const sync=document.getElementById('edoc-sync-incoming');
-    if(sync) sync.onclick=()=>alert('Gelen belge kontrolü, sağlayıcı API adaptörü bağlandıktan sonra etkinleşecek.');
+    if(sync) sync.onclick=()=>alert('Gelen belge akışı, Nilvera veri eşlemesi tamamlandıktan sonra etkinleşecek.');
     const send=document.getElementById('edoc-send-queue');
-    if(send) send.onclick=()=>alert('Belge gönderimi, sağlayıcı API adaptörü bağlandıktan sonra etkinleşecek.');
+    if(send) send.onclick=()=>alert('Belge gönderimi, Nilvera belge modeli ve önizleme onayı tamamlandıktan sonra etkinleşecek.');
   }
 
   if(activeTab==='list'){
