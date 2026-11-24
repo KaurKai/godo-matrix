@@ -539,6 +539,17 @@
 .edoc-totals .grand{border-top:1px solid var(--ink);margin-top:6px;padding-top:10px;font-size:16px;font-weight:700;}
 @media (max-width:980px){.edoc-board{grid-template-columns:1fr;}.edoc-acts{white-space:normal;}.edoc-table th:nth-child(3),.edoc-table td:nth-child(3){display:none;}}
 @media (max-width:620px){.edoc-head h2{font-size:21px;}.edoc-table th:first-child,.edoc-table td:first-child{display:none;}.edoc-acts .edoc-link{display:block;margin:0 0 8px;}.edoc-toolbar .edoc-link{margin-left:0;}.edoc-grid2{grid-template-columns:1fr;}.edoc-table th:nth-child(4),.edoc-table td:nth-child(4){display:none;}.edoc-rates{gap:14px;}}
+.edoc-task-warn{margin-top:8px;padding:7px 9px;background:#f5e7e4;color:var(--danger);font-size:11px;line-height:1.45;}
+.edoc-view-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:16px 20px;border-bottom:1px solid var(--ink);background:var(--paper);}
+.edoc-view-meta{min-width:0;}
+.edoc-view-meta>b{display:block;font-size:15px;margin:4px 0 6px;line-height:1.35;}
+.edoc-view-line{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;}
+.edoc-view-acts{display:flex;gap:8px;align-items:center;flex:none;}
+.edoc-view-acts .btn{white-space:nowrap;}
+.edoc-view-reject{color:var(--danger);border-color:var(--danger);}
+.edoc-in-preview-body{background:#e9e9e5!important;}
+.edoc-in-preview-frame{display:block;width:min(900px,100%)!important;margin:0 auto;box-shadow:0 2px 16px rgba(0,0,0,.08);}
+@media (max-width:720px){.edoc-view-head{flex-direction:column;}.edoc-view-acts{flex-wrap:wrap;}}
 .edoc-in-preview-backdrop{position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;}
 .edoc-in-preview{width:min(1100px,98vw);height:min(900px,94vh);background:var(--paper);display:flex;flex-direction:column;box-shadow:0 18px 70px rgba(0,0,0,.35);}
 .edoc-in-preview-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--hairline-strong);background:#fff;}
@@ -4551,6 +4562,7 @@ function edocTone(status){
 }
 function edocStatusHtml(d){
   let label = EDOC_STATUS_LABEL[d.status] || d.status;
+  if(d.direction==='outbound'){ const a=String(d.provider_metadata?.answerCode||'').toLowerCase(); if(a==='waitingforapproval' && d.status==='submitted') label='Alıcı yanıtı bekleniyor'; else if(d.status==='accepted' && a==='approved') label='Alıcı kabul etti'; }
   if(d.direction==='inbound' && d.status==='responded'){ const a = String(d.provider_metadata?.answerCode||'').toLowerCase(); if(a==='approved') label='Kabul edildi'; else if(a==='rejected') label='Reddedildi'; }
   return `<span class="edoc-st edoc-st-${edocTone(d.status)}"><i></i>${escapeHtml(label)}</span>`;
 }
@@ -4627,16 +4639,16 @@ function renderEDocumentsRows(){
     const events=eDocumentEvents.filter(ev=>ev.document_id===doc.id), fx=doc.payload_snapshot?.currency_conversion;
     const actions=[
       doc.direction==='outbound'&&doc.status==='draft'?act('data-edoc-preview',doc.id,'Önizle ve gönder'):'',
-      doc.direction==='inbound'&&doc.provider_document_id?act('data-edoc-in-preview',doc.id,'Görüntüle'):'',
-      doc.direction==='outbound'&&doc.provider_document_id&&['submitted','sending','accepted','rejected'].includes(doc.status)?act('data-edoc-refresh-doc',doc.id,'Durum sorgula'):'',
+      doc.provider_document_id?act('data-edoc-in-preview',doc.id,'Görüntüle'):'',
+      doc.direction==='outbound'&&doc.source_kind!=='nilvera_portal'&&doc.provider_document_id&&['submitted','sending','accepted','rejected'].includes(doc.status)?act('data-edoc-refresh-doc',doc.id,'Durum sorgula'):'',
       doc.direction==='outbound'&&doc.source_kind==='shipment'&&doc.provider_document_id&&['submitted','accepted','rejected'].includes(doc.status)&&(doc.provider_metadata||{}).sourceSyncStatus!=='synced'?act('data-edoc-sync-source',doc.id,'Sevkiyata yaz'):'',
       act('data-edoc-events',doc.id,eDocumentExpandedId===doc.id?'Gizle':'Geçmiş')
     ].filter(Boolean).join('');
     return `<tr class="${doc.status==='failed'?'is-muted':''}"><td><span class="edoc-dir ${doc.direction}" title="${doc.direction==='inbound'?'Gelen':'Giden'}">${doc.direction==='inbound'?'↓':'↑'}</span></td>
       <td><div class="edoc-type">${escapeHtml(EDOC_TYPE_LABEL[doc.document_type]||doc.document_type)}</div><div class="mono edoc-no">${escapeHtml(doc.document_number||(doc.status==='draft'?'taslak':'—'))}</div></td>
-      <td class="edoc-partycell">${escapeHtml(edocParty(doc))}</td>
+      <td class="edoc-partycell">${escapeHtml(edocParty(doc))}${doc.source_kind==='nilvera_portal'?'<div class="edoc-muted">Nilvera portalından kesildi</div>':''}</td>
       <td class="mono">${escapeHtml(formatDate(doc.issue_date||String(doc.created_at||'').slice(0,10)))}</td>
-      <td class="num mono"><b>${doc.total_amount===null?'—':edocMoney(doc.total_amount,doc.currency)}</b>${fx&&fx.source_currency&&fx.source_currency!=='TRY'?`<div class="edoc-muted">${edocMoney(fx.source_net_amount,fx.source_currency)} · ${edocRate(fx.rate)}</div>`:''}</td>
+      <td class="num mono"><b>${doc.total_amount===null?'—':edocMoney(doc.total_amount,doc.currency)}</b>${fx&&fx.source_currency&&fx.source_currency!=='TRY'?`<div class="edoc-muted">${edocMoney(fx.source_net_amount,fx.source_currency)} · ${edocRate(fx.rate)}</div>`:(String(doc.currency||'TRY').toUpperCase()!=='TRY'&&Number(doc.payload_snapshot?.exchange_rate)>0?`<div class="edoc-muted">₺ ${fmt(Math.round(Number(doc.total_amount)*Number(doc.payload_snapshot.exchange_rate)*100)/100)} · ${edocRate(doc.payload_snapshot.exchange_rate)}</div>`:'')}</td>
       <td>${edocStatusHtml(doc)}${doc.last_error?`<div class="edoc-err">${escapeHtml(doc.last_error)}</div>`:''}</td>
       <td class="edoc-acts">${actions}</td></tr>
       ${eDocumentExpandedId===doc.id?`<tr class="edoc-events-row"><td></td><td colspan="6"><div class="edoc-event-list">${events.length?events.map(ev=>{const d=ev.created_at?new Date(ev.created_at):null;const stamp=d&&!isNaN(d.getTime())?d.toLocaleString('tr-TR',{timeZone:'Europe/Istanbul',dateStyle:'short',timeStyle:'short'}):'—';return `<div><span class="mono">${escapeHtml(stamp)}</span><span>${escapeHtml(ev.from_status?((EDOC_STATUS_LABEL[ev.from_status]||ev.from_status)+' → '):'')}${escapeHtml(EDOC_STATUS_LABEL[ev.to_status]||ev.to_status||'')}</span></div>`;}).join(''):'Olay kaydı yok.'}</div></td></tr>`:''}`;
@@ -4655,14 +4667,14 @@ function renderEDocumentsPage(){
       <div class="edoc-task-top"><b>${escapeHtml(edocParty(d))}</b><span class="mono">${edocMoney(d.total_amount,d.currency)}</span></div>
       <div class="edoc-task-meta mono">${escapeHtml(d.document_number||'')} · son yanıt ${escapeHtml(formatDate(dl))}${left!==null?` (${left<0?'süre geçti':left===0?'bugün':left+' gün'})`:''}</div>
       <div class="edoc-task-acts">${d.provider_document_id?`<button class="edoc-link" data-edoc-in-preview="${escapeAttr(d.id)}">Görüntüle</button>`:''}${d.status==='response_uncertain'?'<span class="edoc-muted">Sonuç belirsiz · listeyi yenile</span>':`<button class="edoc-link" data-edoc-response="${escapeAttr(d.id)}|accept">Kabul et</button><button class="edoc-link danger" data-edoc-response="${escapeAttr(d.id)}|reject">Reddet</button>`}</div></div>`;}).join('');
-  const draftsHtml=drafts.map(d=>{const fx=d.payload_snapshot?.currency_conversion;return `<div class="edoc-task">
+  const draftsHtml=drafts.map(d=>{const fx=d.payload_snapshot?.currency_conversion,dup=edocPortalInvoiceFor(d.payload_snapshot?.customer?.taxNo);return `<div class="edoc-task ${dup?'urgent':''}">
       <div class="edoc-task-top"><b>${escapeHtml(edocParty(d))}</b><span class="mono">${edocMoney(d.total_amount,d.currency)}</span></div>
       <div class="edoc-task-meta mono">${escapeHtml(edocTypeLabel(d.document_type))} · ${escapeHtml(formatDate(d.issue_date||''))}${fx&&fx.source_currency&&fx.source_currency!=='TRY'?' · '+edocMoney(fx.source_net_amount,fx.source_currency)+' × '+edocRate(fx.rate):''}</div>
-      <div class="edoc-task-acts"><button class="edoc-link strong" data-edoc-preview="${escapeAttr(d.id)}">Önizle ve gönder</button></div></div>`;}).join('');
-  const shipHtml=toInvoice.slice(0,6).map(s=>`<div class="edoc-task">
+      ${dup?`<div class="edoc-task-warn">Bu müşteriye Nilvera’da ${escapeHtml(dup.document_number||'')} kesilmiş. Bu taslağı gönderirsen mükerrer fatura olur.</div>`:''}<div class="edoc-task-acts"><button class="edoc-link strong" data-edoc-preview="${escapeAttr(d.id)}">Önizle ve gönder</button></div></div>`;}).join('');
+  const shipHtml=toInvoice.slice(0,6).map(s=>{const dup=edocPortalInvoiceFor(edocShipmentTaxNo(s));return `<div class="edoc-task ${dup?'urgent':''}">
       <div class="edoc-task-top"><b>${escapeHtml(s.customer?.name||'Müşteri')}</b><span class="mono">${escapeHtml(s.currency||'€')} ${fmt(shipNet(s))}</span></div>
       <div class="edoc-task-meta mono">${escapeHtml(s.orderNo||'')} · sevk ${escapeHtml(formatDate(s.date||''))}</div>
-      <div class="edoc-task-acts"><button class="edoc-link strong" data-edoc-compose="${escapeAttr(String(s.id))}|e_invoice">Fatura hazırla</button>${s.officialIrsaliyeNo?'':`<button class="edoc-link" data-edoc-compose="${escapeAttr(String(s.id))}|e_despatch">e-İrsaliye</button>`}</div></div>`).join('')+(toInvoice.length>6?`<div class="edoc-col-empty">+${toInvoice.length-6} sevkiyat daha</div>`:'');
+      ${dup?`<div class="edoc-task-warn">Bu müşteriye Nilvera’da ${escapeHtml(dup.document_number||'')} (${escapeHtml(formatDate(dup.issue_date||''))}, ${edocMoney(dup.total_amount,dup.currency)}) kesilmiş. Aynı sevkiyatın faturasıysa yeniden kesme.</div>`:''}<div class="edoc-task-acts"><button class="edoc-link strong" data-edoc-compose="${escapeAttr(String(s.id))}|e_invoice">Fatura hazırla</button>${s.officialIrsaliyeNo?'':`<button class="edoc-link" data-edoc-compose="${escapeAttr(String(s.id))}|e_despatch">e-İrsaliye</button>`}</div></div>`;}).join('')+(toInvoice.length>6?`<div class="edoc-col-empty">+${toInvoice.length-6} sevkiyat daha</div>`:'');
   const drawer = eDocumentPreview ? renderEDocPreview() : (eDocumentCompose ? renderEDocumentsCompose() : '');
   const seg=(key,items)=>`<div class="edoc-seg small">${items.map(([v,l])=>`<button type="button" class="${eDocumentFilter[key]===v?'on':''}" data-edoc-filter="${key}|${v}">${l}</button>`).join('')}</div>`;
   return `<div class="edoc">
@@ -4673,7 +4685,7 @@ function renderEDocumentsPage(){
           <div class="edoc-conn-pop"><p>API anahtarı yalnız sunucuda (Supabase Secrets · NILVERA_API_KEY) durur, tarayıcıya gelmez.</p>
           <div class="edoc-conn-acts"><button id="edoc-test-connection" class="edoc-link strong" ${!st.providerKeyConfigured||eDocumentProbe.busy?'disabled':''}>${eDocumentProbe.busy?'Kontrol ediliyor…':'Bağlantıyı test et'}</button><a class="edoc-link" href="https://supabase.com/dashboard/project/laopdoxuxvcwgcjghdim/functions/secrets" target="_blank" rel="noopener noreferrer">Anahtar ayarı ↗</a></div>
           ${edocProbeMessage()?`<p class="${eDocumentProbe.result&&eDocumentProbe.result.ok?'':'edoc-err'}">${escapeHtml(edocProbeMessage())}</p>`:''}</div></details>
-        <button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&st.canReceive&&!eDocumentActionBusy?'':'disabled'}>Gelen kutusunu yenile</button>
+        <button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&st.canReceive&&!eDocumentActionBusy?'':'disabled'}>Nilvera’dan eşitle</button>
         <button id="edoc-refresh" class="btn btn-ghost" ${eDocumentBusy?'disabled':''}>${eDocumentBusy?'Yükleniyor…':'Yenile'}</button>
       </div>
     </header>
@@ -4725,6 +4737,8 @@ function attachEDocumentHandlers(){
   document.querySelectorAll('[data-edoc-response]').forEach(el=>{ el.onclick=()=>{ const [id,response]=el.dataset.edocResponse.split('|'); edocRespondIncoming(id,response); }; });
   document.querySelectorAll('[data-edoc-compose]').forEach(el=>{ el.onclick=()=>{ const [id,type]=el.dataset.edocCompose.split('|'); eDocumentPreview=null; eDocumentCompose={shipmentId:id,type,issueDate:todayStr()}; render(); }; });
   const closeIncomingPreview=document.getElementById('edoc-in-preview-close'); if(closeIncomingPreview) closeIncomingPreview.onclick=()=>{ eDocumentIncomingPreview=null; render(); };
+  const frame=document.getElementById('edoc-in-preview-frame'); if(frame && eDocumentIncomingPreview && eDocumentIncomingPreview.html) frame.srcdoc=sandboxIncomingEDocumentHtml(eDocumentIncomingPreview.html);
+  const pdfBtn=document.getElementById('edoc-view-pdf'); if(pdfBtn && eDocumentIncomingPreview) pdfBtn.onclick=()=>edocDownloadPdf(eDocumentIncomingPreview.id);
   const incomingBackdrop=document.getElementById('edoc-in-preview-backdrop'); if(incomingBackdrop) incomingBackdrop.onclick=e=>{ if(e.target===incomingBackdrop){ eDocumentIncomingPreview=null; render(); } };
   const probe=document.getElementById('edoc-test-connection'); if(probe) probe.onclick=()=>testEDocumentConnection();
   const sync=document.getElementById('edoc-sync-incoming'); if(sync) sync.onclick=()=>edocSyncInbox();
@@ -4740,7 +4754,7 @@ function attachEDocumentHandlers(){
   const issue=document.getElementById('edoc-issue-date'); if(issue) issue.onchange=()=>edocUpdateFxSlot();
   if(eDocumentCompose && !eDocumentPreview){ edocApplyVatDefault().then(()=>edocUpdateFxSlot()); edocUpdateFxSlot(); }
   const send=document.getElementById('edoc-confirm-send'); if(send) send.onclick=()=>edocSendPrepared();
-  if(!document.body.dataset.edocEsc){ document.body.dataset.edocEsc='1'; document.addEventListener('keydown',e=>{ if(e.key==='Escape' && activeTab==='edocuments' && (eDocumentCompose||eDocumentPreview) && !eDocumentActionBusy && !eDocumentIncomingPreview){ eDocumentCompose=null; eDocumentPreview=null; render(); } }); }
+  if(!document.body.dataset.edocEsc){ document.body.dataset.edocEsc='1'; document.addEventListener('keydown',e=>{ if(e.key==='Escape' && activeTab==='edocuments' && eDocumentIncomingPreview){ eDocumentIncomingPreview=null; render(); return; } if(e.key==='Escape' && activeTab==='edocuments' && (eDocumentCompose||eDocumentPreview) && !eDocumentActionBusy){ eDocumentCompose=null; eDocumentPreview=null; render(); } }); }
 }
 async function edocPrepareSelected(){
   if(eDocumentActionBusy)return;
@@ -4819,43 +4833,83 @@ async function edocSyncSource(id){
 }
 async function edocSyncInbox(){
  if(eDocumentActionBusy)return;eDocumentActionBusy=true;render();
+ const labels={e_invoice:'e-Fatura',e_despatch:'e-İrsaliye',e_archive_invoice:'e-Arşiv'};
+ const notes=[];let inCount=null,outCount=null,warnings=[];
  try{
-  const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'inbox'}});
-  if(error||!data?.ok)throw new Error(data?.error||error?.message||'Gelen belge kontrolü tamamlanamadı.');
-  await loadEDocumentCenter({force:true});
-  const labels={e_invoice:'e-Fatura',e_despatch:'e-İrsaliye'};
-  const failed=(data.errors||[]).map(x=>(labels[x.documentType]||x.documentType)+': '+({permission_denied:'Nilvera API yetkisi eksik',key_rejected:'API anahtarı reddedildi',endpoint_not_found:'API yolu bulunamadı',timeout:'zaman aşımı',provider_unavailable:'Nilvera servisi yanıt vermedi',provider_error:'Nilvera isteği reddedildi',sync_error:'eşitleme hatası'}[x.code]||'kontrol başarısız'));
-  const result='Gelen belgeler yenilendi. Yeni: '+data.created+' · Güncellenen: '+data.updated+' · Aynı kalan: '+data.unchanged+'.';
-  alert(result+(failed.length?' Kısmi sonuç: '+failed.join(' · ')+'. Başarıyla kaydedilen belgeler listede gösterildi.':'')+' Belgeler Nilvera’da okundu/yanıtlandı olarak işaretlenmedi.');
- }catch(e){
+  const [inRes,outRes]=await Promise.allSettled([
+   sb.functions.invoke('edocument-gateway',{body:{action:'inbox'}}),
+   sb.functions.invoke('edocument-viewer',{body:{action:'sync_outbound'}})
+  ]);
+  const inData=inRes.status==='fulfilled'?inRes.value.data:null, outData=outRes.status==='fulfilled'?outRes.value.data:null;
+  if(inData&&inData.ok){inCount=inData.created;(inData.errors||[]).forEach(x=>notes.push('Gelen '+(labels[x.documentType]||x.documentType)+': alınamadı'));}
+  else notes.push('Gelen belgeler alınamadı'+(inData&&inData.error?' ('+inData.error+')':''));
+  if(outData&&outData.ok){outCount=outData.created;warnings=outData.warnings||[];(outData.errors||[]).forEach(x=>notes.push('Giden '+(labels[x.documentType]||x.documentType)+': '+x.message));}
+  else notes.push('Giden faturalar alınamadı'+(outData&&outData.error?' ('+outData.error+')':''));
+ }finally{
   try{await loadEDocumentCenter({force:true});}catch{}
-  alert((e&&e.message?e.message:'Gelen belge kontrolü tamamlanamadı.')+' Önceden kaydedilen gelen belgeler yenilenip listede gösterildi.');
- }finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+  eDocumentActionBusy=false;if(activeTab==='edocuments')render();
+ }
+ const head='Nilvera ile eşitlendi.'+(inCount!==null?' Yeni gelen: '+inCount+'.':'')+(outCount!==null?' Yeni giden: '+outCount+'.':'');
+ const warn=warnings.length?'\n\nDİKKAT — mükerrer fatura riski:\n'+warnings.map(w=>'• '+w.customer+' için Nilvera’da '+w.invoiceNumber+' kesilmiş, ama Matrix’te bu müşteriye gönderilmemiş bir taslak da var. Taslağı göndermeyin.').join('\n'):'';
+ alert(head+(notes.length?'\n'+notes.join(' · '):'')+warn+'\n\nBelgeler Nilvera’da okundu ya da yanıtlandı olarak işaretlenmedi.');
+}
+function edocPortalInvoiceFor(taxNo){
+ const vkn=String(taxNo||'').replace(/\D/g,'');if(!vkn)return null;
+ return eDocumentRows.find(d=>d.direction==='outbound'&&d.source_kind==='nilvera_portal'&&!['failed','cancelled'].includes(d.status)&&String(d.payload_snapshot?.customer?.taxNo||'').replace(/\D/g,'')===vkn)||null;
+}
+function edocShipmentTaxNo(s){
+ const c=(customers||[]).find(x=>String(x.id||'')===String(s?.customer?.customerId||''));
+ return (c&&c.taxNo)||s?.customer?.taxNo||'';
 }
 function sandboxIncomingEDocumentHtml(raw){
  const policy=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; img-src data:; style-src 'unsafe-inline' data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; media-src 'none'; worker-src 'none'">`;
+ const fit=`<style>html,body{background:#fff!important;}body{margin:0 auto!important;padding:24px!important;max-width:900px;}</style>`;
  const source=String(raw||"");
- if(/<head\b[^>]*>/i.test(source))return source.replace(/<head\b[^>]*>/i,match=>match+policy);
- if(/<html\b[^>]*>/i.test(source))return source.replace(/<html\b[^>]*>/i,match=>match+"<head>"+policy+"</head>");
- return "<!doctype html><html><head><meta charset=\"utf-8\">"+policy+"</head><body>"+source+"</body></html>";
+ if(/<head\b[^>]*>/i.test(source))return source.replace(/<head\b[^>]*>/i,match=>match+policy+fit);
+ if(/<html\b[^>]*>/i.test(source))return source.replace(/<html\b[^>]*>/i,match=>match+"<head>"+policy+fit+"</head>");
+ return "<!doctype html><html><head><meta charset=\"utf-8\">"+policy+fit+"</head><body>"+source+"</body></html>";
 }
 function renderIncomingPreviewModal(){
  const p=eDocumentIncomingPreview;if(!p)return "";
- const title=escapeHtml(p.documentType==="e_despatch"?"Gelen e-İrsaliye":"Gelen e-Fatura");
- const detail=[p.sender||"Gelen belge",p.documentNumber||p.ettn||""].filter(Boolean).map(escapeHtml).join(" · ");
- const body=p.busy?`<div class="edoc-in-preview-message">Belge içeriği yükleniyor…</div>`:p.error?`<div class="edoc-in-preview-message" style="color:var(--danger);">${escapeHtml(p.error)}</div>`:`<iframe id="edoc-in-preview-frame" class="edoc-in-preview-frame" title="Gelen belge önizlemesi" sandbox="" referrerpolicy="no-referrer"></iframe>`;
- return `<div class="edoc-in-preview-backdrop" id="edoc-in-preview-backdrop"><section class="edoc-in-preview" role="dialog" aria-modal="true" aria-label="Gelen belge önizlemesi"><div class="edoc-in-preview-head"><div class="edoc-in-preview-meta"><b>${title}</b>${detail}</div><button id="edoc-in-preview-close" class="btn btn-ghost">Kapat</button></div><div class="edoc-in-preview-body">${body}</div></section></div>`;
+ const d=eDocumentRows.find(x=>x.id===p.id)||{}, inbound=d.direction==='inbound', snap=d.payload_snapshot||{};
+ const kicker=(inbound?'Gelen ':'Giden ')+edocTypeLabel(d.document_type||'e_invoice')+(d.source_kind==='nilvera_portal'?' · Nilvera portalı':'');
+ const rate=Number(snap.exchange_rate||snap.currency_conversion?.rate||0), cur=String(d.currency||'TRY').toUpperCase();
+ const amount=d.total_amount==null?'':edocMoney(d.total_amount,d.currency)+(cur!=='TRY'&&rate>0?' <span class="edoc-muted">· kur '+edocRate(rate)+' · ₺ '+fmt(Math.round(Number(d.total_amount)*rate*100)/100)+'</span>':'');
+ const deadline=inbound&&['received','awaiting_response'].includes(d.status)?edocResponseDeadline(d):'';
+ const body=p.busy?`<div class="edoc-in-preview-message">Belge Nilvera’dan alınıyor…</div>`:p.error?`<div class="edoc-in-preview-message" style="color:var(--danger);">${escapeHtml(p.error)}</div>`:`<iframe id="edoc-in-preview-frame" class="edoc-in-preview-frame" title="Belge önizlemesi" sandbox="" referrerpolicy="no-referrer"></iframe>`;
+ const acts=[`<button id="edoc-view-pdf" class="btn btn-ghost" ${p.pdfBusy?'disabled':''}>${p.pdfBusy?'PDF hazırlanıyor…':'PDF indir'}</button>`];
+ if(inbound&&['received','awaiting_response'].includes(d.status)&&!eDocumentActionBusy){acts.push(`<button class="btn btn-ghost edoc-view-reject" data-edoc-response="${escapeAttr(d.id)}|reject">Reddet</button>`,`<button class="btn btn-primary" data-edoc-response="${escapeAttr(d.id)}|accept">Kabul et</button>`);}
+ acts.push(`<button id="edoc-in-preview-close" class="edoc-x" aria-label="Kapat">×</button>`);
+ return `<div class="edoc-in-preview-backdrop" id="edoc-in-preview-backdrop"><section class="edoc-in-preview" role="dialog" aria-modal="true" aria-label="Belge önizlemesi">
+  <div class="edoc-view-head">
+   <div class="edoc-view-meta"><div class="edoc-kicker">${escapeHtml(kicker)}</div><b>${escapeHtml(edocParty(d))}</b>
+    <div class="edoc-view-line"><span class="mono">${escapeHtml(d.document_number||'')}</span><span class="mono">${escapeHtml(formatDate(d.issue_date||''))}</span><span class="mono">${amount}</span>${d.status?edocStatusHtml(d):''}${deadline?`<span class="edoc-muted">son yanıt ${escapeHtml(formatDate(deadline))}</span>`:''}</div></div>
+   <div class="edoc-view-acts">${acts.join('')}</div>
+  </div>
+  <div class="edoc-in-preview-body">${body}</div></section></div>`;
 }
 async function edocPreviewIncoming(id){
  if(eDocumentIncomingPreview?.busy)return;
- const row=eDocumentRows.find(x=>x.id===id);if(!row||row.direction!=="inbound")return;
- eDocumentIncomingPreview={busy:true,documentType:row.document_type,sender:row.payload_snapshot?.sender||row.provider_metadata?.senderName||"Gelen belge",documentNumber:row.document_number||row.ettn||""};render();
+ const row=eDocumentRows.find(x=>x.id===id);if(!row||!row.provider_document_id)return;
+ eDocumentIncomingPreview={id,busy:true};render();
  try{
-  const {data,error}=await sb.functions.invoke("edocument-gateway",{body:{action:"preview_incoming",documentId:id}});
-  if(error||!data?.ok||typeof data?.html!=="string")throw new Error(data?.error||error?.message||"Gelen belge önizlemesi alınamadı.");
-  eDocumentIncomingPreview={...data.document,busy:false,html:data.html};render();
-  const frame=document.getElementById("edoc-in-preview-frame");if(frame)frame.srcdoc=sandboxIncomingEDocumentHtml(data.html);
- }catch(e){eDocumentIncomingPreview={...eDocumentIncomingPreview,busy:false,error:e instanceof Error?e.message:"Gelen belge önizlemesi alınamadı."};render();}
+  const {data,error}=await sb.functions.invoke("edocument-viewer",{body:{action:"view",documentId:id}});
+  if(error||!data?.ok||typeof data?.html!=="string")throw new Error(data?.error||error?.message||"Belge önizlemesi alınamadı.");
+  if(eDocumentIncomingPreview?.id!==id)return;
+  eDocumentIncomingPreview={id,busy:false,html:data.html};render();
+ }catch(e){if(eDocumentIncomingPreview?.id===id){eDocumentIncomingPreview={id,busy:false,error:e instanceof Error?e.message:"Belge önizlemesi alınamadı."};render();}}
+}
+async function edocDownloadPdf(id){
+ const p=eDocumentIncomingPreview;if(!p||p.pdfBusy)return;
+ p.pdfBusy=true;render();
+ try{
+  const {data,error}=await sb.functions.invoke("edocument-viewer",{body:{action:"pdf",documentId:id}});
+  if(error||!data?.ok||!data?.base64)throw new Error(data?.error||error?.message||"PDF alınamadı.");
+  const bin=atob(data.base64),bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+  const a=document.createElement("a");a.href=url;a.download=data.filename||"e-belge.pdf";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);
+ }catch(e){alert(e instanceof Error?e.message:"PDF alınamadı.");}
+ finally{if(eDocumentIncomingPreview){eDocumentIncomingPreview.pdfBusy=false;render();}}
 }
 async function edocRespondIncoming(id,response){
  if(eDocumentActionBusy)return;
@@ -4884,7 +4938,7 @@ async function edocRefreshOne(id){
  finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
 }
 async function edocRefreshPending(){
- if(eDocumentActionBusy)return;const rows=eDocumentRows.filter(d=>d.direction==='outbound'&&d.provider_document_id&&['submitted','sending','accepted','rejected'].includes(d.status));
+ if(eDocumentActionBusy)return;const rows=eDocumentRows.filter(d=>d.direction==='outbound'&&d.source_kind!=='nilvera_portal'&&d.provider_document_id&&['submitted','sending','accepted','rejected'].includes(d.status));
  if(!rows.length){alert('Durum sorgulanacak gönderilmiş belge yok.');return;}
  eDocumentActionBusy=true;render();let ok=0,failed=0;
  for(const d of rows){try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'refresh',documentId:d.id}});if(error||!data?.ok)failed++;else ok++;}catch{failed++;}}
