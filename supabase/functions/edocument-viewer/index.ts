@@ -83,6 +83,10 @@ function outboundStatus(row: Record<string, any>, type: string) {
   return st === "succeed" ? "accepted" : "submitted";
 }
 
+function financialSnapshot(s: any) {
+  const c = s.currency_conversion || {};
+  return { currency: "TRY", vatRate: Number(s.vat_rate || 0), netAmount: Number(s.net_amount || 0), vatAmount: Number(s.vat_amount || 0), totalAmount: Number(s.gross_amount || 0), sourceCurrency: String(c.source_currency || s.currency || "TRY"), sourceNetAmount: Number(c.source_net_amount || s.net_amount || 0), currencyConversion: { rate: Number(c.rate || 1), rateDate: String(c.rate_date || s.issue_date || ""), requestedRateDate: String(c.requested_rate_date || ""), source: String(c.rate_source || ""), field: String(c.rate_field || "") }, lines: (Array.isArray(s.lines) ? s.lines : []).map((l: any) => ({ quoteItemId: String(l.quote_item_id || ""), code: String(l.product_code || ""), desc: String(l.description || ""), qty: Number(l.quantity || 0), unitPrice: Number(l.unit_price || 0), currency: "TRY", vatRate: Number(l.tax_rate || 0) })) };
+}
 async function syncOutbound(admin: ReturnType<typeof createClient>, userId: string) {
   let created = 0, updated = 0, unchanged = 0, linked = 0;
   const errors: { documentType: string; message: string }[] = [], portal: any[] = [];
@@ -94,8 +98,19 @@ async function syncOutbound(admin: ReturnType<typeof createClient>, userId: stri
         for (const row of rows) {
           const uuid = str(row.UUID, 64); if (!UUID_RE.test(uuid)) continue;
           // Matrix'ten gönderilmiş belge zaten kayıtlıysa ona dokunma (kendi durum sorgusu var)
-          const { data: own } = await admin.from("e_documents").select("id,source_kind").eq("user_id", userId).eq("provider_key", "nilvera").ilike("provider_document_id", uuid).maybeSingle();
-          if (own && own.source_kind !== "nilvera_portal") { linked++; continue; }
+          const { data: own } = await admin.from("e_documents").select("id,source_kind,source_id,document_type,document_number,payload_snapshot,provider_metadata").eq("user_id", userId).eq("provider_key", "nilvera").ilike("provider_document_id", uuid).maybeSingle();
+          if (own && own.source_kind !== "nilvera_portal") {
+            linked++;
+            const issued = str(row.InvoiceNumber, 40);
+            if (own.source_kind === "shipment" && !own.document_number && issued.length > 3) {
+              await admin.from("e_documents").update({ document_number: issued, status: outboundStatus(row, spec.type) }).eq("user_id", userId).eq("id", own.id);
+              const snap = own.payload_snapshot || {};
+              const out = await admin.rpc("matrix_sync_shipment_edocument_fx", { p_user_id: userId, p_shipment_id: String(own.source_id), p_document_type: String(own.document_type), p_document_number: issued, p_issue_date: String(snap.issue_date || day(row.IssueDate)), p_invoice_snapshot: financialSnapshot(snap) });
+              if (!out.error && out.data?.updated === true) await admin.from("e_documents").update({ provider_metadata: { ...(own.provider_metadata || {}), sourceSyncStatus: "synced", sourceSyncedAt: new Date().toISOString() } }).eq("user_id", userId).eq("id", own.id);
+              updated++;
+            }
+            continue;
+          }
           const status = outboundStatus(row, spec.type), currency = str(row.CurrencyCode, 8) || "TRY";
           const meta = {
             platform: str(row.Platform, 40), profile: str(row.InvoiceProfile, 40), invoiceType: str(row.InvoiceType, 40),

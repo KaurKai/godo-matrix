@@ -4626,7 +4626,7 @@ function renderEDocumentsCompose(){
     </div>
     <div id="edoc-dispatch-fields" style="display:${isDespatch?'block':'none'};"><div class="edoc-grid2">${dispatchFields.map(([k,l])=>`<div class="field"><label>${l}</label><input id="edoc-${k}"></div>`).join('')}</div></div>
   </div>
-  <div class="edoc-drawer-foot"><button id="edoc-prepare" class="btn btn-primary" ${eDocumentActionBusy?'disabled':''}>${eDocumentActionBusy?'Hazırlanıyor…':'Taslak hazırla'}</button><span class="edoc-muted">Bu adımda Nilvera’ya bir şey gönderilmez.</span></div>`;
+  <div class="edoc-drawer-foot"><button id="edoc-prepare" class="btn btn-primary" ${eDocumentActionBusy?'disabled':''}>${eDocumentActionBusy?'Hazırlanıyor…':'Önizlemeyi aç'}</button><span class="edoc-muted">Fatura Nilvera’da taslak olarak hazırlanır, GİB’e gitmez. Kesmek için önizlemede onay verirsin.</span></div>`;
 }
 function renderEDocumentsRows(){
   let rows=eDocumentRows.slice();
@@ -4675,7 +4675,7 @@ function renderEDocumentsPage(){
       <div class="edoc-task-top"><b>${escapeHtml(s.customer?.name||'Müşteri')}</b><span class="mono">${escapeHtml(s.currency||'€')} ${fmt(shipNet(s))}</span></div>
       <div class="edoc-task-meta mono">${escapeHtml(s.orderNo||'')} · sevk ${escapeHtml(formatDate(s.date||''))}</div>
       ${dup?`<div class="edoc-task-warn">Bu müşteriye Nilvera’da ${escapeHtml(dup.document_number||'')} (${escapeHtml(formatDate(dup.issue_date||''))}, ${edocMoney(dup.total_amount,dup.currency)}) kesilmiş. Aynı sevkiyatın faturasıysa yeniden kesme.</div>`:''}<div class="edoc-task-acts"><button class="edoc-link strong" data-edoc-compose="${escapeAttr(String(s.id))}|e_invoice">Fatura hazırla</button>${s.officialIrsaliyeNo?'':`<button class="edoc-link" data-edoc-compose="${escapeAttr(String(s.id))}|e_despatch">e-İrsaliye</button>`}</div></div>`;}).join('')+(toInvoice.length>6?`<div class="edoc-col-empty">+${toInvoice.length-6} sevkiyat daha</div>`:'');
-  const drawer = eDocumentPreview ? renderEDocPreview() : (eDocumentCompose ? renderEDocumentsCompose() : '');
+  const drawer = eDocumentPreview && !eDocumentPreview.html ? renderEDocPreview() : (eDocumentCompose ? renderEDocumentsCompose() : '');
   const seg=(key,items)=>`<div class="edoc-seg small">${items.map(([v,l])=>`<button type="button" class="${eDocumentFilter[key]===v?'on':''}" data-edoc-filter="${key}|${v}">${l}</button>`).join('')}</div>`;
   return `<div class="edoc">
     <header class="edoc-head">
@@ -4703,7 +4703,7 @@ function renderEDocumentsPage(){
       <div id="edoc-rows">${eDocumentBusy&&!eDocumentRows.length?'<div class="edoc-none">Yükleniyor…</div>':renderEDocumentsRows()}</div>
     </section>
     ${drawer?`<div class="edoc-scrim" id="edoc-scrim"></div><aside class="edoc-drawer" role="dialog" aria-modal="true">${drawer}</aside>`:''}
-    ${renderIncomingPreviewModal()}
+    ${renderIncomingPreviewModal()}${renderEDocDraftModal()}
   </div>`;
 }
 const edocFxTried = new Set();
@@ -4726,7 +4726,8 @@ function attachEDocumentRowHandlers(){
   document.querySelectorAll('[data-edoc-events]').forEach(el=>{ el.onclick=()=>{ eDocumentExpandedId=eDocumentExpandedId===el.dataset.edocEvents?'':el.dataset.edocEvents; renderEDocumentsBody(); }; });
   document.querySelectorAll('[data-edoc-in-preview]').forEach(el=>{ el.onclick=()=>edocPreviewIncoming(el.dataset.edocInPreview); });
   document.querySelectorAll('[data-edoc-sync-source]').forEach(el=>{ el.onclick=()=>edocSyncSource(el.dataset.edocSyncSource); });
-  document.querySelectorAll('[data-edoc-preview]').forEach(btn=>{ btn.onclick=()=>{ const d=eDocumentRows.find(x=>x.id===btn.dataset.edocPreview); if(d){ eDocumentCompose=null; eDocumentPreview={document:d,snapshot:d.payload_snapshot}; render(); } }; });
+  document.querySelectorAll('[data-edoc-preview]').forEach(btn=>{ btn.onclick=()=>{ const d=eDocumentRows.find(x=>x.id===btn.dataset.edocPreview); if(d) edocOpenDraft(d); }; });
+  const outBackdrop=document.getElementById('edoc-out-backdrop'); if(outBackdrop) outBackdrop.onclick=e=>{ if(e.target===outBackdrop && !eDocumentActionBusy){ eDocumentPreview=null; render(); } };
   document.querySelectorAll('[data-edoc-refresh-doc]').forEach(btn=>{ btn.onclick=async()=>{ await edocRefreshOne(btn.dataset.edocRefreshDoc); }; });
 }
 function attachEDocumentHandlers(){
@@ -4754,6 +4755,8 @@ function attachEDocumentHandlers(){
   const issue=document.getElementById('edoc-issue-date'); if(issue) issue.onchange=()=>edocUpdateFxSlot();
   if(eDocumentCompose && !eDocumentPreview){ edocApplyVatDefault().then(()=>edocUpdateFxSlot()); edocUpdateFxSlot(); }
   const send=document.getElementById('edoc-confirm-send'); if(send) send.onclick=()=>edocSendPrepared();
+  const outFrame=document.getElementById('edoc-out-frame'); if(outFrame && eDocumentPreview && eDocumentPreview.html) outFrame.srcdoc=sandboxIncomingEDocumentHtml(eDocumentPreview.html);
+  const outDiscard=document.getElementById('edoc-out-discard'); if(outDiscard) outDiscard.onclick=()=>edocDiscardPreview();
   if(!document.body.dataset.edocEsc){ document.body.dataset.edocEsc='1'; document.addEventListener('keydown',e=>{ if(e.key==='Escape' && activeTab==='edocuments' && eDocumentIncomingPreview){ eDocumentIncomingPreview=null; render(); return; } if(e.key==='Escape' && activeTab==='edocuments' && (eDocumentCompose||eDocumentPreview) && !eDocumentActionBusy){ eDocumentCompose=null; eDocumentPreview=null; render(); } }); }
 }
 async function edocPrepareSelected(){
@@ -4797,14 +4800,21 @@ async function edocPrepareSelected(){
     invoiceOptions={issueDate,vatRate:Number(vatValue),vatExemptionCode};
   }
   const identity=await sb.auth.getUser();
-  const customerForKey=customers.find(c=>String(c.id||'')===String(shipment.customer?.customerId||''))||shipment.customer||{};   const stable=JSON.stringify({id:shipment.id,type,customer:{name:customerForKey.name||'',taxOffice:customerForKey.taxOffice||'',taxNo:customerForKey.taxNo||'',address:customerForKey.address||''},invoiceOptions,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines});
+  const customerForKey=customers.find(c=>String(c.id||'')===String(shipment.customer?.customerId||''))||shipment.customer||{};   const stable=JSON.stringify({id:shipment.id,type,customer:{name:customerForKey.name||'',taxOffice:customerForKey.taxOffice||'',taxNo:customerForKey.taxNo||'',address:customerForKey.address||'',city:customerForKey.city||'',district:customerForKey.district||''},company:{city:company.city||'',district:company.district||'',serie:company.eInvoiceSerie||'',arch:company.eArchiveSerie||''},invoiceOptions,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines});
   let hash=2166136261;for(let i=0;i<stable.length;i++){hash^=stable.charCodeAt(i);hash=Math.imul(hash,16777619);}
   const key='matrix:'+String(identity.data?.user?.id||'')+':'+String(shipment.id)+':'+type+':'+(hash>>>0).toString(16);
   eDocumentActionBusy=true;render();
   try{
     const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'prepare',sourceId:String(shipment.id),documentType:type,idempotencyKey:key,invoiceProfile:profile,customerAlias,dispatch,invoiceOptions}});
     if(error||!data?.ok)throw new Error(data?.error||error?.message||'Belge taslağı hazırlanamadı.');
-    eDocumentPreview={document:data.document,snapshot:data.preview||data.document?.payload_snapshot};
+    let doc=data.document,snapshot=data.preview||data.document?.payload_snapshot,html='';
+    if(type!=='e_despatch'&&doc?.id){
+      const att=await sb.functions.invoke('einvoice-draft',{body:{action:'attach',documentId:doc.id}});
+      if(att.error||!att.data?.ok){await loadEDocumentCenter({force:true});throw new Error(att.data?.error||att.error?.message||'Nilvera önizlemesi hazırlanamadı.');}
+      html=att.data.html;snapshot=att.data.snapshot||snapshot;doc={...doc,provider_metadata:att.data.provider_metadata,payload_snapshot:snapshot};
+    }
+    eDocumentPreview={document:doc,snapshot,html};
+    if(html)eDocumentCompose=null;
     await loadEDocumentCenter({force:true});
   }catch(e){alert(e.message||'Belge taslağı hazırlanamadı.');}
   finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
@@ -4812,16 +4822,18 @@ async function edocPrepareSelected(){
 async function edocSendPrepared(){
   if(eDocumentActionBusy||!eDocumentPreview?.document)return;
   const d=eDocumentPreview.document,s=eDocumentPreview.snapshot||{},name=s.customer?.name||'alıcı',type=edocTypeLabel(d.document_type),total=edocMoney(s.gross_amount,s.currency);
-  if(!confirm(type+' belgesini '+name+' için '+total+' tutarla CANLI olarak Nilvera’ya gönderiyorsunuz. Bu işlem yasal belge oluşturabilir. Devam edilsin mi?'))return;
+  if(!confirm(name+' için '+total+' tutarlı '+type+' kesilecek ve GİB’e gönderilecek. Bu işlem geri alınamaz. Onaylıyor musun?'))return;
   eDocumentActionBusy=true;render();
   try{
-    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'submit',documentId:d.id,confirmSend:true}});
+    const viaDraft=!!(d.provider_metadata&&d.provider_metadata.remoteDraftUuid);
+    const {data,error}=await sb.functions.invoke(viaDraft?'einvoice-draft':'edocument-gateway',{body:{action:viaDraft?'send':'submit',documentId:d.id,confirmSend:true}});
     if(error||!data?.ok)throw new Error(data?.error||error?.message||'Nilvera gönderimi tamamlanmadı.');
     eDocumentPreview=null;eDocumentCompose=null;
     if(data.sourceSynced)await loadAll();
     await loadEDocumentCenter({force:true});
-    if(!data.sourceSynced)alert('Nilvera belgeyi gönderdi. Ancak sevkiyat kaydına belge numarası eşitlenmedi; Matrix’teki sevkiyat/fatura durumunu kontrol et.');
-    else alert('Nilvera gönderimi tamamlandı ve Matrix sevkiyat kaydı güncellendi.');
+    const no=data.document?.document_number||'';
+    if(!data.sourceSynced)alert('Fatura Nilvera’dan gönderildi'+(no?' ('+no+')':'')+'. Fatura numarası henüz gelmediyse birkaç dakika sonra “Nilvera’dan eşitle” ile sevkiyata işlenir.');
+    else alert('Fatura kesildi: '+no+'. Sevkiyat faturalandı olarak işaretlendi.');
   }catch(e){alert(e.message||'Nilvera gönderimi tamamlanmadı.');await loadEDocumentCenter({force:true});}
   finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
 }
@@ -4868,6 +4880,32 @@ function sandboxIncomingEDocumentHtml(raw){
  if(/<head\b[^>]*>/i.test(source))return source.replace(/<head\b[^>]*>/i,match=>match+policy+fit);
  if(/<html\b[^>]*>/i.test(source))return source.replace(/<html\b[^>]*>/i,match=>match+"<head>"+policy+fit+"</head>");
  return "<!doctype html><html><head><meta charset=\"utf-8\">"+policy+fit+"</head><body>"+source+"</body></html>";
+}
+function renderEDocDraftModal(){
+ const p=eDocumentPreview;if(!p||!p.html)return '';
+ const d=p.document||{},s=p.snapshot||{},fx=s.currency_conversion||null;
+ const fxLine=fx&&fx.source_currency&&fx.source_currency!=='TRY'?`<span class="edoc-muted">${edocMoney(fx.source_net_amount,fx.source_currency)} × ${edocRate(fx.rate)} (TCMB satış ${escapeHtml(formatDate(fx.rate_date||''))})</span>`:'';
+ return `<div class="edoc-in-preview-backdrop" id="edoc-out-backdrop"><section class="edoc-in-preview" role="dialog" aria-modal="true" aria-label="Fatura önizlemesi">
+  <div class="edoc-view-head">
+   <div class="edoc-view-meta"><div class="edoc-kicker">${escapeHtml(edocTypeLabel(d.document_type||'e_invoice'))} önizlemesi · henüz gönderilmedi</div><b>${escapeHtml(s.customer?.name||'')}</b>
+    <div class="edoc-view-line"><span class="mono">${escapeHtml(formatDate(s.issue_date||''))}</span><span class="mono"><b>${edocMoney(s.gross_amount,s.currency)}</b></span>${fxLine}<span class="edoc-muted">KDV %${Number(s.vat_rate)||0}</span></div></div>
+   <div class="edoc-view-acts"><button id="edoc-out-discard" class="btn btn-ghost" ${eDocumentActionBusy?'disabled':''}>Vazgeç</button><button id="edoc-confirm-send" class="btn btn-primary" ${!edocIsReady()||eDocumentActionBusy?'disabled':''}>${eDocumentActionBusy?'Kesiliyor…':'Onayla ve faturayı kes'}</button></div>
+  </div>
+  <div class="edoc-in-preview-body"><iframe id="edoc-out-frame" class="edoc-in-preview-frame" title="Fatura önizlemesi" sandbox="" referrerpolicy="no-referrer"></iframe></div></section></div>`;
+}
+async function edocDiscardPreview(){
+ const p=eDocumentPreview;if(!p||eDocumentActionBusy)return;
+ eDocumentPreview=null;render();
+ const id=p.document?.id;if(id&&p.document?.document_type!=='e_despatch'){try{await sb.functions.invoke('einvoice-draft',{body:{action:'discard',documentId:id}});}catch{}try{await loadEDocumentCenter({force:true});}catch{}if(activeTab==='edocuments')render();}
+}
+async function edocOpenDraft(d){
+ eDocumentCompose=null;
+ const snapshot=d.payload_snapshot||{};
+ if(d.document_type==='e_despatch'){eDocumentPreview={document:d,snapshot};render();return;}
+ eDocumentActionBusy=true;render();
+ try{const {data,error}=await sb.functions.invoke('einvoice-draft',{body:{action:'attach',documentId:d.id}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Taslak açılamadı.');eDocumentPreview={document:{...d,provider_metadata:data.provider_metadata,payload_snapshot:data.snapshot||snapshot},snapshot:data.snapshot||snapshot,html:data.html};}
+ catch(e){alert((e.message||'Taslak açılamadı.')+' Sevkiyattan faturayı yeniden hazırla.');}
+ finally{eDocumentActionBusy=false;try{await loadEDocumentCenter({force:true});}catch{}render();}
 }
 function renderIncomingPreviewModal(){
  const p=eDocumentIncomingPreview;if(!p)return "";
@@ -7368,7 +7406,8 @@ if(activeTab==='edocuments'){ attachEDocumentHandlers(); }
       company = {
         name: val('c-name'), legalName: val('c-legalName'), contactName: val('c-contactName'), tagline: val('c-tagline'), address: val('c-address'),
         taxOffice: val('c-taxOffice'), taxNo: val('c-taxNo'), phone: val('c-phone'),
-        email: val('c-email'), website: val('c-website'), iban: val('c-iban')
+        email: val('c-email'), website: val('c-website'), iban: val('c-iban'),
+        city: val('c-city').trim(), district: val('c-district').trim(), eInvoiceSerie: val('c-eInvoiceSerie').trim().toUpperCase(), eArchiveSerie: val('c-eArchiveSerie').trim().toUpperCase()
       };
       saveCompany();
       const ind = document.getElementById('c-saveIndicator');
@@ -7780,6 +7819,10 @@ function renderSettingsCompany(){
     <div class="grid2">
       <div class="field"><label>Vergi Dairesi</label><input id="c-taxOffice" value="${escapeAttr(company.taxOffice)}"></div>
       <div class="field"><label>Vergi No</label><input id="c-taxNo" value="${escapeAttr(company.taxNo)}"></div>
+      <div class="field"><label>İl</label><input id="c-city" value="${escapeAttr(company.city||'')}" placeholder="İzmir"></div>
+      <div class="field"><label>İlçe</label><input id="c-district" value="${escapeAttr(company.district||'')}" placeholder="Karşıyaka"></div>
+      <div class="field"><label>e-Fatura seri ön eki</label><input id="c-eInvoiceSerie" maxlength="3" value="${escapeAttr(company.eInvoiceSerie||'GEF')}" placeholder="GEF"></div>
+      <div class="field"><label>e-Arşiv seri ön eki</label><input id="c-eArchiveSerie" maxlength="3" value="${escapeAttr(company.eArchiveSerie||'')}" placeholder="Nilvera’daki e-Arşiv serisi"></div>
       <div class="field"><label>Telefon</label><input id="c-phone" value="${escapeAttr(company.phone)}"></div>
       <div class="field"><label>E-posta</label><input id="c-email" value="${escapeAttr(company.email)}"></div>
       <div class="field"><label>Website</label><input id="c-website" value="${escapeAttr(company.website)}"></div>
@@ -8039,7 +8082,10 @@ function customerEditHtml(){
       <div class="field"><label>Sektör</label><input id="cu-industry" value="${escapeAttr(c.industry||'')}"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Şehir</label><input id="cu-city" value="${escapeAttr(c.city||'')}"></div>
+      <div class="field"><label>İl</label><input id="cu-city" value="${escapeAttr(c.city||'')}"></div>
+      <div class="field"><label>İlçe</label><input id="cu-district" value="${escapeAttr(c.district||'')}" placeholder="Faturada zorunlu"></div>
+    </div>
+    <div class="grid2">
       <div class="field"><label>Ülke</label><input id="cu-country" value="${escapeAttr(c.country||'')}"></div>
     </div>
     <div class="field">
@@ -8085,6 +8131,7 @@ function attachCustomerEditHandlers(overlay){
   overlay.querySelector('#cu-stage').onchange = e=>c.stage=e.target.value;
   overlay.querySelector('#cu-industry').oninput = e=>c.industry=e.target.value;
   overlay.querySelector('#cu-city').oninput = e=>c.city=e.target.value;
+  overlay.querySelector('#cu-district').oninput = e=>c.district=e.target.value;
   overlay.querySelector('#cu-country').oninput = e=>c.country=e.target.value;
   overlay.querySelector('#cu-payTpl').onchange = e=>c.defaultPaymentTplId=e.target.value;
   overlay.querySelector('#cu-delTpl').onchange = e=>c.defaultDeliveryTplId=e.target.value;
