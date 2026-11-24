@@ -4420,6 +4420,27 @@ async function edocPrepareSelected(){
   const sourceId=document.getElementById('edoc-source')?.value||'', type=document.getElementById('edoc-type')?.value||'e_invoice';
   const shipment=edocCandidates().find(s=>String(s.id)===sourceId);
   if(!shipment){alert('Önce bir sevkiyat seç.');return;}
+  if(type!=='e_despatch'){
+    const linkedId=String(shipment.customer?.customerId||'');
+    const linkedCustomer=linkedId?customers.find(c=>String(c.id||'')===linkedId):null;
+    const billTo=linkedCustomer||shipment.customer||{};
+    const missing=[];
+    if(!String(billTo.name||'').trim())missing.push('firma adı');
+    if(!String(billTo.taxOffice||'').trim())missing.push('vergi dairesi');
+    const taxDigits=String(billTo.taxNo||'').replace(/\D/g,'');
+    if(!/^\d{10,11}$/.test(taxDigits))missing.push('10 veya 11 haneli vergi numarası');
+    if(!String(billTo.address||'').trim())missing.push('adres');
+    if(missing.length){
+      const message='Fatura taslağı oluşturulamıyor. Cari kaydında şu alanlar eksik veya geçersiz: '+missing.join(', ')+'.';
+      if(linkedCustomer&&confirm(message+' Cari kartını şimdi düzenlemek ister misiniz?')){
+        custEditing=JSON.parse(JSON.stringify(linkedCustomer));
+        openCustomerEditModal();
+      }else if(!linkedCustomer){
+        alert(message+' Sevkiyatın bağlı olduğu cari bulunamadı; önce doğru cari bağlantısını kurup cari kartını düzenleyin.');
+      }
+      return;
+    }
+  }
   const dispatch={};
   ['licensePlate','carrierName','carrierTaxNumber','driverFirstName','driverLastName','driverTaxNumber','deliveryCity','deliveryDistrict','deliveryAddress','despatchNumber','shipmentNumber'].forEach(k=>{const el=document.getElementById('edoc-'+k);if(el)dispatch[k]=el.value.trim();});
   const profile=document.getElementById('edoc-invoice-profile')?.value||'TEMELFATURA';
