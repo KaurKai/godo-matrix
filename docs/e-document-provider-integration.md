@@ -1,49 +1,71 @@
-# GODO Matrix e-Fatura / e-İrsaliye entegrasyon hazırlığı
+# GODO Matrix — Nilvera e-Belge bağlantısı
 
-## Şu anki durum
+## Canlı durum
 
-`edocument-gateway` Edge Function Matrix kullanıcısının MFA'lı oturumunu doğrular, satış sevkiyatını sunucu tarafından Matrix KV kaydından alır, temel alanları kontrol eder ve değiştirilemez bir kaynak görüntüsüyle `e_documents` taslağı oluşturur. İşlem anahtarı tekrar gönderimleri yinelenen taslak haline getirmez. Sağlayıcı adaptörü ve gizli API bilgileri henüz kurulmadığı için gerçek belge gönderimi ve durum sorgulaması kapalıdır.
+- Matrix'te **Finans → e-Belgeler** ekranı kullanılabilir.
+- `edocument-gateway` Supabase Edge Function **ACTIVE v7** durumundadır ve JWT doğrulaması açıktır. Canlı ortam varsayılandır; yalnızca sunucu sırrı `NILVERA_ENV=test` olarak ayarlanırsa test adresine geçer.
+- API anahtarı tarayıcıya gönderilmez. Tek anahtar `NILVERA_API_KEY` adıyla Supabase Edge Function Secrets içinde tutulur. Matrix ekranındaki “Güvenli anahtar ayarını aç” bağlantısı bu ayar sayfasını açar.
+- Ekrandaki **API bağlantısını test et** düğmesi salt okunur erişim/izin kontrolü yapar. Hukuki belge göndermez. API anahtarı yanıtı, belge içeriği veya Authorization değeri loglara yazılmaz.
+- Bu kurulumda Nilvera'ya canlı e-Fatura/e-Arşiv/e-İrsaliye gönderilmedi; gelen belgeler de kabul veya reddedilmedi. İlk gerçek gönderim/yanıt, kullanıcı ilgili belgeyi açıp onay verdiğinde yapılır.
 
-Kullanıcı tarafından iletilen fatura/irsaliye gövdesine güvenilmez; tutar, alıcı, kalemler ve şirket bilgileri Edge Function tarafından Matrix'in oturum sahibine ait `kv_store` kayıtlarından okunur. İstemci `e_documents` ve olay tablosuna doğrudan yazamaz. Okuma MFA ve RLS ile sınırlıdır. API parolası/tokens yalnız Supabase Edge Function Secrets içinde tutulmalıdır; tarayıcı koduna, `kv_store` JSON'una veya loglara yazılmamalıdır.
+## Kullanılabilir akışlar
 
-## Sağlayıcı API'si alınca netleştirilecekler
+### Giden belgeler
 
-1. Sağlayıcının GİB yetkisi; e-Fatura, e-Arşiv Fatura ve e-İrsaliye hizmet kapsamı.
-2. Test/canlı ortam adresleri, kimlik doğrulama, IP/sertifika gereksinimleri, kota ve zaman aşımı.
-3. Taslak doğrulama, belge gönderme, durum sorgulama, gelen belge/yanıt alma ve imza/mali mühür sorumluluğu.
-4. ETTN, belge numarası/seri tahsisi, idempotency desteği ve aynı isteğin güvenli tekrarı.
-5. İmzalı webhook/callback doğrulaması; başarısız/tekrarlı callback idempotency'si.
-6. GİB yanıtları, uygulama yanıtları, ret kodları, e-İrsaliye yanıtları ve yasal sürelerin hangi API durumlarına bağlandığı.
-7. UBL-TR sürümü, zorunlu alanlar, birim/vergi kod tabloları, PDF/HTML görseli ve orijinal XML indirme/saklama.
-8. Saklama/yedekleme, veri lokasyonu, alt işleyenler, SLA, kesinti prosedürü, veri dışa aktarma ve sözleşme bitişi.
+1. Matrix'ten satış sevkiyatı seçilir.
+2. Gönderim önizlemesi Matrix'teki firma, kalem, miktar, tutar ve tarih verilerinden hazırlanır; zorunlu alanlar ve alıcı VKN/TCKN kontrol edilir.
+3. e-Fatura / e-Arşiv seçimi Nilvera'nın alıcı mükellef sorgusuyla doğrulanır. Yanlış belge türü varsa gönderim durur.
+4. e-İrsaliye için araç/plaka, taşıyıcı ve sürücü gibi Matrix'te bulunmayan zorunlu bilgiler gönderim öncesi kullanıcıdan istenir.
+5. Kullanıcı belgeyi gözden geçirip açıkça gönderimi onaylar. İstemci isteği tek başına yeterli değildir; sunucu da `confirmSend=true` kontrolü yapar.
+6. Sağlayıcı gönderimi kesinleştirdikten sonra resmi numara Matrix sevkiyatına yazılır. Mevcut Matrix stok düşümü bu resmi sevkiyat alanından tetiklenir.
+7. Sağlayıcı belgeyi kabul etti ama Matrix eşitlemesi başarısız olduysa “Matrix sevkiyatını eşitle” işlemi aynı belgeyi tekrar göndermeden kaynak kaydını tamamlar.
 
-## Uygulanacak akış
+Belge türleri: e-Fatura, e-Arşiv Fatura ve e-İrsaliye. Gönderim tekrarını engelleyen idempotency kontrolü vardır; aynı sevkiyat/belge için ikinci resmi belge oluşturulmasına karşı ayrıca mevcut numara kontrol edilir.
 
-`draft → queued → sending → submitted → accepted / rejected` (ayrıca `failed` / `cancelled`). Her geçiş olay tablosuna ek satır yazar. Gönderimden önce aynı belge sürümü + idempotency anahtarı denetlenir; timeout sonrasında tekrar gönderimden önce sağlayıcı durum sorgusu yapılır. Ham API secret saklanmaz; sağlayıcı cevabındaki sırlar ve kişisel gereksiz alanlar `provider_metadata` içine yazılmadan önce ayıklanır.
+### Gelen belgeler
 
-e-Fatura ve e-Arşiv seçimi yalnız numara biçiminden çıkarılmamalı; sağlayıcının alıcı kayıt sorgusu ve GİB kuralları üzerinden belirlenmelidir. Hata/ret durumunda kaynak Matrix faturası değiştirilmez; yeni belge sürümü veya düzeltme belgesi ayrı süreç olarak ele alınır.
+- Kullanıcı **Gelen kutusunu yenile** diyerek gelen e-Fatura ve e-İrsaliye kayıtlarının metadata bilgisini çeker.
+- Nilvera UUID'siyle yinelenen kayıtlar tekilleştirilir. Listeleme, belgenin okunma durumunu değiştirmez ve XML/PDF ekini indirmez.
+- Gelen e-Fatura ve e-İrsaliye için kullanıcı açıkça kabul veya ret seçer. Ret için gerekçe istenir. Sonucu belirsiz bir yanıt isteği `response_uncertain` olarak tutulur; kullanıcıyı ikinci kez yanıt göndermeye teşvik etmek yerine liste yenilenerek Nilvera durumuyla uzlaştırılır.
 
-## Sağlayıcı adaptör sınırı
+## API anahtarını ekleme ve ilk kontrol
 
-```ts
-interface EDocumentProvider {
-  validate(snapshot: unknown): Promise<{ valid: boolean; errors: string[] }>;
-  submit(input: { idempotencyKey: string; documentType: string; snapshot: unknown }): Promise<{
-    providerDocumentId: string;
-    ettn?: string;
-    documentNumber?: string;
-    state: "submitted" | "accepted" | "rejected";
-    safeMetadata?: Record<string, unknown>;
-  }>;
-  getStatus(providerDocumentId: string): Promise<{ state: string; safeMetadata?: Record<string, unknown> }>;
-}
-```
+1. Supabase'in Edge Function Secrets sayfasında `NILVERA_API_KEY` sırrını ekleyin veya güncelleyin: [Güvenli anahtar ayarını aç](https://supabase.com/dashboard/project/laopdoxuxvcwgcjghdim/functions/secrets).
+2. Nilvera'dan verilen anahtarın canlı hesap için olduğundan emin olun. `NILVERA_ENV` tanımlı değilse Matrix canlı API adresini kullanır.
+3. Matrix'te Finans → e-Belgeler sayfasını yenileyin.
+4. “API bağlantısını test et” düğmesine basın. Bu kontrol bağlantı ve gelen belge izinlerini doğrular. Gönderim izni, Nilvera güvenli bir salt-okunur sorguyla kanıtlamadığı için ilk gerçek gönderimde doğrulanır.
+5. Önce belge önizlemesini inceleyin. Ancak doğru alıcı, ürünler, miktar, vergi ve teslimat bilgileri doğrulandıktan sonra gerçek belge için gönderim onayı verin.
 
-Üretim gönderim kodu bu arayüze bağlanacak; sağlayıcı seçilene kadar `submit` devre dışıdır.
+**Önemli:** API anahtarını sohbet mesajına, Matrix formuna, ekran görüntüsüne veya tarayıcı geliştirici konsoluna yapıştırmayın. Anahtar burada veya kaynak kodda saklanmaz. Daha önce anahtarı tarayıcıya/sohbete yapıştırdıysanız Nilvera'dan yenilemek uygun olur.
 
-## GİB teknik dayanakları
+## Güvenli tekrar ve hata davranışı
 
-- [e-Fatura Uygulaması Entegrasyon Kılavuzu v1.9](https://ebelge.gib.gov.tr/dosyalar/kilavuzlar/e-FaturaUygulamasiEntegrasyonKilavuzu-v1.9.pdf): UBL/şema ve veri kuralları, uygulama yanıtı süreleri, loglama, güvenli saklama ve iş sürekliliği sorumlulukları.
-- [e-Fatura Uygulaması Özel Entegrasyon Kılavuzu v1.12](https://ebelge.gib.gov.tr/dosyalar/kilavuzlar/e-Fatura_Uygulamasi_Ozel_Entegrasyon_Kilavuzu_v1.12.pdf): özel entegratör ve e-İrsaliye test/hesap akışları.
+- Gönderim önizlemesi değiştirilemez Matrix kaynak görüntüsünden oluşur; kullanıcıdan gelen belge JSON'u doğruluk kaynağı kabul edilmez.
+- Yinelenen gönderimi önleyen idempotency anahtarı kullanılır.
+- Sağlayıcı zaman aşımında aynı belge otomatik yeniden gönderilmez. Önce durum sorgusu/uzlaştırma gerekir.
+- Sağlayıcı sonucu kesinleşmeden Matrix'e resmi irsaliye numarası yazılmaz; bu nedenle belirsiz gönderim stok hareketini erkenden tetiklemez.
+- Kaynak eşitlemesi başarısız olursa, mevcut sağlayıcı belgesi yeniden gönderilmeden kaynak eşitlemesi denenir.
+- Gelen yanıtın sonucu belirsizse ikinci kabul/ret isteği otomatik atılmaz.
+- Edge Function, Matrix MFA oturumunu doğrular; `e_documents` ve olay kayıtları tarayıcıdan doğrudan yazılamaz.
 
-Bu hazırlık GİB entegrasyon izni veya mevzuat uygunluğu anlamına gelmez. Sağlayıcı sözleşmesi, gerçek API teknik kılavuzu ve mali müşavir onayı gelince belge şeması ve zorunlu alanlar o sürümlere göre uyarlanmalıdır.
+## Henüz kapsam dışı olanlar
+
+- Gelen e-belgelerin orijinal XML/PDF dosyasını çekme, güvenli saklama ve indirme.
+- Gelen faturaları tedarikçi, SAS/satın alma kaydı ve stok/muhasebe fişiyle otomatik eşleştirme.
+- Webhook veya zamanlanmış otomatik gelen kutusu/status sorgusu. Şu an kullanıcı ekrandan yenileme/sorgulama başlatır.
+- API anahtarı eklendikten sonra otomatik belge gönderimi. Yasal belge gönderimi her belge için önizleme ve kullanıcı onayı ister.
+
+Bu kapsamlar eklenmeden sistemin muhasebe fişlerini, alış stok hareketlerini veya gelen belge eklerini otomatik tamamladığı söylenmemelidir.
+
+## Nilvera API kaynakları
+
+- [Nilvera geliştirici portalı](https://developer.nilvera.com/)
+- [e-Fatura taslağı oluşturma](https://developer.nilvera.com/en/api/e-invoice-api/draft-invoices/create-draft)
+- [e-Fatura taslağını onaylama ve gönderme](https://developer.nilvera.com/en/api/e-invoice-api/draft-invoices/approve-and-send-the-draft)
+- [e-Arşiv taslağı oluşturma](https://developer.nilvera.com/en/api/e-archive-invoice-api/draft-invoices/creates-draft)
+- [e-Arşiv taslağını onaylama ve gönderme](https://developer.nilvera.com/en/api/e-archive-invoice-api/draft-invoices/approves-and-sends-the-draft)
+- [e-İrsaliye taslağı oluşturma](https://developer.nilvera.com/api/e-irsaliye-api/taslak-irsaliyeler/taslak-olusturur)
+- [e-İrsaliye taslağını onaylama ve gönderme](https://developer.nilvera.com/api/e-irsaliye-api/taslak-irsaliyeler/taslagi-onaylayip-gonderir)
+- [Gelen e-Fatura yanıtı](https://developer.nilvera.com/en/api/e-invoice-api/purchase-invoices/respond-to-the-invoice)
+- [Gelen e-İrsaliye yanıtı](https://developer.nilvera.com/api/e-irsaliye-api/gelen-irsaliyeler/irsaliyeye-yanit-olusturur)
+- [VKN mükellef sorgusu](https://developer.nilvera.com/api/genel-api/mukellef-islemleri/vkn-ile-sorgular)
