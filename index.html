@@ -4361,9 +4361,10 @@ async function testEDocumentConnection(){
 function edocProbeMessage(){
   const r=eDocumentProbe.result, c=r&&r.connection&&r.connection.code;
   if(!r) return '';
-  if(r.ok) return 'Nilvera API anahtarı test ortamında doğrulandı. Belge gönderimi, durum sorgulama ve gelen kutusu akışları ayrıca tamamlanıp doğrulanmalı.';
+  const envLabel=r.providerEnvironment==='live'?'canlı':'test';
+  if(r.ok) return 'Nilvera API anahtarı '+envLabel+' ortamında doğrulandı. Belge gönderimi, durum sorgulama ve gelen kutusu akışları ayrıca tamamlanıp doğrulanmalı.';
   if(c==='not_configured') return 'Sunucu ayarlarında NILVERA_API_KEY bulunamadı. Anahtarı Matrix’e veya sohbete değil, Supabase Edge Function Secrets’a ekle.';
-  if(c==='key_rejected') return 'Nilvera bu anahtarı test ortamında tanımadı. Anahtarın doğru ortam için üretildiğini ve eksiksiz kopyalandığını kontrol et.';
+  if(c==='key_rejected') return 'Nilvera bu anahtarı '+envLabel+' ortamında tanımadı. Anahtarın doğru ortam için üretildiğini ve eksiksiz kopyalandığını kontrol et.';
   if(c==='scope_missing') return 'Nilvera API erişimi reddetti. Anahtarın süresi ve API tanımındaki izinleri kontrol et.';
   if(c==='timeout') return 'Nilvera bağlantısı zaman aşımına uğradı. Biraz sonra tekrar dene.';
   if(c==='unreachable') return 'Nilvera API adresine ulaşılamadı.';
