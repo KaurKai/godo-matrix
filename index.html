@@ -1683,7 +1683,7 @@ function renderDashboard(){
             <div class="dqr-meta">${escapeHtml(s.orderNo||'')} · Fatura: ${escapeHtml(s.invoiceNo||'—')}</div>
           </div>
           <div style="text-align:right;">
-            <div class="mono" style="font-size:12px;">${s.currency||'€'} ${fmt(Math.max(0, shipTotal(s)-shipPaid(s)))}</div>
+            <div class="mono" style="font-size:12px;">${shipInvoiceCurrency(s)} ${fmt(Math.max(0, shipTotal(s)-shipPaid(s)))}</div>
             ${dueBadgeHtml(shipDueDate(s), false)}
           </div>
         </div>`).join('')}
@@ -2822,7 +2822,10 @@ function nextShipmentIrsaliyeNo(){
 function shipQty(s){ return (s.lines||[]).reduce((t,l)=>t+(parseFloat(l.qty)||0),0); }
 function shipNet(s){ return (s.lines||[]).reduce((t,l)=>t+(parseFloat(l.qty)||0)*(parseFloat(l.unitPrice)||0),0); }
 function shipIsInvoiced(s){ return !!(s.invoiceNo || s.invoiceDate); }
-function shipTotal(s){ const v = shipIsInvoiced(s) ? (parseFloat(s.vatRate)||0) : 0; return shipNet(s) * (1 + v/100); }
+function shipInvoiceCurrency(s){ const c=String(s.invoiceSnapshot?.currency||s.currency||'€'); return c==='TRY'?'₺':c==='EUR'?'€':c==='USD'?'$':c==='GBP'?'£':c; }
+function shipInvoiceNet(s){ const snap=s.invoiceSnapshot; return snap&&Number.isFinite(Number(snap.netAmount))?Number(snap.netAmount):shipNet(s); }
+function shipInvoiceVatRate(s){ const snap=s.invoiceSnapshot; return snap&&snap.vatRate!==undefined?Number(snap.vatRate)||0:(parseFloat(s.vatRate)||0); }
+function shipTotal(s){ if(s.invoiceSnapshot&&Number.isFinite(Number(s.invoiceSnapshot.totalAmount)))return Number(s.invoiceSnapshot.totalAmount);const v=shipIsInvoiced(s)?shipInvoiceVatRate(s):0;return shipInvoiceNet(s)*(1+v/100); }
 function shipPaid(s){ return (s.payments||[]).reduce((t,p)=>t+(parseFloat(p.amount)||0),0); }
 function invoiceNumberKey(value){ return String(value||'').trim().toLocaleUpperCase('tr-TR').replace(/[^A-Z0-9]/g,''); }
 function salesInvoiceNumberConflicts(){
@@ -2857,7 +2860,7 @@ function dueBadgeHtml(due, paid){
   if(d <= 3) return `<span style="font-size:10.5px;font-weight:700;color:#8A6B22;">${d} gün kaldı</span>`;
   return `<span style="font-size:10.5px;color:var(--gray-500);">${d} gün kaldı</span>`;
 }
-function sumByCur(list, fn){ const m = {}; list.forEach(x=>{ const c = x.currency||'€'; m[c] = (m[c]||0) + fn(x); }); return m; }
+function sumByCur(list, fn, currencyFn){ const m = {}; list.forEach(x=>{ const c = currencyFn?currencyFn(x):(x.currency||'€'); m[c] = (m[c]||0) + fn(x); }); return m; }
 function curText(m){ const parts = Object.entries(m).filter(([,v])=>Math.abs(v)>0.005).map(([c,v])=>c+' '+fmt(v)); return parts.length ? parts.join(' · ') : '—'; }
 
 /* ---- Sipariş toplamları ve aşama ---- */
@@ -3145,7 +3148,7 @@ function openShipmentInvoiceModal(id){
 /* ---- Tahsilatlar ---- */
 function openShipmentPaymentsModal(id){
   const s = shipments.find(x=>x.id===id); if(!s) return;
-  const cur = s.currency||'€';
+  const cur = shipInvoiceCurrency(s);
   const draw = ()=>{
     const total = shipTotal(s), paid = shipPaid(s), rest = Math.max(0, total-paid);
     const st = shipPayState(s);
@@ -3305,7 +3308,7 @@ function renderOrdersPage(){
     rows = rows.filter(x=>foldTR([x.q.customerName,x.q.quoteNo].concat(x.a.ships.map(sh=>sh.invoiceNo+' '+sh.irsaliyeNo)).join(' ')).includes(s));
   }
   const allShips = shipments.filter(s=>quotesIndex.some(q=>q.id===s.orderId));
-  const outstanding = sumByCur(allShips.filter(s=>shipIsInvoiced(s)), s=>Math.max(0, shipTotal(s)-shipPaid(s)));
+  const outstanding = sumByCur(allShips.filter(s=>shipIsInvoiced(s)), s=>Math.max(0, shipTotal(s)-shipPaid(s)), shipInvoiceCurrency);
   const toInvoice = sumByCur(allShips.filter(s=>!shipIsInvoiced(s)), s=>shipNet(s));
   const sevkeHazir = counts.hazir;
   const FILTERS = [['','Tümü'],['hazir','Sevke hazır'],['bekleyen','Tedarik / mal bekleyen'],['faturalanacak','Faturalanacak'],['tahsilat','Tahsilat bekleyen'],['tamam','Tamamlanan']];
@@ -3358,8 +3361,8 @@ function renderOrdersPage(){
               <div style="font-size:11px;color:var(--gray-500);">${(s.lines||[]).length} kalem · ${fmtQty(shipQty(s))} adet${s.officialIrsaliyeNo?' · e-irsaliye '+escapeHtml(s.officialIrsaliyeNo):''}${shipStockPending(s)?' · <span style="color:#8A6B22;">stoktan düşülmedi</span>':''}</div>
             </div>
             <div style="flex:1;min-width:230px;">
-              ${inv ? `<div style="font-size:12px;"><b>Fatura ${escapeHtml(s.invoiceNo||'—')}</b> <span class="mono">· ${s.currency} ${fmt(total)}</span> <span style="color:var(--gray-500);">(${formatDate(s.invoiceDate)})</span></div>
-                <div style="font-size:11px;">${PAY_STATE_LABEL[ps]}${paid>0?' · tahsil '+s.currency+' '+fmt(paid):''} ${dueBadgeHtml(shipDueDate(s), ps==='paid')}${shipDueDate(s)?' <span style="color:var(--gray-300);">· vade '+formatDate(shipDueDate(s))+'</span>':''}</div>`
+              ${inv ? `<div style="font-size:12px;"><b>Fatura ${escapeHtml(s.invoiceNo||'—')}</b> <span class="mono">· ${shipInvoiceCurrency(s)} ${fmt(total)}</span> <span style="color:var(--gray-500);">(${formatDate(s.invoiceDate)})</span></div>
+                <div style="font-size:11px;">${PAY_STATE_LABEL[ps]}${paid>0?' · tahsil '+shipInvoiceCurrency(s)+' '+fmt(paid):''} ${dueBadgeHtml(shipDueDate(s), ps==='paid')}${shipDueDate(s)?' <span style="color:var(--gray-300);">· vade '+formatDate(shipDueDate(s))+'</span>':''}</div>`
                 : `<div style="font-size:12px;color:var(--gray-500);">Fatura bekliyor · <span class="mono">${s.currency} ${fmt(shipNet(s))}</span> (KDV hariç)</div>`}
             </div>
             <div class="order-actions" style="margin:0;">
@@ -3573,7 +3576,7 @@ async function fetchTcmbRates(dateStr){
 let fxSync = { running:false, at:0, ok:null, msg:'', added:0 };
 function foreignDocDates(){
   const set = new Set(), add = (cur, d)=>{ if(cur && cur!=='₺' && d) set.add(d); };
-  shipments.forEach(s=>{ add(s.currency||'€', s.date); if(shipIsInvoiced(s)) add(s.currency||'€', s.invoiceDate); (s.payments||[]).forEach(p=>add(s.currency||'€', p.date)); });
+  shipments.forEach(s=>{ add(s.currency||'€', s.date); if(shipIsInvoiced(s)) add(shipInvoiceCurrency(s), s.invoiceDate); (s.payments||[]).forEach(p=>add(shipInvoiceCurrency(s), p.date)); });
   purchaseInvoices.forEach(pi=>{ add(pi.currency||'€', pi.date); (pi.payments||[]).forEach(p=>add(pi.currency||'€', p.date)); });
   stockMoves.forEach(m=>{ if((Number(m.qty)||0) > 0) add(m.currency||'€', m.date); });
   return [...set].sort();
@@ -3780,6 +3783,8 @@ function openPurchasePaymentsModal(id){
 function fmtTL(n){ return '₺ '+fmt(n); }
 function shipBooked(s){
   if(!shipIsInvoiced(s)) return null;
+  const snap=s.invoiceSnapshot;
+  if(snap&&Number.isFinite(Number(snap.totalAmount)))return {rate:1,rateDate:String(s.invoiceDate||''),netTL:Number(snap.netAmount||0),vatTL:Number(snap.vatAmount||0),totalTL:Number(snap.totalAmount||0),vat:Number(snap.vatRate||0),sourceCurrency:String(snap.sourceCurrency||'TRY'),exchangeRate:Number(snap.currencyConversion?.rate||1)};
   const r = rateFor(s.currency||'€', s.invoiceDate, fxKind('sale')); if(!r) return null;
   const v = parseFloat(s.vatRate)||0, net = shipNet(s), netTL = round2(net*r.rate), vatTL = round2(net*r.rate*v/100);
   return { rate:r.rate, rateDate:r.date, netTL, vatTL, totalTL:round2(netTL+vatTL), vat:v };
@@ -3793,7 +3798,7 @@ function saleItems(){
   return shipments.filter(shipIsInvoiced).map(s=>{
     const total = shipTotal(s), paid = shipPaid(s), q = quotesIndex.find(x=>x.id===s.orderId);
     return { kind:'sale', id:s.id, partyKey:(q&&q.customerId)||('n:'+foldTR(s.customer.name||'')), partyName:upperCompanyName(s.customer.name||'İsimsiz Müşteri'),
-      docNo:s.invoiceNo||s.irsaliyeNo||'', date:s.invoiceDate, due:shipDueDate(s), cur:s.currency||'€', total, paid, remaining:Math.max(0,total-paid), state:shipPayState(s), booked:shipBooked(s), obj:s };
+      docNo:s.invoiceNo||s.irsaliyeNo||'', date:s.invoiceDate, due:shipDueDate(s), cur:shipInvoiceCurrency(s), total, paid, remaining:Math.max(0,total-paid), state:shipPayState(s), booked:shipBooked(s), obj:s };
   });
 }
 function purchaseItems(){
@@ -4000,7 +4005,7 @@ function buildJournal(from, to){
     stmt.push({ partyType:kind==='sale'?'Müşteri':'Tedarikçi', party, date:p.date, docType:kind==='sale'?'Tahsilat':'Ödeme', docNo:no, cur, fx:amt, rate:rp.rate, debit:kind==='sale'?0:bookedTL, credit:kind==='sale'?bookedTL:0 });
   };
   shipments.filter(shipIsInvoiced).forEach(s=>{
-    const party = upperCompanyName(s.customer.name||''), cur = s.currency||'€', bk = shipBooked(s), no = s.invoiceNo||s.irsaliyeNo||'—';
+    const party = upperCompanyName(s.customer.name||''), cur = shipInvoiceCurrency(s), bk = shipBooked(s), no = s.invoiceNo||s.irsaliyeNo||'—';
     if(inRange(s.invoiceDate)){
       if(!bk) miss(cur, s.invoiceDate);
       else {
@@ -4197,7 +4202,7 @@ let invView = 'sale', invFilter = 'open', invSearch = '';
 
 function uninvoicedShipments(){ return shipments.filter(s=>!shipIsInvoiced(s)); }
 function shipInvoiceInfoHtml(s){
-  const inv = shipIsInvoiced(s), ps = shipPayState(s), total = shipTotal(s), paid = shipPaid(s), cur = s.currency||'€';
+  const inv = shipIsInvoiced(s), ps = shipPayState(s), total = shipTotal(s), paid = shipPaid(s), cur = inv?shipInvoiceCurrency(s):(s.currency||'€');
   if(!inv){
     const days = diffDaysStr(todayStr(), s.date||todayStr());
     return `<div style="font-size:12px;"><b>Fatura bekliyor</b> · <span class="mono">${cur} ${fmt(shipNet(s))}</span> <span style="color:var(--gray-500);">(KDV hariç)</span></div>
@@ -4227,8 +4232,8 @@ function renderShipmentsPage(){
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin:16px 0 22px;">
       <div class="kpi-card"><div class="kpi-label">Faturalanacak Sevkiyat</div><div class="kpi-value" style="color:${waiting.length?'var(--ink)':'var(--gray-300)'};">${waiting.length}</div><div class="kpi-sub">${waiting.length ? 'en eskisi '+oldest+' gün' : 'hepsi faturalı'}</div></div>
       <div class="kpi-card"><div class="kpi-label">Faturalanacak Tutar</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(waiting, s=>shipNet(s)))}</div><div class="kpi-sub">KDV hariç</div></div>
-      <div class="kpi-card"><div class="kpi-label">Faturalanan (KDV dahil)</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>shipTotal(s)))}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>Math.max(0, shipTotal(s)-shipPaid(s))))}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Faturalanan (KDV dahil)</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>shipTotal(s), shipInvoiceCurrency))}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Tahsilat Bekleyen</div><div class="kpi-value" style="font-size:17px;">${curText(sumByCur(invoiced, s=>Math.max(0, shipTotal(s)-shipPaid(s)), shipInvoiceCurrency))}</div></div>
     </div>
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
       <div class="field" style="max-width:300px;margin:0;"><input id="shipSearch" placeholder="Firma, irsaliye/fatura no, ürün kodu ara..." value="${escapeAttr(shipSearch)}"></div>
@@ -4380,13 +4385,19 @@ function edocProbeMessage(){
 }
 function edocCandidates(){ return (shipments||[]).filter(s=>Array.isArray(s.lines)&&s.lines.length); }
 function edocTypeLabel(type){ return EDOC_TYPE_LABEL[type]||type; }
-function edocMoney(value,currency){ return escapeHtml(currency||'')+' '+fmt(Number(value)||0); }
+function edocMoney(value,currency){ const c=({TRY:'₺',EUR:'€',USD:'$',GBP:'£'}[String(currency||'').toUpperCase()]||currency||'');return escapeHtml(c)+' '+fmt(Number(value)||0); }
+function edocRate(value){return Number(value||0).toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:6});}
+function edocUnitMoney(value,currency){const c=({TRY:'₺',EUR:'€',USD:'$',GBP:'£'}[String(currency||'').toUpperCase()]||currency||'');return escapeHtml(c)+' '+Number(value||0).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:6});}
 function renderEDocPreview(){
   const p=eDocumentPreview, doc=p&&p.document, s=p&&p.snapshot;
   if(!doc||!s)return '';
-  const title=edocTypeLabel(doc.document_type), customer=s.customer||{}, issuer=s.issuer||{};
-  const lines=(s.lines||[]).map(l=>'<tr><td>'+escapeHtml(l.description||'')+'</td><td class="num">'+fmt(Number(l.quantity)||0)+'</td><td class="num">'+edocMoney(l.unit_price,s.currency)+'</td><td class="num">'+edocMoney((Number(l.quantity)||0)*(Number(l.unit_price)||0),s.currency)+'</td></tr>').join('');
-  return '<div class="panel" style="margin:14px 0;border:1px solid var(--hairline-strong);padding:18px;"><div class="subhead-row"><div><b>Gönderim önizlemesi · '+escapeHtml(title)+'</b><div class="hint">Alıcı: '+escapeHtml(customer.name||'')+' · VKN/TCKN: '+escapeHtml(customer.taxNo||'')+' · Tarih: '+escapeHtml(s.issue_date||'')+'</div></div><span class="edoc-state edoc-draft">Taslak</span></div><div class="hint" style="margin:8px 0;">Satıcı: '+escapeHtml(issuer.legalName||issuer.name||'')+' · Matrah: '+edocMoney(s.net_amount,s.currency)+' · KDV: '+edocMoney(s.vat_amount,s.currency)+' · Genel toplam: <b>'+edocMoney(s.gross_amount,s.currency)+'</b></div><div class="table-wrap"><table class="items-table"><thead><tr><th>Ürün / açıklama</th><th class="num">Miktar</th><th class="num">Birim fiyat</th><th class="num">Satır toplamı</th></tr></thead><tbody>'+lines+'</tbody></table></div><div class="edoc-actions" style="margin-top:12px;"><button id="edoc-confirm-send" class="btn btn-primary" '+(!edocIsReady()||eDocumentActionBusy?'disabled':'')+'>Nilvera’ya gönder</button><button id="edoc-cancel-preview" class="btn btn-ghost">Önizlemeyi kapat</button><span class="hint">Canlı gönderim yalnız bu düğmeye bastıktan sonra başlar.</span></div></div>';
+  const title=edocTypeLabel(doc.document_type), customer=s.customer||{}, issuer=s.issuer||{}, fx=s.currency_conversion||null;
+  const lines=(s.lines||[]).map(l=>'<tr><td>'+escapeHtml(l.description||'')+'</td><td class="num">'+fmt(Number(l.quantity)||0)+'</td><td class="num">'+edocUnitMoney(l.unit_price,s.currency)+'</td><td class="num">'+fmt(Number(l.tax_rate)||0)+'%</td><td class="num">'+edocMoney((Number(l.quantity)||0)*(Number(l.unit_price)||0),s.currency)+'</td></tr>').join('');
+  const fxSummary=fx&&fx.source_currency&&fx.source_currency!=='TRY'
+    ? 'Kaynak toplam: '+edocMoney(fx.source_net_amount,fx.source_currency)+' · TCMB Döviz alış: 1 '+escapeHtml(fx.source_currency)+' = '+edocRate(fx.rate)+' ₺ · Kur tarihi: '+escapeHtml(fx.rate_date||'')+' · '+escapeHtml(fx.rate_source||'TCMB')
+    : 'Kaynak para birimi TRY; kur dönüşümü uygulanmadı.';
+  const taxNote=Number(s.vat_rate)===0?' · İstisna kodu: '+escapeHtml(s.vat_exemption_code||'belirtilmedi'):' · KDV oranı: '+fmt(Number(s.vat_rate)||0)+'%';
+  return '<div class="panel" style="margin:14px 0;border:1px solid var(--hairline-strong);padding:18px;"><div class="subhead-row"><div><b>Gönderim önizlemesi · '+escapeHtml(title)+'</b><div class="hint">Alıcı: '+escapeHtml(customer.name||'')+' · VKN/TCKN: '+escapeHtml(customer.taxNo||'')+' · Tarih: '+escapeHtml(s.issue_date||'')+'</div></div><span class="edoc-state edoc-draft">Taslak</span></div><div class="hint" style="margin:8px 0;">Satıcı: '+escapeHtml(issuer.legalName||issuer.name||'')+' · Matrah: '+edocMoney(s.net_amount,s.currency)+' · KDV: '+edocMoney(s.vat_amount,s.currency)+taxNote+' · Genel toplam: <b>'+edocMoney(s.gross_amount,s.currency)+'</b></div>'+(doc.document_type==='e_despatch'?'':'<div class="hint" style="margin:8px 0;padding:10px;background:var(--paper-2);">'+fxSummary+'</div>')+'<div class="table-wrap"><table class="items-table"><thead><tr><th>Ürün / açıklama</th><th class="num">Miktar</th><th class="num">Birim fiyat</th><th class="num">KDV</th><th class="num">Satır toplamı</th></tr></thead><tbody>'+lines+'</tbody></table></div><div class="edoc-actions" style="margin-top:12px;"><button id="edoc-confirm-send" class="btn btn-primary" '+(!edocIsReady()||eDocumentActionBusy?'disabled':'')+'>Nilvera’ya gönder</button><button id="edoc-cancel-preview" class="btn btn-ghost">Önizlemeyi kapat</button><span class="hint">Canlı gönderim yalnız bu düğmeye bastıktan sonra başlar.</span></div></div>';
 }
 async function edocPrepareSelected(){
   if(eDocumentActionBusy)return;
@@ -4397,13 +4408,21 @@ async function edocPrepareSelected(){
   ['licensePlate','carrierName','carrierTaxNumber','driverFirstName','driverLastName','driverTaxNumber','deliveryCity','deliveryDistrict','deliveryAddress','despatchNumber','shipmentNumber'].forEach(k=>{const el=document.getElementById('edoc-'+k);if(el)dispatch[k]=el.value.trim();});
   const profile=document.getElementById('edoc-invoice-profile')?.value||'TEMELFATURA';
   const customerAlias=document.getElementById('edoc-customer-alias')?.value||'';
+  let invoiceOptions=null;
+  if(type!=='e_despatch'){
+    const issueDate=document.getElementById('edoc-issue-date')?.value||'',vatValue=document.getElementById('edoc-vat-rate')?.value??'',vatExemptionCode=document.getElementById('edoc-vat-exemption-code')?.value.trim()||'';
+    if(!issueDate){alert('Fatura tarihi gerekli.');return;}
+    if(vatValue===''){alert('Sipariş KDV’sinden bağımsız olarak fatura KDV oranını seç.');return;}
+    if(Number(vatValue)===0&&!/^[0-9]{3}$/.test(vatExemptionCode)){alert('KDV %0 seçildi. Nilvera kod listesindeki 3 haneli istisna kodunu gir.');return;}
+    invoiceOptions={issueDate,vatRate:Number(vatValue),vatExemptionCode};
+  }
   const identity=await sb.auth.getUser();
-  const stable=JSON.stringify({id:shipment.id,type,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines,vatRate:shipment.vatRate});
+  const stable=JSON.stringify({id:shipment.id,type,invoiceOptions,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines});
   let hash=2166136261;for(let i=0;i<stable.length;i++){hash^=stable.charCodeAt(i);hash=Math.imul(hash,16777619);}
   const key='matrix:'+String(identity.data?.user?.id||'')+':'+String(shipment.id)+':'+type+':'+(hash>>>0).toString(16);
   eDocumentActionBusy=true;render();
   try{
-    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'prepare',sourceId:String(shipment.id),documentType:type,idempotencyKey:key,invoiceProfile:profile,customerAlias,dispatch}});
+    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'prepare',sourceId:String(shipment.id),documentType:type,idempotencyKey:key,invoiceProfile:profile,customerAlias,dispatch,invoiceOptions}});
     if(error||!data?.ok)throw new Error(data?.error||error?.message||'Belge taslağı hazırlanamadı.');
     eDocumentPreview={document:data.document,snapshot:data.preview||data.document?.payload_snapshot};
     await loadEDocumentCenter({force:true});
@@ -4507,7 +4526,7 @@ async function edocRefreshPending(){
 }
 function renderEDocumentsCompose(){
  const candidates=edocCandidates(),opts=candidates.map(s=>'<option value="'+escapeAttr(String(s.id||''))+'">'+escapeHtml((s.orderNo||'Sipariş')+' · '+((s.customer||{}).name||'Müşteri')+' · '+((s.invoiceNo||s.irsaliyeNo)||formatDate(s.date||'')))+'</option>').join('');
- return '<div class="panel" style="margin:14px 0;padding:18px;"><b>Yeni e-Belge</b><div class="hint" style="margin:4px 0 14px;">Matrix sevkiyatından taslak hazırla, veriyi gözden geçir ve yalnızca açık onaydan sonra canlı gönder.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;"><label>Kaynak sevkiyat<select id="edoc-source" class="input" style="display:block;width:100%;">'+opts+'</select></label><label>Belge türü<select id="edoc-type" class="input" style="display:block;width:100%;"><option value="e_invoice">e-Fatura</option><option value="e_archive_invoice">e-Arşiv Fatura</option><option value="e_despatch">e-İrsaliye</option></select></label><label>e-Fatura profili<select id="edoc-invoice-profile" class="input" style="display:block;width:100%;"><option value="TEMELFATURA">Temel fatura</option><option value="TICARIFATURA">Ticari fatura</option></select></label><label>Alıcı e-Fatura etiketi (varsa)<input id="edoc-customer-alias" class="input" style="display:block;width:100%;" placeholder="urn:mail:..."></label></div><div id="edoc-dispatch-fields" style="display:none;margin-top:12px;"><div class="hint" style="margin-bottom:8px;">e-İrsaliye için sevk/taşıma bilgileri</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;">'+[['licensePlate','Araç plakası'],['carrierName','Taşıyıcı adı'],['carrierTaxNumber','Taşıyıcı VKN (varsa)'],['driverFirstName','Sürücü adı'],['driverLastName','Sürücü soyadı'],['driverTaxNumber','Sürücü TCKN/VKN'],['deliveryCity','Teslimat ili'],['deliveryDistrict','Teslimat ilçesi'],['deliveryAddress','Teslimat adresi'],['despatchNumber','Belge seri no (varsa)'],['shipmentNumber','Taşıma/sevkiyat no (varsa)']].map(([k,l])=>'<label>'+l+'<input id="edoc-'+k+'" class="input" style="display:block;width:100%;"></label>').join('')+'</div></div><div class="edoc-actions" style="margin:14px 0 0;"><button id="edoc-prepare" class="btn btn-primary" '+(!candidates.length||eDocumentActionBusy?'disabled':'')+'>Önizleme için taslak hazırla</button><span class="hint">Bu adım Nilvera’ya belge göndermez. İrsaliyede taşıma alanları gerekir.</span></div></div>'+renderEDocPreview();
+ return '<div class="panel" style="margin:14px 0;padding:18px;"><b>Yeni e-Belge</b><div class="hint" style="margin:4px 0 14px;">Matrix sevkiyatından taslak hazırla, veriyi gözden geçir ve yalnızca açık onaydan sonra canlı gönder.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;"><label>Kaynak sevkiyat<select id="edoc-source" class="input" style="display:block;width:100%;">'+opts+'</select></label><label>Belge türü<select id="edoc-type" class="input" style="display:block;width:100%;"><option value="e_invoice">e-Fatura</option><option value="e_archive_invoice">e-Arşiv Fatura</option><option value="e_despatch">e-İrsaliye</option></select></label><label>e-Fatura profili<select id="edoc-invoice-profile" class="input" style="display:block;width:100%;"><option value="TEMELFATURA">Temel fatura</option><option value="TICARIFATURA">Ticari fatura</option></select></label><label>Alıcı e-Fatura etiketi (varsa)<input id="edoc-customer-alias" class="input" style="display:block;width:100%;" placeholder="urn:mail:..."></label></div><div id="edoc-invoice-options" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;margin-top:12px;"><label>Fatura tarihi<input id="edoc-issue-date" type="date" class="input" style="display:block;width:100%;" value="'+escapeAttr(todayStr())+'" max="'+escapeAttr(todayStr())+'" required></label><label>KDV oranı (siparişten otomatik alınmaz)<select id="edoc-vat-rate" class="input" style="display:block;width:100%;"><option value="">KDV oranını seçin</option><option value="1">%1</option><option value="10">%10</option><option value="20">%20</option><option value="0">%0 — istisna</option></select></label><label id="edoc-vat-exemption-wrap" style="display:none;">KDV istisna kodu<input id="edoc-vat-exemption-code" class="input" style="display:block;width:100%;" inputmode="numeric" maxlength="3" placeholder="Nilvera kod listesi"></label><div class="hint">EUR faturası TL’ye çevrilir; TCMB günlük döviz alış kuru ve fatura tarihi kullanılır. Tatil/hafta sonu için son yayımlanan kur tarihi önizlemede gösterilir.</div></div><div id="edoc-dispatch-fields" style="display:none;margin-top:12px;"><div class="hint" style="margin-bottom:8px;">e-İrsaliye için sevk/taşıma bilgileri</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;">'+[['licensePlate','Araç plakası'],['carrierName','Taşıyıcı adı'],['carrierTaxNumber','Taşıyıcı VKN (varsa)'],['driverFirstName','Sürücü adı'],['driverLastName','Sürücü soyadı'],['driverTaxNumber','Sürücü TCKN/VKN'],['deliveryCity','Teslimat ili'],['deliveryDistrict','Teslimat ilçesi'],['deliveryAddress','Teslimat adresi'],['despatchNumber','Belge seri no (varsa)'],['shipmentNumber','Taşıma/sevkiyat no (varsa)']].map(([k,l])=>'<label>'+l+'<input id="edoc-'+k+'" class="input" style="display:block;width:100%;"></label>').join('')+'</div></div><div class="edoc-actions" style="margin:14px 0 0;"><button id="edoc-prepare" class="btn btn-primary" '+(!candidates.length||eDocumentActionBusy?'disabled':'')+'>Önizleme için taslak hazırla</button><span class="hint">Bu adım Nilvera’ya belge göndermez. İrsaliyede taşıma alanları gerekir.</span></div></div>'+renderEDocPreview();
 }
 function renderEDocumentsRows(){
   let rows=eDocumentRows.slice();
@@ -6682,7 +6701,8 @@ if(activeTab==='edocuments'){
     if(probe) probe.onclick=()=>testEDocumentConnection();
     const sync=document.getElementById('edoc-sync-incoming'); if(sync) sync.onclick=()=>edocSyncInbox();
     const prepare=document.getElementById('edoc-prepare'); if(prepare) prepare.onclick=()=>edocPrepareSelected();
-    const typeSelect=document.getElementById('edoc-type'); if(typeSelect) typeSelect.onchange=()=>{const box=document.getElementById('edoc-dispatch-fields');if(box)box.style.display=typeSelect.value==='e_despatch'?'block':'none';const profile=document.getElementById('edoc-invoice-profile');if(profile)profile.disabled=typeSelect.value!=='e_invoice';};
+    const typeSelect=document.getElementById('edoc-type'); if(typeSelect) typeSelect.onchange=()=>{const dispatchBox=document.getElementById('edoc-dispatch-fields');if(dispatchBox)dispatchBox.style.display=typeSelect.value==='e_despatch'?'block':'none';const invoiceBox=document.getElementById('edoc-invoice-options');if(invoiceBox)invoiceBox.style.display=typeSelect.value==='e_despatch'?'none':'grid';const profile=document.getElementById('edoc-invoice-profile');if(profile)profile.disabled=typeSelect.value!=='e_invoice';};
+    const vatSelect=document.getElementById('edoc-vat-rate'); if(vatSelect) vatSelect.onchange=()=>{const wrap=document.getElementById('edoc-vat-exemption-wrap');if(wrap)wrap.style.display=vatSelect.value==='0'?'block':'none';};
     const send=document.getElementById('edoc-confirm-send'); if(send) send.onclick=()=>edocSendPrepared();
     const cancel=document.getElementById('edoc-cancel-preview'); if(cancel) cancel.onclick=()=>{eDocumentPreview=null;render();};
     const refreshStatus=document.getElementById('edoc-refresh-status'); if(refreshStatus) refreshStatus.onclick=()=>edocRefreshPending();
