@@ -4428,9 +4428,18 @@ async function edocSyncSource(id){
 }
 async function edocSyncInbox(){
  if(eDocumentActionBusy)return;eDocumentActionBusy=true;render();
- try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'inbox'}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Gelen belge kontrolü tamamlanamadı.');await loadEDocumentCenter({force:true});alert('Gelen belge listesi yenilendi. Yeni: '+data.created+' · Güncellenen: '+data.updated+' · Aynı kalan: '+data.unchanged+'. Belgeler Nilvera’da okundu/yanıtlandı olarak işaretlenmedi.');}
- catch(e){alert(e.message||'Gelen belge kontrolü tamamlanamadı.');}
- finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+ try{
+  const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'inbox'}});
+  if(error||!data?.ok)throw new Error(data?.error||error?.message||'Gelen belge kontrolü tamamlanamadı.');
+  await loadEDocumentCenter({force:true});
+  const labels={e_invoice:'e-Fatura',e_despatch:'e-İrsaliye'};
+  const failed=(data.errors||[]).map(x=>(labels[x.documentType]||x.documentType)+': '+({permission_denied:'Nilvera API yetkisi eksik',key_rejected:'API anahtarı reddedildi',endpoint_not_found:'API yolu bulunamadı',timeout:'zaman aşımı',provider_unavailable:'Nilvera servisi yanıt vermedi',provider_error:'Nilvera isteği reddedildi',sync_error:'eşitleme hatası'}[x.code]||'kontrol başarısız'));
+  const result='Gelen belgeler yenilendi. Yeni: '+data.created+' · Güncellenen: '+data.updated+' · Aynı kalan: '+data.unchanged+'.';
+  alert(result+(failed.length?' Kısmi sonuç: '+failed.join(' · ')+'. Başarıyla kaydedilen belgeler listede gösterildi.':'')+' Belgeler Nilvera’da okundu/yanıtlandı olarak işaretlenmedi.');
+ }catch(e){
+  try{await loadEDocumentCenter({force:true});}catch{}
+  alert((e&&e.message?e.message:'Gelen belge kontrolü tamamlanamadı.')+' Önceden kaydedilen gelen belgeler yenilenip listede gösterildi.');
+ }finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
 }
 async function edocRespondIncoming(id,response){
  if(eDocumentActionBusy)return;
