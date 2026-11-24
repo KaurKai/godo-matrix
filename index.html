@@ -437,6 +437,11 @@
 .edoc-state{display:inline-block;padding:3px 7px;border:1px solid var(--hairline-strong);border-radius:10px;font-size:10px;white-space:nowrap;}.edoc-failed,.edoc-rejected{color:var(--danger);border-color:var(--danger);}
 .edoc-empty{display:flex;flex-direction:column;gap:5px;padding:22px 14px;color:var(--gray-500);font-size:12px;background:var(--paper-2);}.edoc-empty b{color:var(--ink);font-size:13px;}
 .edoc-event-list{display:flex;flex-direction:column;gap:7px;padding:8px 4px;}.edoc-event-list>div{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;}.edoc-event-list .mono{color:var(--gray-500);}.edoc-note{font-size:11px;line-height:1.55;color:var(--gray-500);border-top:1px solid var(--hairline);padding-top:13px;margin-top:20px;}.edoc-note b{color:var(--ink);}
+.edoc-in-preview-backdrop{position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;}
+.edoc-in-preview{width:min(1100px,98vw);height:min(900px,94vh);background:var(--paper);display:flex;flex-direction:column;box-shadow:0 18px 70px rgba(0,0,0,.35);}
+.edoc-in-preview-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--hairline-strong);background:#fff;}
+.edoc-in-preview-meta{min-width:0;font-size:12px;line-height:1.5;color:var(--gray-500);}.edoc-in-preview-meta b{color:var(--ink);display:block;font-size:14px;}
+.edoc-in-preview-body{flex:1;min-height:0;background:#fff;}.edoc-in-preview-frame{width:100%;height:100%;border:0;background:#fff;}.edoc-in-preview-message{padding:24px;color:var(--gray-700);font-size:13px;}
 </style>
 </head>
 <body>
@@ -742,6 +747,7 @@ let eDocumentLoaded = false;
 let eDocumentError = "";
 let eDocumentProbe = { busy:false, result:null };
 let eDocumentPreview = null;
+let eDocumentIncomingPreview = null;
 let eDocumentActionBusy = false;
 let eDocumentFilter = { direction:'all', type:'all', status:'all', search:'' };
 let eDocumentExpandedId = "";
@@ -4441,6 +4447,31 @@ async function edocSyncInbox(){
   alert((e&&e.message?e.message:'Gelen belge kontrolü tamamlanamadı.')+' Önceden kaydedilen gelen belgeler yenilenip listede gösterildi.');
  }finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
 }
+function sandboxIncomingEDocumentHtml(raw){
+ const policy=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; img-src data:; style-src 'unsafe-inline' data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; media-src 'none'; worker-src 'none'">`;
+ const source=String(raw||"");
+ if(/<head\b[^>]*>/i.test(source))return source.replace(/<head\b[^>]*>/i,match=>match+policy);
+ if(/<html\b[^>]*>/i.test(source))return source.replace(/<html\b[^>]*>/i,match=>match+"<head>"+policy+"</head>");
+ return "<!doctype html><html><head><meta charset=\"utf-8\">"+policy+"</head><body>"+source+"</body></html>";
+}
+function renderIncomingPreviewModal(){
+ const p=eDocumentIncomingPreview;if(!p)return "";
+ const title=escapeHtml(p.documentType==="e_despatch"?"Gelen e-İrsaliye":"Gelen e-Fatura");
+ const detail=[p.sender||"Gelen belge",p.documentNumber||p.ettn||""].filter(Boolean).map(escapeHtml).join(" · ");
+ const body=p.busy?`<div class="edoc-in-preview-message">Belge içeriği yükleniyor…</div>`:p.error?`<div class="edoc-in-preview-message" style="color:var(--danger);">${escapeHtml(p.error)}</div>`:`<iframe id="edoc-in-preview-frame" class="edoc-in-preview-frame" title="Gelen belge önizlemesi" sandbox="" referrerpolicy="no-referrer"></iframe>`;
+ return `<div class="edoc-in-preview-backdrop" id="edoc-in-preview-backdrop"><section class="edoc-in-preview" role="dialog" aria-modal="true" aria-label="Gelen belge önizlemesi"><div class="edoc-in-preview-head"><div class="edoc-in-preview-meta"><b>${title}</b>${detail}</div><button id="edoc-in-preview-close" class="btn btn-ghost">Kapat</button></div><div class="edoc-in-preview-body">${body}</div></section></div>`;
+}
+async function edocPreviewIncoming(id){
+ if(eDocumentIncomingPreview?.busy)return;
+ const row=eDocumentRows.find(x=>x.id===id);if(!row||row.direction!=="inbound")return;
+ eDocumentIncomingPreview={busy:true,documentType:row.document_type,sender:row.payload_snapshot?.sender||row.provider_metadata?.senderName||"Gelen belge",documentNumber:row.document_number||row.ettn||""};render();
+ try{
+  const {data,error}=await sb.functions.invoke("edocument-gateway",{body:{action:"preview_incoming",documentId:id}});
+  if(error||!data?.ok||typeof data?.html!=="string")throw new Error(data?.error||error?.message||"Gelen belge önizlemesi alınamadı.");
+  eDocumentIncomingPreview={...data.document,busy:false,html:data.html};render();
+  const frame=document.getElementById("edoc-in-preview-frame");if(frame)frame.srcdoc=sandboxIncomingEDocumentHtml(data.html);
+ }catch(e){eDocumentIncomingPreview={...eDocumentIncomingPreview,busy:false,error:e instanceof Error?e.message:"Gelen belge önizlemesi alınamadı."};render();}
+}
 async function edocRespondIncoming(id,response){
  if(eDocumentActionBusy)return;
  const d=eDocumentRows.find(x=>x.id===id);if(!d)return;
@@ -4493,7 +4524,7 @@ function renderEDocumentsRows(){
       <td class="mono" style="font-size:11px;">${doc.issue_date?formatDate(doc.issue_date):formatDate((doc.created_at||'').slice(0,10))}</td>
       <td class="num mono" style="font-size:11px;">${doc.total_amount===null?'—':escapeHtml(doc.currency||'')+' '+fmt(Number(doc.total_amount)||0)}</td>
       <td><span class="edoc-state edoc-${escapeAttr(doc.status)}">${escapeHtml(EDOC_STATUS_LABEL[doc.status]||doc.status)}</span>${doc.last_error?`<div style="font-size:10px;color:var(--danger);margin-top:4px;">${escapeHtml(doc.last_error)}</div>`:''}</td>
-      <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-events="${escapeAttr(doc.id)}">${eDocumentExpandedId===doc.id?'Geçmişi gizle':`Geçmiş (${events.length})`}</button>${doc.direction==='outbound'&&doc.status==='draft'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-preview="${escapeAttr(doc.id)}">Önizle / gönder</button>`:''}${doc.direction==='outbound'&&doc.provider_document_id&&['submitted','sending','accepted','rejected'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-refresh-doc="${escapeAttr(doc.id)}">Durumu sorgula</button>`:''}${doc.direction==='outbound'&&doc.source_kind==='shipment'&&doc.provider_document_id&&['submitted','accepted','rejected'].includes(doc.status)&&(doc.provider_metadata||{}).sourceSyncStatus!=='synced'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-sync-source="${escapeAttr(doc.id)}">Matrix sevkiyatını eşitle</button>`:''}${doc.direction==='inbound'&&['received','awaiting_response'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|accept">Kabul et</button><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|reject">Reddet</button>`:''}${doc.status==='response_uncertain'?`<span class="hint" style="color:var(--danger);">Yanıtı doğrulamak için gelen kutusunu yenile.</span>`:''} </div></td></tr>
+      <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-events="${escapeAttr(doc.id)}">${eDocumentExpandedId===doc.id?'Geçmişi gizle':`Geçmiş (${events.length})`}</button>${doc.direction==='inbound'&&doc.provider_document_id?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-in-preview="${escapeAttr(doc.id)}">İçeriği önizle</button>`:''}${doc.direction==='outbound'&&doc.status==='draft'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-preview="${escapeAttr(doc.id)}">Önizle / gönder</button>`:''}${doc.direction==='outbound'&&doc.provider_document_id&&['submitted','sending','accepted','rejected'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-refresh-doc="${escapeAttr(doc.id)}">Durumu sorgula</button>`:''}${doc.direction==='outbound'&&doc.source_kind==='shipment'&&doc.provider_document_id&&['submitted','accepted','rejected'].includes(doc.status)&&(doc.provider_metadata||{}).sourceSyncStatus!=='synced'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-sync-source="${escapeAttr(doc.id)}">Matrix sevkiyatını eşitle</button>`:''}${doc.direction==='inbound'&&['received','awaiting_response'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|accept">Kabul et</button><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|reject">Reddet</button>`:''}${doc.status==='response_uncertain'?`<span class="hint" style="color:var(--danger);">Yanıtı doğrulamak için gelen kutusunu yenile.</span>`:''} </div></td></tr>
       ${eDocumentExpandedId===doc.id?`<tr><td colspan="7"><div class="edoc-event-list">${events.length?events.map(ev=>{const d=ev.created_at?new Date(ev.created_at):null;const stamp=d&&!isNaN(d.getTime())?d.toLocaleString('tr-TR',{timeZone:'Europe/Istanbul',dateStyle:'short',timeStyle:'short'}):'—';return `<div><span class="mono">${escapeHtml(stamp)}</span><b>${escapeHtml(ev.event_type||'Olay')}</b><span>${escapeHtml(ev.from_status?((EDOC_STATUS_LABEL[ev.from_status]||ev.from_status)+' → '):'')}${escapeHtml(EDOC_STATUS_LABEL[ev.to_status]||ev.to_status||'')}</span></div>`;}).join(''):'Bu belge için olay kaydı yok.'}</div></td></tr>`:''}`;
   }).join('')}</tbody></table></div>`;
 }
@@ -4515,7 +4546,8 @@ function renderEDocumentsPage(){
     <div class="edoc-workflows"><div><b>Giden</b><span>Sevkiyat veya satış faturası → e-Fatura / e-Arşiv seçimi → doğrulama → gönderim → GİB ve alıcı yanıtı.</span></div><div><b>Gelen</b><span>Gelen belgeyi listele ve tedarikçi/SAS ile eşleştir → yanıt süresini izle → kabul/ret kararını her belge için açık onayla gönder.</span></div><div><b>e-İrsaliye</b><span>Sevkiyat kaynağından gönder → durum ve yanıtları takip et; tedarikçiden gelen irsaliyeyi SAS/mal kabul ile bağla.</span></div></div>
     <div class="edoc-filters"><div class="edoc-chip-row">${chips('direction',[['all','Tümü'],['outbound','Giden'],['inbound','Gelen']])}</div><div class="edoc-chip-row">${chips('type',[['all','Tüm türler'],['e_invoice','e-Fatura'],['e_archive_invoice','e-Arşiv'],['e_despatch','e-İrsaliye']])}</div><input id="edoc-search" placeholder="Belge no, ETTN veya kaynak ara" value="${escapeAttr(eDocumentFilter.search)}" /></div>
     <div id="edoc-rows">${eDocumentBusy?'<div class="edoc-empty">E-belge kayıtları yükleniyor…</div>':renderEDocumentsRows()}</div>
-    <div class="edoc-note"><b>Canlı işlem notu:</b> API anahtarı ve Nilvera izinleri sunucuda doğrulanmadan gönderim açılmaz. Her belge ayrı önizleme ve onay ister; belirsiz sonuçta tekrar gönderim kilitlenir. Gelen belge kabul/ret yanıtları da her belge için ayrı açık onay ister.</div>
+    <div class="edoc-note"><b>Canlı işlem notu:</b> API anahtarı ve Nilvera izinleri sunucuda doğrulanmadan gönderim açılmaz. Her belge ayrı önizleme ve onay ister; belirsiz sonuçta tekrar gönderim kilitlenir. Gelen belge kabul/ret yanıtları da her belge için ayrı açık onay ister. Gelen belge önizlemesi yalnız görüntüler; kabul/ret yanıtı vermez.</div>
+    ${renderIncomingPreviewModal()}
   </div>`;
 }
 
@@ -6641,6 +6673,9 @@ if(activeTab==='edocuments'){
     if(search) search.oninput=e=>{ eDocumentFilter.search=e.target.value; renderEDocumentsBody(); };
     document.querySelectorAll('[data-edoc-filter]').forEach(el=>{ el.onclick=()=>{ const [key,value]=el.dataset.edocFilter.split('|'); eDocumentFilter[key]=value; render(); }; });
     document.querySelectorAll('[data-edoc-events]').forEach(el=>{ el.onclick=()=>{ eDocumentExpandedId=eDocumentExpandedId===el.dataset.edocEvents?'':el.dataset.edocEvents; render(); }; });
+    document.querySelectorAll('[data-edoc-in-preview]').forEach(el=>{el.onclick=()=>edocPreviewIncoming(el.dataset.edocInPreview);});
+    const closeIncomingPreview=document.getElementById('edoc-in-preview-close');if(closeIncomingPreview)closeIncomingPreview.onclick=()=>{eDocumentIncomingPreview=null;render();};
+    const incomingBackdrop=document.getElementById('edoc-in-preview-backdrop');if(incomingBackdrop)incomingBackdrop.onclick=e=>{if(e.target===incomingBackdrop){eDocumentIncomingPreview=null;render();}};
     document.querySelectorAll('[data-edoc-response]').forEach(el=>{el.onclick=()=>{const [id,response]=el.dataset.edocResponse.split('|');edocRespondIncoming(id,response);};});
     document.querySelectorAll('[data-edoc-sync-source]').forEach(el=>{el.onclick=()=>edocSyncSource(el.dataset.edocSyncSource);});
     const probe=document.getElementById('edoc-test-connection');
