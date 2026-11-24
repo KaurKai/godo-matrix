@@ -741,6 +741,8 @@ let eDocumentBusy = false;
 let eDocumentLoaded = false;
 let eDocumentError = "";
 let eDocumentProbe = { busy:false, result:null };
+let eDocumentPreview = null;
+let eDocumentActionBusy = false;
 let eDocumentFilter = { direction:'all', type:'all', status:'all', search:'' };
 let eDocumentExpandedId = "";
 let gmailIntakeBusy = false;
@@ -4320,7 +4322,7 @@ function renderInvoicesPage(){
   </div>`;
 }
 const EDOC_TYPE_LABEL = { e_invoice:'e-Fatura', e_archive_invoice:'e-Arşiv Fatura', e_despatch:'e-İrsaliye' };
-const EDOC_STATUS_LABEL = { draft:'Taslak', queued:'Kuyrukta', sending:'Gönderiliyor', submitted:'İletildi', received:'Geldi', awaiting_response:'Yanıt bekliyor', responded:'Yanıtlandı', accepted:'Kabul edildi', rejected:'Reddedildi', cancelled:'İptal', failed:'Hata' };
+const EDOC_STATUS_LABEL = { draft:'Taslak', queued:'Kuyrukta', sending:'Gönderiliyor', submitted:'İletildi', received:'Geldi · yanıt bekliyor', awaiting_response:'Yanıt bekliyor', responding:'Yanıt gönderiliyor', response_uncertain:'Yanıt sonucu belirsiz', responded:'Yanıtlandı', accepted:'Kabul edildi', rejected:'Reddedildi', cancelled:'İptal', failed:'Hata' };
 async function loadEDocumentCenter(opts={}){
   if(eDocumentBusy) return;
   eDocumentBusy=true; eDocumentError='';
@@ -4329,7 +4331,7 @@ async function loadEDocumentCenter(opts={}){
     if(!sb) throw new Error('Supabase bağlantısı hazır değil.');
     const [statusResult, docsResult] = await Promise.all([
       sb.functions.invoke('edocument-gateway',{body:{action:'status'}}),
-      sb.from('e_documents').select('id,direction,document_type,source_kind,source_id,source_revision,status,provider_key,provider_document_id,ettn,document_number,issue_date,currency,total_amount,attempt_count,last_error,submitted_at,accepted_at,rejected_at,created_at,updated_at').order('created_at',{ascending:false}).limit(200)
+      sb.from('e_documents').select('id,direction,document_type,source_kind,source_id,source_revision,status,provider_key,provider_document_id,ettn,document_number,issue_date,currency,total_amount,attempt_count,last_error,submitted_at,accepted_at,rejected_at,payload_snapshot,provider_metadata,created_at,updated_at').order('created_at',{ascending:false}).limit(200)
     ]);
     if(statusResult.error) eDocumentStatus={providerConfigured:false,providerAdapterReady:false,canSubmit:false,canRefresh:false,canReceive:false};
     else eDocumentStatus=statusResult.data||{};
@@ -4362,13 +4364,110 @@ function edocProbeMessage(){
   const r=eDocumentProbe.result, c=r&&r.connection&&r.connection.code;
   if(!r) return '';
   const envLabel=r.providerEnvironment==='live'?'canlı':'test';
-  if(r.ok) return 'Nilvera API anahtarı '+envLabel+' ortamında doğrulandı. Belge gönderimi, durum sorgulama ve gelen kutusu akışları ayrıca tamamlanıp doğrulanmalı.';
+  if(r.ok) return 'Nilvera API anahtarı '+envLabel+' ortamında doğrulandı. Gelen belge izinleri ayrıca kontrol edildi; gönderim yetkisi ilk canlı işlemde doğrulanır.';
   if(c==='not_configured') return 'Sunucu ayarlarında NILVERA_API_KEY bulunamadı. Anahtarı Matrix’e veya sohbete değil, Supabase Edge Function Secrets’a ekle.';
   if(c==='key_rejected') return 'Nilvera bu anahtarı '+envLabel+' ortamında tanımadı. Anahtarın doğru ortam için üretildiğini ve eksiksiz kopyalandığını kontrol et.';
   if(c==='scope_missing') return 'Nilvera API erişimi reddetti. Anahtarın süresi ve API tanımındaki izinleri kontrol et.';
   if(c==='timeout') return 'Nilvera bağlantısı zaman aşımına uğradı. Biraz sonra tekrar dene.';
   if(c==='unreachable') return 'Nilvera API adresine ulaşılamadı.';
   return 'Bağlantı kontrolü tamamlanamadı. Anahtarın ortamını ve Nilvera API izinlerini kontrol et.';
+}
+function edocCandidates(){ return (shipments||[]).filter(s=>Array.isArray(s.lines)&&s.lines.length); }
+function edocTypeLabel(type){ return EDOC_TYPE_LABEL[type]||type; }
+function edocMoney(value,currency){ return escapeHtml(currency||'')+' '+fmt(Number(value)||0); }
+function renderEDocPreview(){
+  const p=eDocumentPreview, doc=p&&p.document, s=p&&p.snapshot;
+  if(!doc||!s)return '';
+  const title=edocTypeLabel(doc.document_type), customer=s.customer||{}, issuer=s.issuer||{};
+  const lines=(s.lines||[]).map(l=>'<tr><td>'+escapeHtml(l.description||'')+'</td><td class="num">'+fmt(Number(l.quantity)||0)+'</td><td class="num">'+edocMoney(l.unit_price,s.currency)+'</td><td class="num">'+edocMoney((Number(l.quantity)||0)*(Number(l.unit_price)||0),s.currency)+'</td></tr>').join('');
+  return '<div class="panel" style="margin:14px 0;border:1px solid var(--hairline-strong);padding:18px;"><div class="subhead-row"><div><b>Gönderim önizlemesi · '+escapeHtml(title)+'</b><div class="hint">Alıcı: '+escapeHtml(customer.name||'')+' · VKN/TCKN: '+escapeHtml(customer.taxNo||'')+' · Tarih: '+escapeHtml(s.issue_date||'')+'</div></div><span class="edoc-state edoc-draft">Taslak</span></div><div class="hint" style="margin:8px 0;">Satıcı: '+escapeHtml(issuer.legalName||issuer.name||'')+' · Matrah: '+edocMoney(s.net_amount,s.currency)+' · KDV: '+edocMoney(s.vat_amount,s.currency)+' · Genel toplam: <b>'+edocMoney(s.gross_amount,s.currency)+'</b></div><div class="table-wrap"><table class="items-table"><thead><tr><th>Ürün / açıklama</th><th class="num">Miktar</th><th class="num">Birim fiyat</th><th class="num">Satır toplamı</th></tr></thead><tbody>'+lines+'</tbody></table></div><div class="edoc-actions" style="margin-top:12px;"><button id="edoc-confirm-send" class="btn btn-primary" '+(!edocIsReady()||eDocumentActionBusy?'disabled':'')+'>Nilvera’ya gönder</button><button id="edoc-cancel-preview" class="btn btn-ghost">Önizlemeyi kapat</button><span class="hint">Canlı gönderim yalnız bu düğmeye bastıktan sonra başlar.</span></div></div>';
+}
+async function edocPrepareSelected(){
+  if(eDocumentActionBusy)return;
+  const sourceId=document.getElementById('edoc-source')?.value||'', type=document.getElementById('edoc-type')?.value||'e_invoice';
+  const shipment=edocCandidates().find(s=>String(s.id)===sourceId);
+  if(!shipment){alert('Önce bir sevkiyat seç.');return;}
+  const dispatch={};
+  ['licensePlate','carrierName','carrierTaxNumber','driverFirstName','driverLastName','driverTaxNumber','deliveryCity','deliveryDistrict','deliveryAddress','despatchNumber','shipmentNumber'].forEach(k=>{const el=document.getElementById('edoc-'+k);if(el)dispatch[k]=el.value.trim();});
+  const profile=document.getElementById('edoc-invoice-profile')?.value||'TEMELFATURA';
+  const customerAlias=document.getElementById('edoc-customer-alias')?.value||'';
+  const identity=await sb.auth.getUser();
+  const stable=JSON.stringify({id:shipment.id,type,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines,vatRate:shipment.vatRate});
+  let hash=2166136261;for(let i=0;i<stable.length;i++){hash^=stable.charCodeAt(i);hash=Math.imul(hash,16777619);}
+  const key='matrix:'+String(identity.data?.user?.id||'')+':'+String(shipment.id)+':'+type+':'+(hash>>>0).toString(16);
+  eDocumentActionBusy=true;render();
+  try{
+    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'prepare',sourceId:String(shipment.id),documentType:type,idempotencyKey:key,invoiceProfile:profile,customerAlias,dispatch}});
+    if(error||!data?.ok)throw new Error(data?.error||error?.message||'Belge taslağı hazırlanamadı.');
+    eDocumentPreview={document:data.document,snapshot:data.preview||data.document?.payload_snapshot};
+    await loadEDocumentCenter({force:true});
+  }catch(e){alert(e.message||'Belge taslağı hazırlanamadı.');}
+  finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocSendPrepared(){
+  if(eDocumentActionBusy||!eDocumentPreview?.document)return;
+  const d=eDocumentPreview.document,s=eDocumentPreview.snapshot||{},name=s.customer?.name||'alıcı',type=edocTypeLabel(d.document_type),total=edocMoney(s.gross_amount,s.currency);
+  if(!confirm(type+' belgesini '+name+' için '+total+' tutarla CANLI olarak Nilvera’ya gönderiyorsunuz. Bu işlem yasal belge oluşturabilir. Devam edilsin mi?'))return;
+  eDocumentActionBusy=true;render();
+  try{
+    const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'submit',documentId:d.id,confirmSend:true}});
+    if(error||!data?.ok)throw new Error(data?.error||error?.message||'Nilvera gönderimi tamamlanmadı.');
+    eDocumentPreview=null;
+    if(data.sourceSynced)await loadAll();
+    await loadEDocumentCenter({force:true});
+    if(!data.sourceSynced)alert('Nilvera belgeyi gönderdi. Ancak sevkiyat kaydına belge numarası eşitlenmedi; Matrix’teki sevkiyat/fatura durumunu kontrol et.');
+    else alert('Nilvera gönderimi tamamlandı ve Matrix sevkiyat kaydı güncellendi.');
+  }catch(e){alert(e.message||'Nilvera gönderimi tamamlanmadı.');await loadEDocumentCenter({force:true});}
+  finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocSyncSource(id){
+ if(eDocumentActionBusy)return;eDocumentActionBusy=true;render();
+ try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'sync_source',documentId:id}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Matrix sevkiyat kaydı eşitlenemedi.');await loadAll();await loadEDocumentCenter({force:true});alert('Nilvera belge numarası Matrix sevkiyatına yazıldı. Stok/sevk durumu güncellendi.');}
+ catch(e){alert(e.message||'Matrix sevkiyat kaydı eşitlenemedi.');}
+ finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocSyncInbox(){
+ if(eDocumentActionBusy)return;eDocumentActionBusy=true;render();
+ try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'inbox'}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Gelen belge kontrolü tamamlanamadı.');await loadEDocumentCenter({force:true});alert('Gelen belge listesi yenilendi. Yeni: '+data.created+' · Güncellenen: '+data.updated+' · Aynı kalan: '+data.unchanged+'. Belgeler Nilvera’da okundu/yanıtlandı olarak işaretlenmedi.');}
+ catch(e){alert(e.message||'Gelen belge kontrolü tamamlanamadı.');}
+ finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocRespondIncoming(id,response){
+ if(eDocumentActionBusy)return;
+ const d=eDocumentRows.find(x=>x.id===id);if(!d)return;
+ const label=edocTypeLabel(d.document_type);
+ if(response==="reject"){
+   const reason=prompt(label+" için ret gerekçesini yaz. Bu yanıt Nilvera’ya iletilecek:");
+   if(reason===null)return;if(!reason.trim()){alert("Ret gerekçesi gerekli.");return;}
+   if(!confirm(label+" belgesini REDDEDECEKSİN. Gerekçe: "+reason.trim()+"\n\nBu işlem yasal yanıt oluşturur. Devam edilsin mi?"))return;
+   eDocumentActionBusy=true;render();
+   try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'respond',documentId:id,response,reason:reason.trim(),confirmResponse:true}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Yanıt gönderilemedi.');await loadEDocumentCenter({force:true});alert("Ret yanıtı Nilvera’ya iletildi.");}
+   catch(e){await loadEDocumentCenter({force:true});alert(e.message||'Yanıt gönderilemedi.');}
+   finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+   return;
+ }
+ if(!confirm(label+" belgesini KABUL edeceksin. Bu işlem yasal yanıt oluşturur. Devam edilsin mi?"))return;
+ eDocumentActionBusy=true;render();
+ try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'respond',documentId:id,response,confirmResponse:true}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Yanıt gönderilemedi.');await loadEDocumentCenter({force:true});alert("Kabul yanıtı Nilvera’ya iletildi.");}
+ catch(e){await loadEDocumentCenter({force:true});alert(e.message||'Yanıt gönderilemedi.');}
+ finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocRefreshOne(id){
+ if(eDocumentActionBusy)return;eDocumentActionBusy=true;render();
+ try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'refresh',documentId:id}});if(error||!data?.ok)throw new Error(data?.error||error?.message||'Durum sorgulanamadı.');await loadEDocumentCenter({force:true});}
+ catch(e){alert(e.message||'Durum sorgulanamadı.');}
+ finally{eDocumentActionBusy=false;if(activeTab==='edocuments')render();}
+}
+async function edocRefreshPending(){
+ if(eDocumentActionBusy)return;const rows=eDocumentRows.filter(d=>d.direction==='outbound'&&d.provider_document_id&&['submitted','sending','accepted','rejected'].includes(d.status));
+ if(!rows.length){alert('Durum sorgulanacak gönderilmiş belge yok.');return;}
+ eDocumentActionBusy=true;render();let ok=0,failed=0;
+ for(const d of rows){try{const {data,error}=await sb.functions.invoke('edocument-gateway',{body:{action:'refresh',documentId:d.id}});if(error||!data?.ok)failed++;else ok++;}catch{failed++;}}
+ await loadEDocumentCenter({force:true});eDocumentActionBusy=false;if(activeTab==='edocuments')render();alert('Durum kontrolü tamamlandı. Başarılı: '+ok+' · Hata: '+failed+'.');
+}
+function renderEDocumentsCompose(){
+ const candidates=edocCandidates(),opts=candidates.map(s=>'<option value="'+escapeAttr(String(s.id||''))+'">'+escapeHtml((s.orderNo||'Sipariş')+' · '+((s.customer||{}).name||'Müşteri')+' · '+((s.invoiceNo||s.irsaliyeNo)||formatDate(s.date||'')))+'</option>').join('');
+ return '<div class="panel" style="margin:14px 0;padding:18px;"><b>Yeni e-Belge</b><div class="hint" style="margin:4px 0 14px;">Matrix sevkiyatından taslak hazırla, veriyi gözden geçir ve yalnızca açık onaydan sonra canlı gönder.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;"><label>Kaynak sevkiyat<select id="edoc-source" class="input" style="display:block;width:100%;">'+opts+'</select></label><label>Belge türü<select id="edoc-type" class="input" style="display:block;width:100%;"><option value="e_invoice">e-Fatura</option><option value="e_archive_invoice">e-Arşiv Fatura</option><option value="e_despatch">e-İrsaliye</option></select></label><label>e-Fatura profili<select id="edoc-invoice-profile" class="input" style="display:block;width:100%;"><option value="TEMELFATURA">Temel fatura</option><option value="TICARIFATURA">Ticari fatura</option></select></label><label>Alıcı e-Fatura etiketi (varsa)<input id="edoc-customer-alias" class="input" style="display:block;width:100%;" placeholder="urn:mail:..."></label></div><div id="edoc-dispatch-fields" style="display:none;margin-top:12px;"><div class="hint" style="margin-bottom:8px;">e-İrsaliye için sevk/taşıma bilgileri</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;">'+[['licensePlate','Araç plakası'],['carrierName','Taşıyıcı adı'],['carrierTaxNumber','Taşıyıcı VKN (varsa)'],['driverFirstName','Sürücü adı'],['driverLastName','Sürücü soyadı'],['driverTaxNumber','Sürücü TCKN/VKN'],['deliveryCity','Teslimat ili'],['deliveryDistrict','Teslimat ilçesi'],['deliveryAddress','Teslimat adresi'],['despatchNumber','Belge seri no (varsa)'],['shipmentNumber','Taşıma/sevkiyat no (varsa)']].map(([k,l])=>'<label>'+l+'<input id="edoc-'+k+'" class="input" style="display:block;width:100%;"></label>').join('')+'</div></div><div class="edoc-actions" style="margin:14px 0 0;"><button id="edoc-prepare" class="btn btn-primary" '+(!candidates.length||eDocumentActionBusy?'disabled':'')+'>Önizleme için taslak hazırla</button><span class="hint">Bu adım Nilvera’ya belge göndermez. İrsaliyede taşıma alanları gerekir.</span></div></div>'+renderEDocPreview();
 }
 function renderEDocumentsRows(){
   let rows=eDocumentRows.slice();
@@ -4381,11 +4480,11 @@ function renderEDocumentsRows(){
     const events=eDocumentEvents.filter(ev=>ev.document_id===doc.id);
     return `<tr><td><b>${doc.direction==='inbound'?'Gelen':'Giden'}</b><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(EDOC_TYPE_LABEL[doc.document_type]||doc.document_type)}</div></td>
       <td><span class="mono" style="font-size:11.5px;">${escapeHtml(doc.document_number||'—')}</span><div class="mono" style="font-size:10px;color:var(--gray-500);">${escapeHtml(doc.ettn||doc.provider_document_id||'')}</div></td>
-      <td><span class="mono" style="font-size:11px;">${escapeHtml(doc.source_kind||'—')}</span><div class="mono" style="font-size:10px;color:var(--gray-500);">${escapeHtml(String(doc.source_id||'').slice(0,16))}</div></td>
+      <td><span class="mono" style="font-size:11px;">${doc.direction==='inbound'?escapeHtml(doc.payload_snapshot?.sender||doc.provider_metadata?.senderName||'Gelen belge'):escapeHtml(doc.source_kind||'—')}</span><div class="mono" style="font-size:10px;color:var(--gray-500);">${doc.direction==='inbound'?escapeHtml(doc.provider_metadata?.senderTaxNumber||String(doc.source_id||'').slice(0,16)):escapeHtml(String(doc.source_id||'').slice(0,16))}</div></td>
       <td class="mono" style="font-size:11px;">${doc.issue_date?formatDate(doc.issue_date):formatDate((doc.created_at||'').slice(0,10))}</td>
       <td class="num mono" style="font-size:11px;">${doc.total_amount===null?'—':escapeHtml(doc.currency||'')+' '+fmt(Number(doc.total_amount)||0)}</td>
-      <td><span class="edoc-state edoc-${escapeAttr(doc.status)}">${escapeHtml(EDOC_STATUS_LABEL[doc.status]||doc.status)}</span>${doc.last_error?`<div style="font-size:10px;color:var(--danger);margin-top:4px;">İşlem hatası</div>`:''}</td>
-      <td><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-events="${escapeAttr(doc.id)}">${eDocumentExpandedId===doc.id?'Geçmişi gizle':`Geçmiş (${events.length})`}</button></td></tr>
+      <td><span class="edoc-state edoc-${escapeAttr(doc.status)}">${escapeHtml(EDOC_STATUS_LABEL[doc.status]||doc.status)}</span>${doc.last_error?`<div style="font-size:10px;color:var(--danger);margin-top:4px;">${escapeHtml(doc.last_error)}</div>`:''}</td>
+      <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-events="${escapeAttr(doc.id)}">${eDocumentExpandedId===doc.id?'Geçmişi gizle':`Geçmiş (${events.length})`}</button>${doc.direction==='outbound'&&doc.status==='draft'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-preview="${escapeAttr(doc.id)}">Önizle / gönder</button>`:''}${doc.direction==='outbound'&&doc.provider_document_id&&['submitted','sending','accepted','rejected'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-refresh-doc="${escapeAttr(doc.id)}">Durumu sorgula</button>`:''}${doc.direction==='outbound'&&doc.source_kind==='shipment'&&doc.provider_document_id&&['submitted','accepted','rejected'].includes(doc.status)&&(doc.provider_metadata||{}).sourceSyncStatus!=='synced'?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-sync-source="${escapeAttr(doc.id)}">Matrix sevkiyatını eşitle</button>`:''}${doc.direction==='inbound'&&['received','awaiting_response'].includes(doc.status)?`<button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|accept">Kabul et</button><button class="btn btn-ghost" style="padding:6px 9px;font-size:10px;" data-edoc-response="${escapeAttr(doc.id)}|reject">Reddet</button>`:''}${doc.status==='response_uncertain'?`<span class="hint" style="color:var(--danger);">Yanıtı doğrulamak için gelen kutusunu yenile.</span>`:''} </div></td></tr>
       ${eDocumentExpandedId===doc.id?`<tr><td colspan="7"><div class="edoc-event-list">${events.length?events.map(ev=>{const d=ev.created_at?new Date(ev.created_at):null;const stamp=d&&!isNaN(d.getTime())?d.toLocaleString('tr-TR',{timeZone:'Europe/Istanbul',dateStyle:'short',timeStyle:'short'}):'—';return `<div><span class="mono">${escapeHtml(stamp)}</span><b>${escapeHtml(ev.event_type||'Olay')}</b><span>${escapeHtml(ev.from_status?((EDOC_STATUS_LABEL[ev.from_status]||ev.from_status)+' → '):'')}${escapeHtml(EDOC_STATUS_LABEL[ev.to_status]||ev.to_status||'')}</span></div>`;}).join(''):'Bu belge için olay kaydı yok.'}</div></td></tr>`:''}`;
   }).join('')}</tbody></table></div>`;
 }
@@ -4395,7 +4494,7 @@ function renderEDocumentsPage(){
   const chips=(key,items)=>items.map(([value,label])=>`<button class="edoc-chip ${eDocumentFilter[key]===value?'active':''}" data-edoc-filter="${key}|${value}">${label}</button>`).join('');
   return `<div class="panel edoc-page" style="max-width:1240px;">
     <div class="subhead-row"><div><h2 style="margin:0;">e-Belge Merkezi</h2><p class="hint" style="margin:5px 0 0;">Satış e-Faturaları, e-İrsaliyeler ve tedarikçilerden gelen belgeler.</p></div><button id="edoc-refresh" class="btn btn-ghost" ${eDocumentBusy?'disabled':''}>${eDocumentBusy?'Yükleniyor…':'Yenile'}</button></div>
-    <div class="edoc-status ${ready?'ready':'waiting'}"><span class="edoc-status-dot"></span><div><b>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Nilvera API anahtarı sunucuda tanımlı':'Nilvera API anahtarı bekleniyor'}</b><div>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Ortam: '+(eDocumentStatus.providerEnvironment==='live'?'Canlı':'Test')+'. Anahtar tarayıcıya aktarılmaz. Gönderim ve gelen belge işlemleri adaptör doğrulaması tamamlanana kadar kapalı.':'API anahtarı Matrix ekranına veya sohbete girilmez; Supabase Edge Function Secrets’a NILVERA_API_KEY adıyla eklenir. Varsayılan ortam testtir.'}</div></div></div>
+    <div class="edoc-status ${ready?'ready':'waiting'}"><span class="edoc-status-dot"></span><div><b>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Nilvera API anahtarı sunucuda tanımlı':'Nilvera API anahtarı bekleniyor'}</b><div>${eDocumentStatus&&eDocumentStatus.providerKeyConfigured?'Ortam: '+(eDocumentStatus.providerEnvironment==='live'?'Canlı':'Test')+'. Anahtar tarayıcıya aktarılmaz. API bağlantısı ve izinleri ayrı ayrı kontrol edilebilir.':'API anahtarı Matrix ekranına veya sohbete girilmez; Supabase Edge Function Secrets’a NILVERA_API_KEY adıyla eklenir. Varsayılan ortam canlıdır.'}</div></div></div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-8px 0 18px;">
       <button id="edoc-test-connection" class="btn btn-ghost" ${!eDocumentStatus||!eDocumentStatus.providerKeyConfigured||eDocumentProbe.busy?'disabled':''}>${eDocumentProbe.busy?'Kontrol ediliyor…':'API bağlantısını test et'}</button>
       <a href="https://supabase.com/dashboard/project/laopdoxuxvcwgcjghdim/functions/secrets" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--ink);font-weight:700;">Güvenli anahtar ayarını aç ↗</a>
@@ -4403,11 +4502,11 @@ function renderEDocumentsPage(){
     </div>
     ${eDocumentError?`<div class="edoc-error">${escapeHtml(eDocumentError)}</div>`:''}
     <div class="kpi-grid edoc-kpis"><div class="kpi-card"><div class="kpi-label">Kayıtlı belgeler</div><div class="kpi-value">${eDocumentRows.length}</div></div><div class="kpi-card"><div class="kpi-label">Giden</div><div class="kpi-value">${outgoing}</div></div><div class="kpi-card"><div class="kpi-label">Gelen kutusu</div><div class="kpi-value">${incoming}</div></div><div class="kpi-card"><div class="kpi-label">Bekleyen işlem</div><div class="kpi-value">${eDocumentRows.filter(x=>['queued','sending','submitted'].includes(x.status)).length}</div></div></div>
-    <div class="edoc-actions"><button id="edoc-send-queue" class="btn btn-primary" ${ready?'':'disabled title="Sağlayıcı adaptörü henüz bağlı değil"'}>e-Belge gönderimi</button><button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&eDocumentStatus&&eDocumentStatus.canReceive?'':'disabled title="Gelen kutusu API adaptörü henüz bağlı değil"'}>Gelen e-Fatura / e-İrsaliye kontrolü</button><button class="btn btn-ghost" disabled title="Sağlayıcı adaptörü henüz bağlı değil">Gönderim durumlarını sorgula</button></div>
-    <div class="edoc-workflows"><div><b>Giden</b><span>Sevkiyat veya satış faturası → e-Fatura / e-Arşiv seçimi → doğrulama → gönderim → GİB ve alıcı yanıtı.</span></div><div><b>Gelen</b><span>Gelen belgeyi al → tedarikçi ve SAS ile eşleştir → XML/PDF’yi sakla → kabul/ret yanıtını ve süresini izle.</span></div><div><b>e-İrsaliye</b><span>Sevkiyat kaynağından gönder → durum ve yanıtları takip et; tedarikçiden gelen irsaliyeyi SAS/mal kabul ile bağla.</span></div></div>
+    <div class="edoc-actions"><button id="edoc-sync-incoming" class="btn btn-ghost" ${ready&&eDocumentStatus&&eDocumentStatus.canReceive?'':'disabled title="Canlı anahtar ve gelen belge izinleri gerekli"'}>Gelen e-Fatura / e-İrsaliye listesini yenile</button><button id="edoc-refresh-status" class="btn btn-ghost" ${ready&&eDocumentStatus&&eDocumentStatus.canRefresh?'':'disabled title="Canlı anahtar gerekli"'}>Gönderim durumlarını sorgula</button><span class="hint">Canlı belge gönderimi her belge için önizleme ve açık onay gerektirir.</span></div>${renderEDocumentsCompose()}
+    <div class="edoc-workflows"><div><b>Giden</b><span>Sevkiyat veya satış faturası → e-Fatura / e-Arşiv seçimi → doğrulama → gönderim → GİB ve alıcı yanıtı.</span></div><div><b>Gelen</b><span>Gelen belgeyi listele ve tedarikçi/SAS ile eşleştir → yanıt süresini izle → kabul/ret kararını her belge için açık onayla gönder.</span></div><div><b>e-İrsaliye</b><span>Sevkiyat kaynağından gönder → durum ve yanıtları takip et; tedarikçiden gelen irsaliyeyi SAS/mal kabul ile bağla.</span></div></div>
     <div class="edoc-filters"><div class="edoc-chip-row">${chips('direction',[['all','Tümü'],['outbound','Giden'],['inbound','Gelen']])}</div><div class="edoc-chip-row">${chips('type',[['all','Tüm türler'],['e_invoice','e-Fatura'],['e_archive_invoice','e-Arşiv'],['e_despatch','e-İrsaliye']])}</div><input id="edoc-search" placeholder="Belge no, ETTN veya kaynak ara" value="${escapeAttr(eDocumentFilter.search)}" /></div>
     <div id="edoc-rows">${eDocumentBusy?'<div class="edoc-empty">E-belge kayıtları yükleniyor…</div>':renderEDocumentsRows()}</div>
-    <div class="edoc-note"><b>Entegrasyon açılmadan önce:</b> sağlayıcı test ortamı, e-Fatura mükellef sorgusu, UBL-TR alan eşlemesi, belge serileri, imza/mali mühür sorumluluğu, durum kodları, gelen belge yanıtları ve webhook doğrulaması netleşmeli. API kimlik bilgileri Supabase Edge Function Secrets’ta tutulacak.</div>
+    <div class="edoc-note"><b>Canlı işlem notu:</b> API anahtarı ve Nilvera izinleri sunucuda doğrulanmadan gönderim açılmaz. Her belge ayrı önizleme ve onay ister; belirsiz sonuçta tekrar gönderim kilitlenir. Gelen belge kabul/ret yanıtları da her belge için ayrı açık onay ister.</div>
   </div>`;
 }
 
@@ -6533,12 +6632,19 @@ if(activeTab==='edocuments'){
     if(search) search.oninput=e=>{ eDocumentFilter.search=e.target.value; renderEDocumentsBody(); };
     document.querySelectorAll('[data-edoc-filter]').forEach(el=>{ el.onclick=()=>{ const [key,value]=el.dataset.edocFilter.split('|'); eDocumentFilter[key]=value; render(); }; });
     document.querySelectorAll('[data-edoc-events]').forEach(el=>{ el.onclick=()=>{ eDocumentExpandedId=eDocumentExpandedId===el.dataset.edocEvents?'':el.dataset.edocEvents; render(); }; });
+    document.querySelectorAll('[data-edoc-response]').forEach(el=>{el.onclick=()=>{const [id,response]=el.dataset.edocResponse.split('|');edocRespondIncoming(id,response);};});
+    document.querySelectorAll('[data-edoc-sync-source]').forEach(el=>{el.onclick=()=>edocSyncSource(el.dataset.edocSyncSource);});
     const probe=document.getElementById('edoc-test-connection');
     if(probe) probe.onclick=()=>testEDocumentConnection();
-    const sync=document.getElementById('edoc-sync-incoming');
-    if(sync) sync.onclick=()=>alert('Gelen belge akışı, Nilvera veri eşlemesi tamamlandıktan sonra etkinleşecek.');
-    const send=document.getElementById('edoc-send-queue');
-    if(send) send.onclick=()=>alert('Belge gönderimi, Nilvera belge modeli ve önizleme onayı tamamlandıktan sonra etkinleşecek.');
+    const sync=document.getElementById('edoc-sync-incoming'); if(sync) sync.onclick=()=>edocSyncInbox();
+    const prepare=document.getElementById('edoc-prepare'); if(prepare) prepare.onclick=()=>edocPrepareSelected();
+    const typeSelect=document.getElementById('edoc-type'); if(typeSelect) typeSelect.onchange=()=>{const box=document.getElementById('edoc-dispatch-fields');if(box)box.style.display=typeSelect.value==='e_despatch'?'block':'none';const profile=document.getElementById('edoc-invoice-profile');if(profile)profile.disabled=typeSelect.value!=='e_invoice';};
+    const send=document.getElementById('edoc-confirm-send'); if(send) send.onclick=()=>edocSendPrepared();
+    const cancel=document.getElementById('edoc-cancel-preview'); if(cancel) cancel.onclick=()=>{eDocumentPreview=null;render();};
+    const refreshStatus=document.getElementById('edoc-refresh-status'); if(refreshStatus) refreshStatus.onclick=()=>edocRefreshPending();
+    document.querySelectorAll('[data-edoc-preview]').forEach(btn=>{btn.onclick=()=>{const d=eDocumentRows.find(x=>x.id===btn.dataset.edocPreview);if(d)eDocumentPreview={document:d,snapshot:d.payload_snapshot};render();};});
+    document.querySelectorAll('[data-edoc-refresh-doc]').forEach(btn=>{btn.onclick=async()=>{await edocRefreshOne(btn.dataset.edocRefreshDoc);};});
+
   }
 
   if(activeTab==='list'){
