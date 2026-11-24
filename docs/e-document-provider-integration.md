@@ -8,6 +8,10 @@
 - Ekrandaki **API bağlantısını test et** düğmesi salt okunur erişim/izin kontrolü yapar. Hukuki belge göndermez. API anahtarı yanıtı, belge içeriği veya Authorization değeri loglara yazılmaz.
 - Bu kurulumda Nilvera'ya canlı e-Fatura/e-Arşiv/e-İrsaliye gönderilmedi; gelen belgeler de kabul veya reddedilmedi. İlk gerçek gönderim/yanıt, kullanıcı ilgili belgeyi açıp onay verdiğinde yapılır.
 
+### Gelen kutusu senkronizasyonunda kısmi sonuçlar
+
+E-Fatura ve e-İrsaliye gelen kutuları ayrı API izinleriyle çağrılır. Bir uçtan alınan belgeler kaydedildikten sonra diğer uç hata verirse, başarılı kayıtlar korunur ve ekranda gösterilir; başarısız belge türü/izin kontrolü ayrıca bildirilir. Hata sonrasında da Matrix kayıt listesi yenilenir. Tekrar yenileme Nilvera UUID'sine göre tekilleştirilir.
+
 ## Kullanılabilir akışlar
 
 ### Giden belgeler
