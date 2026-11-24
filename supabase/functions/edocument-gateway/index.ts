@@ -181,13 +181,14 @@ function validDate(value: unknown) {
   const d = new Date(`${s}T00:00:00Z`);
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
-async function fetchTcmbForexBuying(currency: string, issueDate: string) {
+async function fetchTcmbForexSelling(currency: string, issueDate: string) {
  const code=String(currency||"").toUpperCase();
- if(code==="TRY")return {rate:1,rateDate:issueDate,source:"TRY",field:"Not applicable"};
+ if(code==="TRY")return {rate:1,rateDate:issueDate,requestedDate:issueDate,source:"TRY",field:"Not applicable"};
  if(!["EUR","USD","GBP"].includes(code))throw new Error("TCMB dönüşümü şu an EUR, USD ve GBP için açık; kaynak para birimini kontrol edin.");
  const shift=(date:string,days:number)=>{const d=new Date(date+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);};
+ const requestedDate=shift(issueDate,-1);
  for(let back=0;back<=10;back++){
-  const rateDate=shift(issueDate,-back),[y,mo,d]=rateDate.split("-");
+  const rateDate=shift(requestedDate,-back),[y,mo,d]=rateDate.split("-");
   let response:Response;
   try{response=await fetch(`https://www.tcmb.gov.tr/kurlar/${y}${mo}/${d}${mo}${y}.xml`,{signal:AbortSignal.timeout(8000)});}
   catch{continue;}
@@ -196,10 +197,10 @@ async function fetchTcmbForexBuying(currency: string, issueDate: string) {
   const xml=await response.text(), re=new RegExp(`<Currency\\b[^>]*?CurrencyCode="${code}"[^>]*>([\\s\\S]*?)<\\/Currency>`),match=xml.match(re);
   if(!match)continue;
   const tag=(name:string)=>{const m=match[1].match(new RegExp("<"+name+">([^<]*)</"+name+">"));return m?Number(String(m[1]).trim().replace(",",".")):NaN;};
-  const unit=tag("Unit")||1, buying=tag("ForexBuying");
-  if(Number.isFinite(buying)&&buying>0&&Number.isFinite(unit)&&unit>0)return {rate:buying/unit,rateDate,source:"TCMB",field:"ForexBuying"};
+  const unit=tag("Unit")||1, selling=tag("ForexSelling");
+  if(Number.isFinite(selling)&&selling>0&&Number.isFinite(unit)&&unit>0)return {rate:selling/unit,rateDate,requestedDate,source:"TCMB",field:"ForexSelling"};
  }
- throw new Error("Fatura tarihine ait veya önceki 10 gün içinde yayımlanmış TCMB döviz alış kuru bulunamadı. Fatura taslağı oluşturulmadı.");
+ throw new Error("Fatura tarihinden önceki gün veya önceki 10 gün içinde yayımlanmış TCMB döviz satış kuru bulunamadı. Fatura taslağı oluşturulmadı.");
 }
 async function normalizedSnapshot(type: DocumentType, shipment: Record<string, unknown>, company: Record<string, unknown>, options: Record<string,unknown> = {}) {
  const isInvoice=type!=="e_despatch",today=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Istanbul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()),date=String(isInvoice?(asObject(options.invoiceOptions).issueDate||today):shipment.date||"");
@@ -210,7 +211,7 @@ async function normalizedSnapshot(type: DocumentType, shipment: Record<string, u
  if(isInvoice&&(![0,1,10,20].includes(vatRate)||invoiceOptions.vatRate===undefined||invoiceOptions.vatRate===null||String(invoiceOptions.vatRate)===""))throw new Error("Fatura için KDV oranını ayrıca seçin; sipariş oranı kullanılmaz.");
  const exemptionCode=String(invoiceOptions.vatExemptionCode||"").trim();
  if(isInvoice&&vatRate===0&&!/^\d{3}$/.test(exemptionCode))throw new Error("KDV %0 için Nilvera kod listesinden geçerli 3 haneli istisna kodu girilmelidir.");
- const rateInfo=isInvoice?await fetchTcmbForexBuying(sourceCurrency,date):{rate:1,rateDate:date,source:sourceCurrency,field:"Not applicable"};
+ const rateInfo=isInvoice?await fetchTcmbForexSelling(sourceCurrency,date):{rate:1,rateDate:date,source:sourceCurrency,field:"Not applicable"};
  const lines=safeLines(shipment.lines).map((line,i)=>{
   const sourceLine=asArray(shipment.lines)[i]||{},unitPrice=Number(line.unit_price||0),converted=!isInvoice||sourceCurrency==="TRY"?unitPrice:Number((unitPrice*rateInfo.rate).toFixed(6));
   return {...line,quote_item_id:String(sourceLine.quoteItemId||""),unit_price:converted,currency:isInvoice?"TRY":sourceCurrency,tax_rate:isInvoice?vatRate:Number(sourceLine.vatRate??shipment.vatRate??0),source_unit_price:unitPrice,source_currency:sourceCurrency};
@@ -227,11 +228,11 @@ async function normalizedSnapshot(type: DocumentType, shipment: Record<string, u
  const profile=String(options.invoiceProfile||"TEMELFATURA");
  if(type==="e_invoice"&&!["TEMELFATURA","TICARIFATURA"].includes(profile))throw new Error("e-Fatura profili geçersiz.");
  const vatBuckets=Object.fromEntries([1,8,10,18,20].map(r=>[String(r),Number(lines.filter(x=>x.tax_rate===r).reduce((a,x)=>a+Number((x.quantity*x.unit_price*x.tax_rate/100).toFixed(2)),0).toFixed(2))]));
- return {document_type:type,direction:"outbound",source:{kind:"shipment",id:String(shipment.id||""),order_no:String(shipment.orderNo||"")},issuer:safeCompany(company),customer,issue_date:date,internal_invoice_number:null,internal_dispatch_number:String(shipment.officialIrsaliyeNo||shipment.irsaliyeNo||"")||null,currency:isInvoice?"TRY":sourceCurrency,vat_rate:isInvoice?vatRate:null,vat_exemption_code:isInvoice&&vatRate===0?exemptionCode:null,invoice_type:isInvoice&&vatRate===0?"ISTISNA":"SATIS",net_amount:Number(net.toFixed(2)),vat_amount:Number(vat.toFixed(2)),gross_amount:Number((net+(isInvoice?vat:0)).toFixed(2)),vat_buckets:vatBuckets,lines,invoice_profile:profile,customer_alias:String(options.customerAlias||"").trim()||null,dispatch,currency_conversion:isInvoice?{source_currency:sourceCurrency,target_currency:"TRY",rate:Number(rateInfo.rate.toFixed(6)),rate_date:rateInfo.rateDate,rate_source:rateInfo.source,rate_field:rateInfo.field,source_net_amount:Number(lines.reduce((a,l)=>a+Number((l.quantity*l.source_unit_price).toFixed(2)),0).toFixed(2))}:null};
+ return {document_type:type,direction:"outbound",source:{kind:"shipment",id:String(shipment.id||""),order_no:String(shipment.orderNo||"")},issuer:safeCompany(company),customer,issue_date:date,internal_invoice_number:null,internal_dispatch_number:String(shipment.officialIrsaliyeNo||shipment.irsaliyeNo||"")||null,currency:isInvoice?"TRY":sourceCurrency,vat_rate:isInvoice?vatRate:null,vat_exemption_code:isInvoice&&vatRate===0?exemptionCode:null,invoice_type:isInvoice&&vatRate===0?"ISTISNA":"SATIS",net_amount:Number(net.toFixed(2)),vat_amount:Number(vat.toFixed(2)),gross_amount:Number((net+(isInvoice?vat:0)).toFixed(2)),vat_buckets:vatBuckets,lines,invoice_profile:profile,customer_alias:String(options.customerAlias||"").trim()||null,dispatch,currency_conversion:isInvoice?{source_currency:sourceCurrency,target_currency:"TRY",rate:Number(rateInfo.rate.toFixed(6)),rate_date:rateInfo.rateDate,requested_rate_date:rateInfo.requestedDate,rate_source:rateInfo.source,rate_field:rateInfo.field,source_net_amount:Number(lines.reduce((a,l)=>a+Number((l.quantity*l.source_unit_price).toFixed(2)),0).toFixed(2))}:null};
 }
 function invoiceFinancialSnapshot(s:any){
  const conversion=asObject(s.currency_conversion);
- return {currency:"TRY",vatRate:Number(s.vat_rate||0),netAmount:Number(s.net_amount||0),vatAmount:Number(s.vat_amount||0),totalAmount:Number(s.gross_amount||0),sourceCurrency:String(conversion.source_currency||s.currency||"TRY"),sourceNetAmount:Number(conversion.source_net_amount||s.net_amount||0),currencyConversion:{rate:Number(conversion.rate||1),rateDate:String(conversion.rate_date||s.issue_date||""),source:String(conversion.rate_source||""),field:String(conversion.rate_field||"")},lines:asArray(s.lines).map((l:any)=>({quoteItemId:String(l.quote_item_id||""),code:String(l.product_code||""),desc:String(l.description||""),qty:Number(l.quantity||0),unitPrice:Number(l.unit_price||0),currency:"TRY",vatRate:Number(l.tax_rate||0)}))};
+ return {currency:"TRY",vatRate:Number(s.vat_rate||0),netAmount:Number(s.net_amount||0),vatAmount:Number(s.vat_amount||0),totalAmount:Number(s.gross_amount||0),sourceCurrency:String(conversion.source_currency||s.currency||"TRY"),sourceNetAmount:Number(conversion.source_net_amount||s.net_amount||0),currencyConversion:{rate:Number(conversion.rate||1),rateDate:String(conversion.rate_date||s.issue_date||""),requestedRateDate:String(conversion.requested_rate_date||""),source:String(conversion.rate_source||""),field:String(conversion.rate_field||"")},lines:asArray(s.lines).map((l:any)=>({quoteItemId:String(l.quote_item_id||""),code:String(l.product_code||""),desc:String(l.description||""),qty:Number(l.quantity||0),unitPrice:Number(l.unit_price||0),currency:"TRY",vatRate:Number(l.tax_rate||0)}))};
 }
 async function saveEvent(admin: ReturnType<typeof createClient>, userId: string, documentId: string, eventKey: string, eventType: string, toStatus: string, eventData = {}) {
   const { error } = await admin.from("e_document_events").upsert({
