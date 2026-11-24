@@ -218,7 +218,7 @@ async function normalizedSnapshot(type: DocumentType, shipment: Record<string, u
  });
  if(!lines.length||lines.some(x=>!x.product_code||!x.description||!(x.quantity>0)||x.unit_price<0))throw new Error("Belge satırları eksik veya geçersiz.");
  const customer=safeCustomer(asObject(shipment.customer));
- if(!customer.name||!customer.taxNo||!customer.address)throw new Error("Alıcı adı, vergi numarası ve adresi tamamlanmalı.");
+ const missingCustomer=[];if(!String(customer.name||"").trim())missingCustomer.push("firma adı");if(isInvoice&&!String(customer.taxOffice||"").trim())missingCustomer.push("vergi dairesi");if(!String(customer.taxNo||"").trim())missingCustomer.push("vergi numarası");if(!String(customer.address||"").trim())missingCustomer.push("adres");if(missingCustomer.length)throw new Error((isInvoice?"Fatura":"Belge")+" taslağı oluşturulamadı. Cari kartında zorunlu alanlar eksik: "+missingCustomer.join(", ")+". Cariyi düzenleyip tekrar deneyin.");
  if(!company.name&&!company.legalName)throw new Error("Şirket unvanı tanımlı değil.");
  if(!company.taxNo||!company.address)throw new Error("Şirket vergi numarası ve adresi tamamlanmalı.");
  if(type==="e_despatch"&&String(shipment.officialIrsaliyeNo||"").trim())throw new Error("Bu sevkiyatın resmi e-İrsaliye numarası zaten kayıtlı; ikinci irsaliye oluşturmadan önce eşleştirin.");
@@ -273,8 +273,8 @@ Deno.serve(async (req: Request) => {
  if(error||!doc)return reply({ok:false,error:"e-Belge taslağı bulunamadı."},200,origin);
  if(doc.direction!=="outbound"||doc.source_kind!=="shipment"||!(doc.status==="draft"||(doc.status==="failed"&&!doc.provider_document_id)))return reply({ok:false,error:"Bu kayıt gönderime uygun taslak değil. Olası tekrar engellendi."},200,origin);
  if(doc.document_type!=="e_despatch"){
-  const snapshot=asObject(doc.payload_snapshot),taxNo=String(asObject(snapshot.customer).taxNo||"").replace(/\D/g,"");
-  if(!/^\d{10,11}$/.test(taxNo))return reply({ok:false,error:"Alıcı VKN/TCKN 10 veya 11 haneli olmalı."},200,origin);
+  const snapshot=asObject(doc.payload_snapshot),customer=asObject(snapshot.customer),taxOffice=String(customer.taxOffice||"").trim(),taxNo=String(customer.taxNo||"").replace(/\D/g,"");
+  if(!taxOffice||!/^[0-9]{10,11}$/.test(taxNo))return reply({ok:false,error:"Gönderim durduruldu. Taslakta alıcı cari vergi dairesi ve 10/11 haneli vergi numarası zorunlu. Cariyi düzenleyip yeni önizleme oluşturun."},200,origin);
   try{const taxpayer=await nilveraRequest("/general/GlobalCompany/Check/TaxNumber/"+encodeURIComponent(taxNo)+"?globalUserType=Invoice"),registered=asList(taxpayer).length>0;if((doc.document_type==="e_invoice"&&!registered)||(doc.document_type==="e_archive_invoice"&&registered))return reply({ok:false,error:registered?"Alıcı e-Fatura mükellefi; e-Fatura seçin.":"Alıcı e-Fatura mükellefi değil; e-Arşiv Fatura seçin."},200,origin);}
   catch(e){const status=Number((e as any)?.status||0),message=status===401?"Nilvera API anahtarı alıcı kontrolünü reddetti.":status===403?"Nilvera API anahtarında mükellef sorgulama izni eksik.":e instanceof Error?e.message:"Nilvera alıcı kontrolü başarısız.";return reply({ok:false,error:"Gönderim öncesi alıcı türü doğrulanamadı: "+message},200,origin);}
  }
@@ -383,16 +383,25 @@ if (action !== "prepare") return reply({ ok: false, error: "action status, probe
     if (!sourceId || sourceId.length > 120) return reply({ ok: false, error: "sourceId gerekli." }, 400, origin);
     if (!idempotencyKey || idempotencyKey.length > 160) return reply({ ok: false, error: "idempotencyKey gerekli ve en fazla 160 karakter olmalı." }, 400, origin);
 
-    const [shipmentRow, companyRow] = await Promise.all([
+    const [shipmentRow, companyRow, customerRow] = await Promise.all([
       admin.from("kv_store").select("value").eq("user_id", identity.user.id).eq("key", "godo:shipments").maybeSingle(),
       admin.from("kv_store").select("value").eq("user_id", identity.user.id).eq("key", "godo:company").maybeSingle(),
+      admin.from("kv_store").select("value").eq("user_id", identity.user.id).eq("key", "godo:customers").maybeSingle(),
     ]);
-    if (shipmentRow.error || companyRow.error) throw new Error("Matrix kayıtları okunamadı.");
+    if (shipmentRow.error || companyRow.error || customerRow.error) throw new Error("Matrix kayıtları okunamadı.");
     const shipments = asArray(JSON.parse(shipmentRow.data?.value || "[]"));
     const shipment = shipments.find(row => String(row.id || "") === sourceId);
     if (!shipment) return reply({ ok: false, error: "Sevkiyat bulunamadı." }, 404, origin);
     const company = asObject(JSON.parse(companyRow.data?.value || "{}"));
-    const snapshot=await normalizedSnapshot(type,shipment,company,{invoiceProfile:body.invoiceProfile,customerAlias:body.customerAlias,dispatch:body.dispatch,invoiceOptions:body.invoiceOptions});
+    let billingShipment=shipment;
+    if(type!=="e_despatch"){
+      const savedCustomer=asObject(shipment.customer),customerId=String(savedCustomer.customerId||"");
+      const currentCustomer=asArray(JSON.parse(customerRow.data?.value||"[]")).find(row=>String(row.id||"")===customerId);
+      if(currentCustomer){
+        billingShipment={...shipment,customer:{...savedCustomer,name:String(currentCustomer.name||""),taxOffice:String(currentCustomer.taxOffice||""),taxNo:String(currentCustomer.taxNo||""),address:String(currentCustomer.address||"")}};
+      }
+    }
+    const snapshot=await normalizedSnapshot(type,billingShipment,company,{invoiceProfile:body.invoiceProfile,customerAlias:body.customerAlias,dispatch:body.dispatch,invoiceOptions:body.invoiceOptions});
     if(type!=="e_despatch"&&!/^\d{10,11}$/.test(String(snapshot.customer.taxNo||"").replace(/\D/g,"")))throw new Error("Alıcı VKN/TCKN 10 veya 11 haneli olmalı.");
 
     if (type !== "e_despatch") {

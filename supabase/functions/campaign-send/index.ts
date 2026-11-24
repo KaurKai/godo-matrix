@@ -10,7 +10,14 @@ const SENDER = env("GMAIL_SENDER");
 const FROM_NAME = "Furkan Özbent";
 const OPTOUT = 'Bu konuda yeniden iletişime geçmemizi istemezseniz bu e-postayı "istemiyorum" diye yanıtlamanız yeterli.';
 const SAMPLE = { name: "Cafer Usta", company: "Ustaoğlu Holding", greeting: "Merhaba Cafer Bey" };
-const MAX_PER_RUN = 4;
+// Pilot döneminde zamanlayıcı başına en çok bir şirket; hız daha sonra bilinçli olarak artırılabilir.
+const MAX_PER_RUN = 1;
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "https://kaurkai.github.io",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-campaign-cron-secret",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Vary": "Origin",
+};
 
 // ---------- yardımcılar (Matrix'teki önizlemeyle aynı kurallar) ----------
 const enc = new TextEncoder();
@@ -123,6 +130,31 @@ function adminKey() {
   try { const m = JSON.parse(env("SUPABASE_SECRET_KEYS") || "{}"); return m.default || Object.values(m)[0] || ""; } catch (_e) { return ""; }
 }
 const SB = () => createClient(env("SUPABASE_URL"), adminKey(), { auth: { persistSession: false } });
+// Kullanıcı çağrıları yönetici JWT'si, zamanlayıcı çağrıları ayrı Vault sırrı gerektirir.
+async function authorize(req) {
+  const cronSecret = req.headers.get("x-campaign-cron-secret");
+  if (cronSecret) {
+    try {
+      const { data, error } = await SB().rpc("verify_campaign_cron_secret", { p_candidate: cronSecret });
+      if (error) return { response: json({ ok: false, error: "Zamanlayıcı doğrulanamadı" }, 500) };
+      if (data === true) return { actor: "cron" };
+    } catch (_e) {
+      return { response: json({ ok: false, error: "Zamanlayıcı doğrulanamadı" }, 500) };
+    }
+  }
+  const token = (req.headers.get("Authorization") || "").match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return { response: json({ ok: false, error: "Oturum gerekli" }, 401) };
+  const sb = SB();
+  const { data: authData, error: authError } = await sb.auth.getUser(token);
+  if (authError || !authData?.user?.email) return { response: json({ ok: false, error: "Oturum doğrulanamadı" }, 401) };
+  const { data: allowed, error: allowError } = await sb.from("allowed_signups").select("email");
+  if (allowError) return { response: json({ ok: false, error: "Yetki listesi doğrulanamadı" }, 500) };
+  const email = authData.user.email.trim().toLowerCase();
+  if (!(allowed || []).some((row) => String(row.email || "").trim().toLowerCase() === email)) {
+    return { response: json({ ok: false, error: "Bu işlem için yönetici yetkisi yok" }, 403) };
+  }
+  return { actor: "user", user: authData.user };
+}
 async function attachmentOf(sb, campaign) {
   if (!campaign.attachment_path) throw new Error("Kampanyada PDF eki yok");
   const { data, error } = await sb.storage.from("campaign-files").download(campaign.attachment_path);
@@ -133,7 +165,7 @@ function trParts(d = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false, weekday: "short" }).formatToParts(d).map((x) => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), weekday: p.weekday };
 }
-const json = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "Content-Type": "application/json" } });
+const json = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
 
 async function actionTest(body) {
   const sb = SB();
@@ -200,50 +232,17 @@ async function actionProcess(body) {
   return json({ ok: true, tr: now, results });
 }
 
-// Onaylı tekil mail (ör. teklif cevabı): ek, depoya şifreli konmuş dosyadan alınır; SHA-256 tutmazsa gönderilmez
-const hex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
-async function actionSendOutbox(body) {
-  const sb = SB();
-  const { data: m } = await sb.from("mail_outbox").select("*").eq("id", body.id).single();
-  if (!m) return json({ ok: false, error: "kayıt yok" }, 404);
-  if (m.status !== "bekliyor") return json({ ok: false, error: "durum: " + m.status }, 409);
-  let attachment = null;
-  if (m.attachment_name) {
-    const url = String(body.file_url || "");
-    if (!/^https:\/\/raw\.githubusercontent\.com\/KaurKai\/godo-matrix\/[0-9a-f]{40}\/tmp\/q-[0-9a-f]{12}\.bin$/.test(url)) return json({ ok: false, error: "dosya adresi geçersiz" }, 400);
-    const r = await fetch(url);
-    if (!r.ok) return json({ ok: false, error: "dosya indirilemedi: " + r.status }, 502);
-    const buf = new Uint8Array(await r.arrayBuffer());
-    let plain;
-    try {
-      const keyRaw = Uint8Array.from(atob(String(body.key || "")), (c) => c.charCodeAt(0));
-      const key = await crypto.subtle.importKey("raw", keyRaw, "AES-GCM", false, ["decrypt"]);
-      plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12)));
-    } catch (_e) { return json({ ok: false, error: "dosya çözülemedi" }, 400); }
-    const sha = hex(await crypto.subtle.digest("SHA-256", plain));
-    if (!m.attachment_sha256 || sha !== m.attachment_sha256) return json({ ok: false, error: "dosya doğrulanamadı" }, 400);
-    attachment = { name: m.attachment_name, bytes: plain };
-  }
-  try {
-    const rfc = m.reply_message_id ? await rfcIdOf(m.reply_message_id) : null;
-    const { raw } = buildMime({ to: m.to_email, subject: m.subject, html: m.html, text: m.text_body, attachment, inReplyTo: rfc, references: rfc });
-    const sent = await gmailSend(raw, m.reply_thread_id || null);
-    await sb.from("mail_outbox").update({ status: "gonderildi", gmail_id: sent.id, sent_at: new Date().toISOString(), error: null }).eq("id", m.id);
-    return json({ ok: true, gmail_id: sent.id, thread_id: sent.threadId, in_reply_to: rfc, attachment_bytes: attachment?.bytes.length || 0 });
-  } catch (e) {
-    await sb.from("mail_outbox").update({ status: "hata", error: String(e?.message || e).slice(0, 500) }).eq("id", m.id);
-    return json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-}
-
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ ok: false }, 405);
   let body = {};
   try { body = await req.json(); } catch (_e) { /* boş */ }
+  const authorization = await authorize(req);
+  if (authorization.response) return authorization.response;
+  if (authorization.actor === "cron" && body.action !== "process") return json({ ok: false, error: "Zamanlayıcı yalnız kuyruğu işleyebilir" }, 403);
   try {
     if (body.action === "test") return await actionTest(body);
     if (body.action === "process") return await actionProcess(body);
-    if (body.action === "send_outbox") return await actionSendOutbox(body);
     if (body.action === "check_replies") {
       const sb = SB();
       const { data: rows } = await sb.from("outreach").select("id, name, company, email, thread_id").eq("status", "aktif").not("thread_id", "is", null).limit(200);
