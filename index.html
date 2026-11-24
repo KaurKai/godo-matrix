@@ -4456,7 +4456,7 @@ async function edocPrepareSelected(){
     invoiceOptions={issueDate,vatRate:Number(vatValue),vatExemptionCode};
   }
   const identity=await sb.auth.getUser();
-  const stable=JSON.stringify({id:shipment.id,type,invoiceOptions,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines});
+  const customerForKey=customers.find(c=>String(c.id||'')===String(shipment.customer?.customerId||''))||shipment.customer||{};   const stable=JSON.stringify({id:shipment.id,type,customer:{name:customerForKey.name||'',taxOffice:customerForKey.taxOffice||'',taxNo:customerForKey.taxNo||'',address:customerForKey.address||''},invoiceOptions,invoiceDate:shipment.invoiceDate||'',date:shipment.date||'',invoiceNo:shipment.invoiceNo||'',lines:shipment.lines});
   let hash=2166136261;for(let i=0;i<stable.length;i++){hash^=stable.charCodeAt(i);hash=Math.imul(hash,16777619);}
   const key='matrix:'+String(identity.data?.user?.id||'')+':'+String(shipment.id)+':'+type+':'+(hash>>>0).toString(16);
   eDocumentActionBusy=true;render();
