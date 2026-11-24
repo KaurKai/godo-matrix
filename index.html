@@ -560,6 +560,7 @@ function emptyQuote(){
     currency: "€",
     customer: { customerId:null, name:"", address:"", taxOffice:"", taxNo:"", contactId:null, contactName:"", contactPhone:"", contactEmail:"" },
     items: [ blankItem() ],
+    customerSasNo: "",
     vatEnabled: false,
     vatRate: 20,
     terms: { ...defaultTerms },
@@ -1195,7 +1196,7 @@ async function persistQuote(){
   await stSet('godo:quote:'+quote.id, JSON.stringify(quote));
   const total = computeTotals(quote).grand;
   const existingIdx = quotesIndex.findIndex(q=>q.id===quote.id);
-  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"", qtyTotal: (quote.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0), sourceThreadId: quote.sourceEmail&&quote.sourceEmail.threadId||null, sourceMessageId: quote.sourceEmail&&quote.sourceEmail.messageId||null };
+  const entry = { id: quote.id, rootId: quote.rootId, version: quote.version||1, quoteNo: quote.quoteNo, customerName: quote.customer.name || "İsimsiz Müşteri", customerId: quote.customer.customerId||null, date: quote.date, total, currency: quote.currency, status: quote.status, orderStatus: quote.orderStatus||"", lossReason: quote.lossReason||"", irsaliyeNo: quote.irsaliyeNo||"", invoiceNo: quote.invoiceNo||"", paymentStatus: quote.paymentStatus||"", paidAmount: quote.paidAmount||"", paymentDueDate: quote.paymentDueDate||"", paymentTermDays: quote.paymentTermDays||"", qtyTotal: (quote.items||[]).filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0), sourceThreadId: quote.sourceEmail&&quote.sourceEmail.threadId||null, sourceMessageId: quote.sourceEmail&&quote.sourceEmail.messageId||null, customerSasNo:String(quote.customerSasNo||"").trim(), vatEnabled:!!quote.vatEnabled, vatRate:Number(quote.vatRate)||0 };
   if(existingIdx >= 0) quotesIndex[existingIdx] = entry; else quotesIndex.unshift(entry);
   await saveIndex();
   flashSaved();
@@ -1843,7 +1844,7 @@ async function createQuoteFromIntake(index,opts){
   draft.items=productMatches.length?productMatches.map(({product:p,qty})=>({ id:crypto.randomUUID(),productId:p.id,code:p.code,desc:p.desc,delivery:p.delivery||'',qty,listPrice:p.listPrice||'',buyDiscount:p.buyDiscount||'',discount:p.discount||'',unitPrice:'',useCalc:!!p.listPrice })): [blankItem()];
   draft.sourceEmail={threadId:item.threadId,messageId:item.messageId,from:item.from,fromEmail:item.fromEmail,subject:item.subject,date:item.date,attachments:item.attachments||[]};
   const total=computeTotals(draft).grand;
-  const entry={id:draft.id,rootId:draft.rootId,version:draft.version||1,quoteNo:draft.quoteNo,customerName:draft.customer.name||'İsimsiz Müşteri',customerId:draft.customer.customerId||null,date:draft.date,total,currency:draft.currency,status:draft.status,orderStatus:draft.orderStatus||'',lossReason:draft.lossReason||'',irsaliyeNo:draft.irsaliyeNo||'',invoiceNo:draft.invoiceNo||'',paymentStatus:draft.paymentStatus||'',paidAmount:draft.paidAmount||'',paymentDueDate:draft.paymentDueDate||'',paymentTermDays:draft.paymentTermDays||'',qtyTotal:draft.items.filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0),sourceThreadId:item.threadId||null,sourceMessageId:item.messageId||null};
+  const entry={id:draft.id,rootId:draft.rootId,version:draft.version||1,quoteNo:draft.quoteNo,customerName:draft.customer.name||'İsimsiz Müşteri',customerId:draft.customer.customerId||null,date:draft.date,total,currency:draft.currency,status:draft.status,orderStatus:draft.orderStatus||'',lossReason:draft.lossReason||'',irsaliyeNo:draft.irsaliyeNo||'',invoiceNo:draft.invoiceNo||'',paymentStatus:draft.paymentStatus||'',paidAmount:draft.paidAmount||'',paymentDueDate:draft.paymentDueDate||'',paymentTermDays:draft.paymentTermDays||'',qtyTotal:draft.items.filter(it=>it.code||it.desc).reduce((s,it)=>s+(parseFloat(it.qty)||0),0),sourceThreadId:item.threadId||null,sourceMessageId:item.messageId||null,customerSasNo:String(draft.customerSasNo||'').trim(),vatEnabled:!!draft.vatEnabled,vatRate:Number(draft.vatRate)||0};
   await stSet('godo:quote:'+draft.id,JSON.stringify(draft));
   quotesIndex.unshift(entry); await saveIndex();
   item.status='quote-created'; item.quoteId=draft.id; await saveGmailIntake();
@@ -3083,11 +3084,12 @@ async function openShipmentModal(orderId){
     if(!out.length){ alert('Sevk edilecek miktar girilmedi.'); return; }
     const cu = full.customer||{};
     const lang = full.lang==='en';
-    const vatDefault = full.vatEnabled ? (parseFloat(full.vatRate)||0) : (lang ? 0 : (parseFloat(full.vatRate)||20));
+    const vatDefault = full.vatEnabled ? (parseFloat(full.vatRate)||0) : 0;
     const s = {
       id:crypto.randomUUID(), orderId, orderNo:full.quoteNo||'',
       customer:{ name:upperCompanyName(cu.name||''), taxOffice:cu.taxOffice||'', taxNo:cu.taxNo||'', address:cu.address||'', contactName:cu.contactName||'', phone:cu.contactPhone||'' },
       currency:full.currency||'€', date:ov.querySelector('#sl-date').value||todayStr(), irsaliyeNo:nextShipmentIrsaliyeNo(), irsaliyeNote:ov.querySelector('#sl-note').value.trim(),
+      vatEnabled:!!full.vatEnabled,
       officialIrsaliyeNo:ov.querySelector('#sl-official').value.trim(), lines:out, termDays:q.paymentTermDays||full.paymentTermDays||'',
       vatDefault, vatRate:'', invoiceNo:'', invoiceDate:'', dueDateOverride:'', payments:[]
     };
@@ -3305,7 +3307,7 @@ function renderOrdersPage(){
   let rows = all.filter(x=>orderMatchesFilter(x.q,x.a,orderFilter));
   if(orderSearch){
     const s = foldTR(orderSearch.trim());
-    rows = rows.filter(x=>foldTR([x.q.customerName,x.q.quoteNo].concat(x.a.ships.map(sh=>sh.invoiceNo+' '+sh.irsaliyeNo)).join(' ')).includes(s));
+    rows = rows.filter(x=>foldTR([x.q.customerName,x.q.quoteNo,x.q.customerSasNo].concat(x.a.ships.map(sh=>sh.invoiceNo+' '+sh.irsaliyeNo)).join(' ')).includes(s));
   }
   const allShips = shipments.filter(s=>quotesIndex.some(q=>q.id===s.orderId));
   const outstanding = sumByCur(allShips.filter(s=>shipIsInvoiced(s)), s=>Math.max(0, shipTotal(s)-shipPaid(s)), shipInvoiceCurrency);
@@ -3333,7 +3335,7 @@ function renderOrdersPage(){
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
           <div style="cursor:pointer;" data-open="${q.id}">
             <div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
-            <div class="dqr-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(q.date||'')}${q.paymentTermDays?' · Vade '+escapeHtml(String(q.paymentTermDays))+' gün':''}</div>
+            <div class="dqr-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(q.date||'')}${q.customerSasNo?' · Müşteri SAS '+escapeHtml(q.customerSasNo):''}${q.paymentTermDays?' · Vade '+escapeHtml(String(q.paymentTermDays))+' gün':''}</div>
           </div>
           <div style="text-align:right;">
             <div class="mono dqr-total">${cur} ${fmt(q.total)}</div>
@@ -4387,6 +4389,20 @@ function edocCandidates(){ return (shipments||[]).filter(s=>Array.isArray(s.line
 function edocTypeLabel(type){ return EDOC_TYPE_LABEL[type]||type; }
 function edocMoney(value,currency){ const c=({TRY:'₺',EUR:'€',USD:'$',GBP:'£'}[String(currency||'').toUpperCase()]||currency||'');return escapeHtml(c)+' '+fmt(Number(value)||0); }
 function edocRate(value){return Number(value||0).toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:6});}
+async function edocQuoteVatDefault(shipment){
+ let enabled=shipment&&typeof shipment.vatEnabled==='boolean'?shipment.vatEnabled:undefined,rate=shipment&&shipment.vatDefault!==undefined?shipment.vatDefault:shipment&&shipment.vatRate;
+ const indexed=quotesIndex.find(q=>q.id===shipment?.orderId);
+ if(typeof enabled!=='boolean'&&indexed&&typeof indexed.vatEnabled==='boolean'){enabled=indexed.vatEnabled;rate=indexed.vatRate;}
+ if(typeof enabled!=='boolean'&&shipment?.orderId){try{const rec=await stGet('godo:quote:'+shipment.orderId),full=rec?.value?JSON.parse(rec.value):null;if(full&&typeof full.vatEnabled==='boolean'){enabled=full.vatEnabled;rate=full.vatRate;}}catch{}}
+ return {enabled:enabled===true,rate:Number(rate)||0};
+}
+async function edocApplyVatDefault(){
+ const select=document.getElementById('edoc-vat-rate');if(!select||select.dataset.userEdited==='true')return;
+ const sourceId=document.getElementById('edoc-source')?.value||'',shipment=edocCandidates().find(x=>String(x.id)===sourceId);if(!shipment)return;
+ const info=await edocQuoteVatDefault(shipment);if(select.dataset.userEdited==='true')return;
+ select.value=info.enabled?String(info.rate):'';
+ const wrap=document.getElementById('edoc-vat-exemption-wrap');if(wrap)wrap.style.display=select.value==='0'?'block':'none';
+}
 function edocUnitMoney(value,currency){const c=({TRY:'₺',EUR:'€',USD:'$',GBP:'£'}[String(currency||'').toUpperCase()]||currency||'');return escapeHtml(c)+' '+Number(value||0).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:6});}
 function renderEDocPreview(){
   const p=eDocumentPreview, doc=p&&p.document, s=p&&p.snapshot;
@@ -4394,7 +4410,7 @@ function renderEDocPreview(){
   const title=edocTypeLabel(doc.document_type), customer=s.customer||{}, issuer=s.issuer||{}, fx=s.currency_conversion||null;
   const lines=(s.lines||[]).map(l=>'<tr><td>'+escapeHtml(l.description||'')+'</td><td class="num">'+fmt(Number(l.quantity)||0)+'</td><td class="num">'+edocUnitMoney(l.unit_price,s.currency)+'</td><td class="num">'+fmt(Number(l.tax_rate)||0)+'%</td><td class="num">'+edocMoney((Number(l.quantity)||0)*(Number(l.unit_price)||0),s.currency)+'</td></tr>').join('');
   const fxSummary=fx&&fx.source_currency&&fx.source_currency!=='TRY'
-    ? 'Kaynak toplam: '+edocMoney(fx.source_net_amount,fx.source_currency)+' · TCMB Döviz alış: 1 '+escapeHtml(fx.source_currency)+' = '+edocRate(fx.rate)+' ₺ · Kur tarihi: '+escapeHtml(fx.rate_date||'')+' · '+escapeHtml(fx.rate_source||'TCMB')
+    ? 'Kaynak toplam: '+edocMoney(fx.source_net_amount,fx.source_currency)+' · TCMB döviz satış: 1 '+escapeHtml(fx.source_currency)+' = '+edocRate(fx.rate)+' ₺ · Kullanılan kur tarihi: '+escapeHtml(fx.rate_date||'')+' (fatura tarihinden önceki yayımlanmış kur) · '+escapeHtml(fx.rate_source||'TCMB')
     : 'Kaynak para birimi TRY; kur dönüşümü uygulanmadı.';
   const taxNote=Number(s.vat_rate)===0?' · İstisna kodu: '+escapeHtml(s.vat_exemption_code||'belirtilmedi'):' · KDV oranı: '+fmt(Number(s.vat_rate)||0)+'%';
   return '<div class="panel" style="margin:14px 0;border:1px solid var(--hairline-strong);padding:18px;"><div class="subhead-row"><div><b>Gönderim önizlemesi · '+escapeHtml(title)+'</b><div class="hint">Alıcı: '+escapeHtml(customer.name||'')+' · VKN/TCKN: '+escapeHtml(customer.taxNo||'')+' · Tarih: '+escapeHtml(s.issue_date||'')+'</div></div><span class="edoc-state edoc-draft">Taslak</span></div><div class="hint" style="margin:8px 0;">Satıcı: '+escapeHtml(issuer.legalName||issuer.name||'')+' · Matrah: '+edocMoney(s.net_amount,s.currency)+' · KDV: '+edocMoney(s.vat_amount,s.currency)+taxNote+' · Genel toplam: <b>'+edocMoney(s.gross_amount,s.currency)+'</b></div>'+(doc.document_type==='e_despatch'?'':'<div class="hint" style="margin:8px 0;padding:10px;background:var(--paper-2);">'+fxSummary+'</div>')+'<div class="table-wrap"><table class="items-table"><thead><tr><th>Ürün / açıklama</th><th class="num">Miktar</th><th class="num">Birim fiyat</th><th class="num">KDV</th><th class="num">Satır toplamı</th></tr></thead><tbody>'+lines+'</tbody></table></div><div class="edoc-actions" style="margin-top:12px;"><button id="edoc-confirm-send" class="btn btn-primary" '+(!edocIsReady()||eDocumentActionBusy?'disabled':'')+'>Nilvera’ya gönder</button><button id="edoc-cancel-preview" class="btn btn-ghost">Önizlemeyi kapat</button><span class="hint">Canlı gönderim yalnız bu düğmeye bastıktan sonra başlar.</span></div></div>';
@@ -4410,9 +4426,11 @@ async function edocPrepareSelected(){
   const customerAlias=document.getElementById('edoc-customer-alias')?.value||'';
   let invoiceOptions=null;
   if(type!=='e_despatch'){
-    const issueDate=document.getElementById('edoc-issue-date')?.value||'',vatValue=document.getElementById('edoc-vat-rate')?.value??'',vatExemptionCode=document.getElementById('edoc-vat-exemption-code')?.value.trim()||'';
+    const issueDate=document.getElementById('edoc-issue-date')?.value||'',vatSelect=document.getElementById('edoc-vat-rate'),vatExemptionCode=document.getElementById('edoc-vat-exemption-code')?.value.trim()||'';
+    let vatValue=vatSelect?.value??'';
     if(!issueDate){alert('Fatura tarihi gerekli.');return;}
-    if(vatValue===''){alert('Sipariş KDV’sinden bağımsız olarak fatura KDV oranını seç.');return;}
+    if(vatValue===''){const fallback=await edocQuoteVatDefault(shipment);if(fallback.enabled){vatValue=String(fallback.rate);if(vatSelect)vatSelect.value=vatValue;}}
+    if(vatValue===''){alert('Teklifte KDV seçili değil. Fatura için KDV oranını ayrıca seç.');return;}
     if(Number(vatValue)===0&&!/^[0-9]{3}$/.test(vatExemptionCode)){alert('KDV %0 seçildi. Nilvera kod listesindeki 3 haneli istisna kodunu gir.');return;}
     invoiceOptions={issueDate,vatRate:Number(vatValue),vatExemptionCode};
   }
@@ -4526,7 +4544,7 @@ async function edocRefreshPending(){
 }
 function renderEDocumentsCompose(){
  const candidates=edocCandidates(),opts=candidates.map(s=>'<option value="'+escapeAttr(String(s.id||''))+'">'+escapeHtml((s.orderNo||'Sipariş')+' · '+((s.customer||{}).name||'Müşteri')+' · '+((s.invoiceNo||s.irsaliyeNo)||formatDate(s.date||'')))+'</option>').join('');
- return '<div class="panel" style="margin:14px 0;padding:18px;"><b>Yeni e-Belge</b><div class="hint" style="margin:4px 0 14px;">Matrix sevkiyatından taslak hazırla, veriyi gözden geçir ve yalnızca açık onaydan sonra canlı gönder.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;"><label>Kaynak sevkiyat<select id="edoc-source" class="input" style="display:block;width:100%;">'+opts+'</select></label><label>Belge türü<select id="edoc-type" class="input" style="display:block;width:100%;"><option value="e_invoice">e-Fatura</option><option value="e_archive_invoice">e-Arşiv Fatura</option><option value="e_despatch">e-İrsaliye</option></select></label><label>e-Fatura profili<select id="edoc-invoice-profile" class="input" style="display:block;width:100%;"><option value="TEMELFATURA">Temel fatura</option><option value="TICARIFATURA">Ticari fatura</option></select></label><label>Alıcı e-Fatura etiketi (varsa)<input id="edoc-customer-alias" class="input" style="display:block;width:100%;" placeholder="urn:mail:..."></label></div><div id="edoc-invoice-options" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;margin-top:12px;"><label>Fatura tarihi<input id="edoc-issue-date" type="date" class="input" style="display:block;width:100%;" value="'+escapeAttr(todayStr())+'" max="'+escapeAttr(todayStr())+'" required></label><label>KDV oranı (siparişten otomatik alınmaz)<select id="edoc-vat-rate" class="input" style="display:block;width:100%;"><option value="">KDV oranını seçin</option><option value="1">%1</option><option value="10">%10</option><option value="20">%20</option><option value="0">%0 — istisna</option></select></label><label id="edoc-vat-exemption-wrap" style="display:none;">KDV istisna kodu<input id="edoc-vat-exemption-code" class="input" style="display:block;width:100%;" inputmode="numeric" maxlength="3" placeholder="Nilvera kod listesi"></label><div class="hint">EUR faturası TL’ye çevrilir; TCMB günlük döviz alış kuru ve fatura tarihi kullanılır. Tatil/hafta sonu için son yayımlanan kur tarihi önizlemede gösterilir.</div></div><div id="edoc-dispatch-fields" style="display:none;margin-top:12px;"><div class="hint" style="margin-bottom:8px;">e-İrsaliye için sevk/taşıma bilgileri</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;">'+[['licensePlate','Araç plakası'],['carrierName','Taşıyıcı adı'],['carrierTaxNumber','Taşıyıcı VKN (varsa)'],['driverFirstName','Sürücü adı'],['driverLastName','Sürücü soyadı'],['driverTaxNumber','Sürücü TCKN/VKN'],['deliveryCity','Teslimat ili'],['deliveryDistrict','Teslimat ilçesi'],['deliveryAddress','Teslimat adresi'],['despatchNumber','Belge seri no (varsa)'],['shipmentNumber','Taşıma/sevkiyat no (varsa)']].map(([k,l])=>'<label>'+l+'<input id="edoc-'+k+'" class="input" style="display:block;width:100%;"></label>').join('')+'</div></div><div class="edoc-actions" style="margin:14px 0 0;"><button id="edoc-prepare" class="btn btn-primary" '+(!candidates.length||eDocumentActionBusy?'disabled':'')+'>Önizleme için taslak hazırla</button><span class="hint">Bu adım Nilvera’ya belge göndermez. İrsaliyede taşıma alanları gerekir.</span></div></div>'+renderEDocPreview();
+ return '<div class="panel" style="margin:14px 0;padding:18px;"><b>Yeni e-Belge</b><div class="hint" style="margin:4px 0 14px;">Matrix sevkiyatından taslak hazırla, veriyi gözden geçir ve yalnızca açık onaydan sonra canlı gönder.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;"><label>Kaynak sevkiyat<select id="edoc-source" class="input" style="display:block;width:100%;">'+opts+'</select></label><label>Belge türü<select id="edoc-type" class="input" style="display:block;width:100%;"><option value="e_invoice">e-Fatura</option><option value="e_archive_invoice">e-Arşiv Fatura</option><option value="e_despatch">e-İrsaliye</option></select></label><label>e-Fatura profili<select id="edoc-invoice-profile" class="input" style="display:block;width:100%;"><option value="TEMELFATURA">Temel fatura</option><option value="TICARIFATURA">Ticari fatura</option></select></label><label>Alıcı e-Fatura etiketi (varsa)<input id="edoc-customer-alias" class="input" style="display:block;width:100%;" placeholder="urn:mail:..."></label></div><div id="edoc-invoice-options" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;margin-top:12px;"><label>Fatura tarihi<input id="edoc-issue-date" type="date" class="input" style="display:block;width:100%;" value="'+escapeAttr(todayStr())+'" max="'+escapeAttr(todayStr())+'" required></label><label>KDV oranı (tekliften varsayılan gelir, değiştirilebilir)<select id="edoc-vat-rate" class="input" style="display:block;width:100%;"><option value="">KDV oranını seçin</option><option value="1">%1</option><option value="10">%10</option><option value="20">%20</option><option value="0">%0 — istisna</option></select></label><label id="edoc-vat-exemption-wrap" style="display:none;">KDV istisna kodu<input id="edoc-vat-exemption-code" class="input" style="display:block;width:100%;" inputmode="numeric" maxlength="3" placeholder="Nilvera kod listesi"></label><div class="hint">Teklifin para birimine göre, fatura tarihinden bir önceki günün TCMB döviz satış kuru kullanılır; tatil/hafta sonu için son yayımlanan önceki kur tarihi önizlemede gösterilir. Teklifte KDV açıksa oran otomatik gelir; faturada değiştirebilirsin.</div></div><div id="edoc-dispatch-fields" style="display:none;margin-top:12px;"><div class="hint" style="margin-bottom:8px;">e-İrsaliye için sevk/taşıma bilgileri</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;">'+[['licensePlate','Araç plakası'],['carrierName','Taşıyıcı adı'],['carrierTaxNumber','Taşıyıcı VKN (varsa)'],['driverFirstName','Sürücü adı'],['driverLastName','Sürücü soyadı'],['driverTaxNumber','Sürücü TCKN/VKN'],['deliveryCity','Teslimat ili'],['deliveryDistrict','Teslimat ilçesi'],['deliveryAddress','Teslimat adresi'],['despatchNumber','Belge seri no (varsa)'],['shipmentNumber','Taşıma/sevkiyat no (varsa)']].map(([k,l])=>'<label>'+l+'<input id="edoc-'+k+'" class="input" style="display:block;width:100%;"></label>').join('')+'</div></div><div class="edoc-actions" style="margin:14px 0 0;"><button id="edoc-prepare" class="btn btn-primary" '+(!candidates.length||eDocumentActionBusy?'disabled':'')+'>Önizleme için taslak hazırla</button><span class="hint">Bu adım Nilvera’ya belge göndermez. İrsaliyede taşıma alanları gerekir.</span></div></div>'+renderEDocPreview();
 }
 function renderEDocumentsRows(){
   let rows=eDocumentRows.slice();
@@ -6147,6 +6165,7 @@ function renderInfo(){
       <div class="field" style="max-width:220px;"><label>Teklif Durumu</label>
         <select id="f-status">${STATUS_OPTIONS.map(s=>`<option ${quote.status===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
+      <div class="field" style="max-width:300px;"><label>Müşteri SAS / satın alma sipariş no</label><input id="f-customerSasNo" value="${escapeAttr(quote.customerSasNo||'')}" placeholder="Siparişe geçişte zorunlu"></div>
       ${isOrderStatus(quote.status) ? `
       <div class="field" style="max-width:300px;"><label>Sipariş Aşaması (otomatik)</label>
         <div style="padding:9px 0;font-size:12.5px;">${(()=>{ const qi = quotesIndex.find(x=>x.id===quote.id); return qi ? escapeHtml(orderStage(qi).label) : 'Tedarik bekliyor'; })()}</div>
@@ -6702,7 +6721,9 @@ if(activeTab==='edocuments'){
     const sync=document.getElementById('edoc-sync-incoming'); if(sync) sync.onclick=()=>edocSyncInbox();
     const prepare=document.getElementById('edoc-prepare'); if(prepare) prepare.onclick=()=>edocPrepareSelected();
     const typeSelect=document.getElementById('edoc-type'); if(typeSelect) typeSelect.onchange=()=>{const dispatchBox=document.getElementById('edoc-dispatch-fields');if(dispatchBox)dispatchBox.style.display=typeSelect.value==='e_despatch'?'block':'none';const invoiceBox=document.getElementById('edoc-invoice-options');if(invoiceBox)invoiceBox.style.display=typeSelect.value==='e_despatch'?'none':'grid';const profile=document.getElementById('edoc-invoice-profile');if(profile)profile.disabled=typeSelect.value!=='e_invoice';};
-    const vatSelect=document.getElementById('edoc-vat-rate'); if(vatSelect) vatSelect.onchange=()=>{const wrap=document.getElementById('edoc-vat-exemption-wrap');if(wrap)wrap.style.display=vatSelect.value==='0'?'block':'none';};
+    const vatSelect=document.getElementById('edoc-vat-rate'); if(vatSelect) vatSelect.onchange=()=>{vatSelect.dataset.userEdited='true';const wrap=document.getElementById('edoc-vat-exemption-wrap');if(wrap)wrap.style.display=vatSelect.value==='0'?'block':'none';};
+    const sourceSelect=document.getElementById('edoc-source');if(sourceSelect)sourceSelect.onchange=()=>{if(vatSelect)vatSelect.dataset.userEdited='false';edocApplyVatDefault();};
+    edocApplyVatDefault();
     const send=document.getElementById('edoc-confirm-send'); if(send) send.onclick=()=>edocSendPrepared();
     const cancel=document.getElementById('edoc-cancel-preview'); if(cancel) cancel.onclick=()=>{eDocumentPreview=null;render();};
     const refreshStatus=document.getElementById('edoc-refresh-status'); if(refreshStatus) refreshStatus.onclick=()=>edocRefreshPending();
@@ -6742,10 +6763,15 @@ if(activeTab==='edocuments'){
           const r = await stGet('godo:quote:'+draggedId);
           if(r && r.value){
             const full = JSON.parse(r.value);
+            if(newStatus==='Siparişe Dönüştü'){
+              const customerSasNo=String(full.customerSasNo||prompt('Müşterinin SAS / satın alma sipariş numarası:')||'').trim();
+              if(!customerSasNo){alert('Siparişe çevirmek için müşteri SAS numarası gerekli.');draggedId=null;render();return;}
+              full.customerSasNo=customerSasNo;
+            }
             full.status = newStatus;
             await stSet('godo:quote:'+draggedId, JSON.stringify(full));
             const idx = quotesIndex.findIndex(q=>q.id===draggedId);
-            if(idx>=0){ quotesIndex[idx].status = newStatus; }
+            if(idx>=0){ quotesIndex[idx].status = newStatus; quotesIndex[idx].customerSasNo=String(full.customerSasNo||'').trim(); quotesIndex[idx].vatEnabled=!!full.vatEnabled; quotesIndex[idx].vatRate=Number(full.vatRate)||0; }
             await saveIndex();
             if(quote.id===draggedId){ quote.status = newStatus; }
             await backfillOrderQty();
@@ -7155,12 +7181,13 @@ if(activeTab==='edocuments'){
   }
 
   if(activeTab==='info'){
-    bind('f-quoteNo','quoteNo'); bind('f-date','date'); bind('f-validity','validityDays'); bind('f-paymentTermDays','paymentTermDays');
+    bind('f-quoteNo','quoteNo'); bind('f-date','date'); bind('f-validity','validityDays'); bind('f-paymentTermDays','paymentTermDays'); bind('f-customerSasNo','customerSasNo');
     document.getElementById('f-currency').onchange = e=>{ quote.currency=e.target.value; scheduleSave(); };
     document.getElementById('f-lang').onchange = e=>{ const kept = setQuoteLang(e.target.value); scheduleSave(); render(); notifyKeptTerms(kept); };
     document.getElementById('f-status').onchange = e=>{
       const prevStatus = quote.status;
       if(e.target.value==='Fatura Kesildi'){ const g = canSetFaturaKesildi(quote.id); if(!g.ok){ alert(g.msg); e.target.value = prevStatus; return; } }
+      if(e.target.value==='Siparişe Dönüştü'&&!String(quote.customerSasNo||'').trim()){ alert('Siparişe çevirmeden önce müşterinin SAS / satın alma sipariş numarasını gir.'); e.target.value=prevStatus; document.getElementById('f-customerSasNo')?.focus(); return; }
       quote.status = e.target.value;
       document.getElementById('statusIndicator').textContent = quote.status;
       if(quote.status==='Gönderildi' && prevStatus!=='Gönderildi') maybeCreateFollowupTask();
