@@ -1607,6 +1607,7 @@ function navGroups(){
       { tab:'edocuments', label:'e-Belgeler', on: activeTab==='edocuments' },
       { tab:'invoices', label:'Faturalar', on: activeTab==='invoices' },
       { tab:'finance', label:'Alacak / Borç', on: activeTab==='finance' },
+      { tab:'bank', label:'Banka Hareketleri', on: activeTab==='bank' },
       { tab:'accounting', label:'Muhasebe', on: activeTab==='accounting' },
       { tab:'reports', label:'Raporlar', on: activeTab==='reports' } ]}
   ];
@@ -1727,6 +1728,7 @@ function render(){
     if(!eDocumentLoaded && !eDocumentBusy) loadEDocumentCenter();
   }
   else if(activeTab==='finance') c.innerHTML = renderFinancePage();
+  else if(activeTab==='bank') c.innerHTML = renderBankPage();
   else if(activeTab==='accounting') c.innerHTML = renderAccountingPage();
   else if(activeTab==='suppliers') c.innerHTML = renderSuppliersPage();
   else if(activeTab==='supplierDetail') c.innerHTML = renderSupplierDetail();
@@ -4169,7 +4171,7 @@ function renderFinancePage(){
       <table class="items-table"><thead><tr><th>Vade</th><th>Tedarikçi</th><th>Fatura</th><th class="num">Kalan</th></tr></thead><tbody>
       ${calendar.map(i=>{ const r = itemRate(i); return `<tr><td class="mono" style="font-size:12px;">${i.due?formatDate(i.due):'—'} ${dueBadgeHtml(i.due,false)}</td><td style="font-size:12px;">${escapeHtml(i.partyName)}</td><td class="mono" style="font-size:12px;">${escapeHtml(i.docNo)}</td>
         <td class="num mono" style="font-size:12px;">${r===null?'<span style="color:var(--danger);">kur eksik</span>':fmtTL(i.remaining*r)}${i.cur!=='₺'?`<div style="font-size:10.5px;color:var(--gray-500);">${i.cur} ${fmt(i.remaining)}</div>`:''}</td></tr>`; }).join('')}</tbody></table>` : ''}
-    ${renderCashMovesSection(kind==='sale'?'in':'out')}
+    ${cashMoves.some(m=>m.kind===(kind==='sale'?'in':'out')) ? `<p class="hint" style="margin-top:22px;">Kayıtlı ${kind==='sale'?'gelen':'giden'} paralar: <span class="link-btn" data-go-bank="1" style="cursor:pointer;">Banka Hareketleri sayfası →</span></p>` : ''}
   </div>`;
 }
 function attachFinanceHandlers(){
@@ -4177,8 +4179,7 @@ function attachFinanceHandlers(){
   if(financeView==='payable' && !eDocumentRows.length && !attachFinanceHandlers.edocTried){ attachFinanceHandlers.edocTried=true; Promise.resolve(loadEDocumentCenter()).then(()=>{ if(activeTab==='finance') render(); }).catch(()=>{}); }
   document.querySelectorAll('[data-fin-view]').forEach(el=>{ el.onclick = ()=>{ financeView = el.dataset.finView; render(); }; });
   document.querySelectorAll('[data-cash-new]').forEach(el=>{ el.onclick = ()=>openCashMoveModal(el.dataset.cashNew); });
-  document.querySelectorAll('[data-cm-settle]').forEach(el=>{ el.onclick = ()=>settleCashAdvance(el.dataset.cmSettle); });
-  document.querySelectorAll('[data-cm-del]').forEach(el=>{ el.onclick = ()=>deleteCashMove(el.dataset.cmDel); });
+  document.querySelectorAll('[data-go-bank]').forEach(el=>{ el.onclick = ()=>{ activeTab='bank'; render(); }; });
   document.querySelectorAll('[data-bulk]').forEach(el=>{ el.onclick = ()=>{ const [k, key] = el.dataset.bulk.split('|'); openBulkPaymentModal(k, key); }; });
   document.querySelectorAll('[data-fin-pay]').forEach(el=>{ el.onclick = ()=>{ const [k, id] = el.dataset.finPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else if(id.startsWith('est:')) openPurchaseInvoiceModal(id.slice(4)); else openPurchasePaymentsModal(id); }; });
   document.querySelectorAll('[data-fin-edit]').forEach(el=>{ el.onclick = ()=>{ const id=el.dataset.finEdit; if(id.startsWith('est:')) return openPurchaseInvoiceModal(id.slice(4)); const pi = purchaseInvoices.find(x=>x.id===id); if(pi) openPurchaseInvoiceModal(pi.poId, pi.id); }; });
@@ -4241,25 +4242,30 @@ function planCashAllocation(kind, partyKey, amount, cur, date){
     .sort((a,b)=>(a.date||'9999-99-99').localeCompare(b.date||'9999-99-99') || String(a.docNo||'').localeCompare(String(b.docNo||''),'tr',{numeric:true}));
   let left = round2(amount); const rows = [], missingFx = [];
   for(const i of items){
-    let rate = 1;
+    let rate = 1, atBooked = false;
     if(i.cur !== cur){
-      const rDoc = i.cur==='₺' ? { rate:1 } : rateFor(i.cur, date, fxKind(kind==='in'?'sale':'purchase'));
-      const rPay = cur==='₺' ? { rate:1 } : rateFor(cur, date, fxKind(kind==='in'?'sale':'purchase'));
-      if(!rDoc || !rPay){ missingFx.push(i); continue; }
-      rate = rDoc.rate / rPay.rate;              // 1 belge birimi = rate ödeme birimi
+      if(cur==='₺'){                              // TL ödeme: faturanın kendi kuruyla (fatura tarihinden önceki günün TCMB satışı) TL karşılığına karşı kapatılır
+        if(!(i.booked && i.booked.rate > 0)){ missingFx.push(i); continue; }
+        rate = i.booked.rate; atBooked = true;
+      } else {
+        const rDoc = i.cur==='₺' ? { rate:1 } : rateFor(i.cur, date, fxKind(kind==='in'?'sale':'purchase'));
+        const rPay = rateFor(cur, date, fxKind(kind==='in'?'sale':'purchase'));
+        if(!rDoc || !rPay){ missingFx.push(i); continue; }
+        rate = rDoc.rate / rPay.rate;            // 1 belge birimi = rate ödeme birimi
+      }
     }
     const remPay = round2(i.remaining * rate);
-    if(left <= 0.004){ rows.push({ item:i, rate, remPay, pay:0, doc:0, leftAfter:0 }); continue; }
-    const pay = Math.min(remPay, left), doc = pay >= remPay - 0.004 ? i.remaining : round2(pay / rate);
-    left = round2(left - pay); rows.push({ item:i, rate, remPay, pay:round2(pay), doc, leftAfter:Math.max(0,left) });
+    if(left <= 0.004){ rows.push({ item:i, rate, atBooked, remPay, pay:0, doc:0, leftAfter:0 }); continue; }
+    const pay = Math.min(remPay, left), doc = pay >= remPay - 0.004 ? i.remaining : (atBooked ? Math.round(pay / rate * 1e6)/1e6 : round2(pay / rate));
+    left = round2(left - pay); rows.push({ item:i, rate, atBooked, remPay, pay:round2(pay), doc, leftAfter:Math.max(0,left) });
   }
   return { rows, left:Math.max(0, left), missingFx };
 }
 async function applyCashAllocation(move, rows){
   const touchedOrders = new Set();
   rows.filter(r=>r.doc > 0.004).forEach(r=>{
-    const note = [move.note, move.currency!==r.item.cur ? move.currency+' '+fmt(r.pay)+' · kur '+fmt4(r.rate) : ''].filter(Boolean).join(' · ');
-    r.item.obj.payments = (r.item.obj.payments||[]).concat([{ id:crypto.randomUUID(), date:move.date, amount:round2(r.doc), method:move.method, reference:move.reference, note, cashMoveId:move.id }]);
+    const note = [move.note, move.currency!==r.item.cur ? move.currency+' '+fmt(r.pay)+' · '+(r.atBooked?'fatura kuru ':'kur ')+fmt4(r.rate) : ''].filter(Boolean).join(' · ');
+    r.item.obj.payments = (r.item.obj.payments||[]).concat([Object.assign({ id:crypto.randomUUID(), date:move.date, amount:r.doc, method:move.method, reference:move.reference, note, cashMoveId:move.id }, r.atBooked ? { atBookedRate:true, tlAmount:r.pay } : {})]);
     move.allocations.push({ docKind:r.item.kind, docId:r.item.obj.id, docNo:r.item.docNo, docCur:r.item.cur, docAmount:round2(r.doc), payAmount:r.pay, rate:r.rate });
     if(r.item.kind==='sale' && r.item.obj.orderId) touchedOrders.add(r.item.obj.orderId);
   });
@@ -4295,8 +4301,8 @@ function openCashMoveModal(kind, presetParty){
     const plan = planCashAllocation(kind, v.party, v.amt, v.cur, v.date), adv = cashAdvanceFor(kind, v.party);
     $('#cm-preview').innerHTML = `${plan.rows.length ? `<table class="items-table"><thead><tr><th>Fatura</th><th>Fatura tarihi</th><th class="num">Kalan</th><th class="num">Bu ${isIn?'tahsilattan':'ödemeden'}</th><th class="num">Kalan bakiye</th></tr></thead><tbody>
       ${plan.rows.map(r=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(r.item.docNo||'')}</td><td class="mono" style="font-size:12px;">${r.item.date?formatDate(r.item.date):'—'}</td>
-        <td class="num mono" style="font-size:12px;">${r.item.cur} ${fmt(r.item.remaining)}${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">≈ ${v.cur} ${fmt(r.remPay)} · kur ${fmt4(r.rate)}</div>`:''}</td>
-        <td class="num mono" style="font-size:12px;">${r.pay>0.004?`<b>${v.cur} ${fmt(r.pay)}</b>${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">= ${r.item.cur} ${fmt(r.doc)}</div>`:''}${r.pay>=r.remPay-0.004?' <span style="font-size:10px;color:var(--ink);">kapanır</span>':''}`:'—'}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${r.pay>0.004?v.cur+' '+fmt(r.leftAfter):''}</td></tr>`).join('')}
+        <td class="num mono" style="font-size:12px;">${v.cur} ${fmt(r.remPay)}${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">${r.item.cur} ${fmt(r.item.remaining)} × ${r.atBooked?'fatura kuru':'kur'} ${fmt4(r.rate)}</div>`:''}</td>
+        <td class="num mono" style="font-size:12px;">${r.pay>0.004?`<b>${v.cur} ${fmt(r.pay)}</b>${r.pay>=r.remPay-0.004?' <span style="font-size:10px;color:var(--ink);">kapanır</span>':''}`:'—'}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${r.pay>0.004?v.cur+' '+fmt(r.leftAfter):''}</td></tr>`).join('')}
       </tbody></table>` : `<p class="hint">Bu firmanın açık faturası yok${v.amt>0?'; tutarın tamamı avans olarak kaydedilir':''}.</p>`}
       ${plan.missingFx.length ? `<p class="hint" style="color:var(--danger);">${plan.missingFx.length} faturada ${formatDate(v.date)} için TCMB kuru yok; bu faturalara dağıtılmadı.</p>` : ''}
       ${v.amt>0 && plan.left>0.004 ? `<p class="hint" style="color:var(--ink);"><b>${v.cur} ${fmt(plan.left)}</b> faturalardan artıyor → <b>avans</b> olarak kaydedilir (sonraki faturalara “Mahsup et” ile düşülür).</p>` : ''}
@@ -4349,19 +4355,55 @@ async function deleteCashMove(id){
   else { strip(purchaseInvoices); await savePurchaseInvoices(); }
   cashMoves = cashMoves.filter(x=>x.id!==m.id); await saveCashMoves(); render();
 }
-function renderCashMovesSection(kind){
-  const list = cashMoves.filter(m=>m.kind===kind).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
-  const adv = list.filter(m=>(parseFloat(m.unallocated)||0) > 0.004);
-  if(!list.length) return '';
-  return `<div class="subhead" style="margin-top:28px;">Banka Hareketleri · ${kind==='in'?'gelen':'giden'}</div>
+let bankView = '', bankSearch = '', bankFrom = '', bankTo = '';
+function cashMoveTL(m){ if(m.currency==='₺') return m.amount; const r = rateFor(m.currency, m.date, fxKind('sale')); return r ? m.amount*r.rate : null; }
+function renderBankPage(){
+  let list = cashMoves.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
+  if(bankFrom) list = list.filter(m=>(m.date||'') >= bankFrom);
+  if(bankTo) list = list.filter(m=>(m.date||'') <= bankTo);
+  if(bankSearch){ const q = foldTR(bankSearch.trim()); list = list.filter(m=>foldTR([m.partyName,m.reference,m.note,m.method].join(' ')).includes(q)); }
+  const sum = k=>list.filter(m=>m.kind===k).reduce((t,m)=>t+(cashMoveTL(m)||0),0);
+  const tin = sum('in'), tout = sum('out'), shown = bankView ? list.filter(m=>m.kind===bankView) : list;
+  const adv = shown.filter(m=>(parseFloat(m.unallocated)||0) > 0.004);
+  const pill = (k,l,n)=>`<span class="version-pill ${bankView===k?'active':''}" data-bank-view="${k}">${l} (${n})</span>`;
+  return `
+  <div class="panel" style="max-width:1160px;">
+    <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Banka Hareketleri</h2>
+      <div style="display:flex;gap:8px;"><button class="btn btn-primary" data-cash-new="in" style="padding:8px 14px;font-size:12px;">+ Gelen para</button><button class="btn btn-ghost" data-cash-new="out" style="padding:8px 14px;font-size:12px;">+ Giden para</button></div></div>
+    <p class="hint">Elle girdiğin tahsilat ve ödemeler. Her hareket ilgili firmanın faturalarına ilk kesilenden başlayarak işlenir; TL hareketler faturanın kendi kuruyla (TL karşılığıyla) eşleşir.</p>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:16px 0 20px;">
+      <div class="kpi-card"><div class="kpi-label">Gelen</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tin)}</div><div class="kpi-sub">${list.filter(m=>m.kind==='in').length} hareket</div></div>
+      <div class="kpi-card"><div class="kpi-label">Giden</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tout)}</div><div class="kpi-sub">${list.filter(m=>m.kind==='out').length} hareket</div></div>
+      <div class="kpi-card"><div class="kpi-label">Net</div><div class="kpi-value" style="font-size:19px;color:${tin-tout<0?'var(--danger)':'var(--ink)'};">${fmtTL(tin-tout)}</div><div class="kpi-sub">${bankFrom||bankTo?'seçili tarih aralığı':'tüm kayıtlar'}</div></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+      <div class="field" style="max-width:260px;margin:0;"><input id="bankSearch" placeholder="Firma, dekont, not ara..." value="${escapeAttr(bankSearch)}"></div>
+      <div class="field" style="margin:0;"><input type="date" id="bankFrom" value="${bankFrom}" title="Başlangıç"></div>
+      <div class="field" style="margin:0;"><input type="date" id="bankTo" value="${bankTo}" title="Bitiş"></div>
+      ${pill('','Tümü',list.length)}${pill('in','Gelen',list.filter(m=>m.kind==='in').length)}${pill('out','Giden',list.filter(m=>m.kind==='out').length)}
+    </div>
     ${adv.length?`<p class="hint">${adv.length} harekette mahsup bekleyen avans var: ${adv.map(m=>escapeHtml(m.partyName)+' '+m.currency+' '+fmt(m.unallocated)).join(', ')}.</p>`:''}
-    <table class="items-table"><thead><tr><th>Tarih</th><th>Firma</th><th class="num">Tutar</th><th>Dağıtılan faturalar</th><th class="num">Avans</th><th></th></tr></thead><tbody>
-    ${list.slice(0,40).map(m=>`<tr><td class="mono" style="font-size:12px;">${formatDate(m.date)}</td><td style="font-size:12px;">${escapeHtml(m.partyName)}<div style="font-size:10.5px;color:var(--gray-500);">${escapeHtml([m.method,m.reference,m.note].filter(Boolean).join(' · '))}</div></td>
-      <td class="num mono" style="font-size:12px;font-weight:700;">${m.currency} ${fmt(m.amount)}</td>
-      <td style="font-size:11.5px;">${m.allocations.length?m.allocations.map(a=>escapeHtml(a.docNo||'')+' <span class="mono" style="color:var(--gray-500);">'+a.docCur+' '+fmt(a.docAmount)+'</span>').join('<br>'):'<span style="color:var(--gray-300);">—</span>'}</td>
+    ${shown.length ? `<table class="items-table"><thead><tr><th>Tarih</th><th></th><th>Firma</th><th class="num">Tutar</th><th>Faturalara dağılım</th><th class="num">Avans</th><th></th></tr></thead><tbody>
+    ${shown.map(m=>{ const tl = cashMoveTL(m); return `<tr><td class="mono" style="font-size:12px;white-space:nowrap;">${formatDate(m.date)}</td>
+      <td><span style="font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 7px;border-radius:10px;${m.kind==='in'?'background:var(--ink);color:#fff;':'border:1px solid var(--danger);color:var(--danger);'}">${m.kind==='in'?'Gelen':'Giden'}</span></td>
+      <td style="font-size:12px;"><b>${escapeHtml(m.partyName)}</b><div style="font-size:10.5px;color:var(--gray-500);">${escapeHtml([m.method,m.reference,m.note].filter(Boolean).join(' · '))}</div></td>
+      <td class="num mono" style="font-size:12.5px;font-weight:700;white-space:nowrap;">${m.kind==='out'?'−':''}${m.currency} ${fmt(m.amount)}${m.currency!=='₺'&&tl!==null?`<div style="font-size:10.5px;color:var(--gray-500);font-weight:400;">${fmtTL(tl)}</div>`:''}</td>
+      <td style="font-size:11.5px;">${m.allocations.length?m.allocations.map(a=>escapeHtml(a.docNo||'')+' <span class="mono" style="color:var(--gray-500);">'+(a.payAmount!==undefined?m.currency+' '+fmt(a.payAmount):a.docCur+' '+fmt(a.docAmount))+'</span>').join('<br>'):'<span style="color:var(--gray-300);">—</span>'}</td>
       <td class="num mono" style="font-size:12px;">${m.unallocated>0.004?m.currency+' '+fmt(m.unallocated):'—'}</td>
-      <td style="white-space:nowrap;">${m.unallocated>0.004?`<span data-cm-settle="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Mahsup et</span> `:''}<span data-cm-del="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--danger);text-transform:uppercase;cursor:pointer;margin-left:8px;">Sil</span></td></tr>`).join('')}
-    </tbody></table>`;
+      <td style="white-space:nowrap;">${m.unallocated>0.004?`<span data-cm-settle="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Mahsup et</span> `:''}<span data-cm-del="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--danger);text-transform:uppercase;cursor:pointer;margin-left:8px;">Sil</span></td></tr>`; }).join('')}
+    </tbody></table>` : `<p class="hint">${cashMoves.length?'Filtreyle eşleşen hareket yok.':'Henüz banka hareketi girilmedi. “+ Gelen para” ya da “+ Giden para” ile başla.'}</p>`}
+  </div>`;
+}
+function attachBankHandlers(){
+  autoSyncFxRates();
+  document.querySelectorAll('[data-cash-new]').forEach(el=>{ el.onclick = ()=>openCashMoveModal(el.dataset.cashNew); });
+  document.querySelectorAll('[data-bank-view]').forEach(el=>{ el.onclick = ()=>{ bankView = el.dataset.bankView; render(); }; });
+  document.querySelectorAll('[data-cm-settle]').forEach(el=>{ el.onclick = ()=>settleCashAdvance(el.dataset.cmSettle); });
+  document.querySelectorAll('[data-cm-del]').forEach(el=>{ el.onclick = ()=>deleteCashMove(el.dataset.cmDel); });
+  const s = document.getElementById('bankSearch');
+  if(s) s.oninput = e=>{ bankSearch = e.target.value; render(); const el = document.getElementById('bankSearch'); if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; } };
+  const f = document.getElementById('bankFrom'); if(f) f.onchange = e=>{ bankFrom = e.target.value; render(); };
+  const t = document.getElementById('bankTo'); if(t) t.onchange = e=>{ bankTo = e.target.value; render(); };
 }
 function duePurchaseInvoices(cutoff){
   return purchaseInvoices.filter(pi=>piPayState(pi)!=='paid' && piDueDate(pi) && piDueDate(pi) <= cutoff).sort((a,b)=>piDueDate(a).localeCompare(piDueDate(b)));
@@ -4402,7 +4444,7 @@ function buildJournal(from, to){
   const fxNote = (rateDate, date)=> (rateDate && rateDate!==date) ? ' · TCMB kuru '+formatDate(rateDate) : '';
   const payEntry = (kind, doc, p, i, party, book, cur, docDate, no)=>{
     const direction = kind==='sale' ? 'sale' : 'purchase', amt = parseFloat(p.amount)||0;
-    const rp = rateFor(cur, p.date, fxKind(direction));
+    const rp = p.atBookedRate ? { rate:book.rate, date:p.date } : rateFor(cur, p.date, fxKind(direction));
     if(!rp){ miss(cur, p.date); return; }
     const payTL = round2(amt*rp.rate), bookedTL = round2(amt*book.rate), diff = round2(payTL - bookedTL);
     const lines = kind==='sale'
@@ -4698,7 +4740,8 @@ function renderInvoicesPage(){
     noDue:   items.filter(i=>isOpen(i) && !i.due),
     later:   items.filter(i=>isOpen(i) && i.due && i.due > d15)
   };
-  const amt = arr=>curText(sumByCur(arr.map(i=>({ currency:i.cur, v:i.remaining })), x=>x.v));
+  const amt = arr=>{ let tl=0, miss=0; arr.forEach(i=>{ const r=itemRate(i); if(r===null) miss++; else tl+=i.remaining*r; }); return arr.length ? fmtTL(tl)+(miss?' <span style="font-size:10px;color:var(--danger);">+'+miss+' kursuz</span>':'') : '—'; };
+  const tlCell = (i, v)=>{ const r=itemRate(i); return i.cur==='₺' ? '₺ '+fmt(v) : (r===null ? i.cur+' '+fmt(v)+' <span style="color:var(--danger);font-size:10px;">kur yok</span>' : fmtTL(v*r)+'<div style="font-size:10.5px;color:var(--gray-500);">'+i.cur+' '+fmt(v)+' · kur '+fmt4(r)+'</div>'); };
   const cnt = { '':items.length, open:items.filter(isOpen).length, overdue:bucket.overdue.length, week:bucket.week.length, next:bucket.next.length, noDue:bucket.noDue.length, paid:items.filter(i=>!isOpen(i)).length };
   let list = items.filter(i=> invFilter==='' ? true : invFilter==='open' ? isOpen(i) : invFilter==='overdue' ? bucket.overdue.includes(i) : invFilter==='week' ? bucket.week.includes(i) : invFilter==='next' ? bucket.next.includes(i) : invFilter==='noDue' ? bucket.noDue.includes(i) : !isOpen(i));
   if(invSearch){ const q = foldTR(invSearch.trim()); list = list.filter(i=>foldTR(i.partyName+' '+i.docNo+' '+((i.obj.poNo)||(i.obj.orderNo)||'')).includes(q)); }
@@ -4728,8 +4771,8 @@ function renderInvoicesPage(){
       ${list.map(i=>`<tr>
         <td>${i.estimated?`<div style="font-size:10.5px;font-weight:700;color:var(--danger);">FATURA BEKLENİYOR</div><div style="font-size:10.5px;color:var(--gray-500);">mal kabul ${formatDate(i.date)} · tahmini</div>`:`<div class="mono" style="font-size:12px;font-weight:700;">${escapeHtml(i.docNo||'—')}${i.obj&&i.obj.file?` <span data-pi-file="${escapeAttr(i.id)}" title="Fatura belgesini aç" style="cursor:pointer;font-family:var(--font-body);font-size:10px;color:var(--ink);text-decoration:underline;">belge</span>`:''}</div><div style="font-size:10.5px;color:var(--gray-500);">${formatDate(i.date)}</div>`}</td>
         <td style="font-size:12px;">${escapeHtml(i.partyName)}<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${escapeHtml(kind==='sale'?(i.obj.orderNo||''):(i.obj.poNo||''))}</div></td>
-        <td class="num mono" style="font-size:12px;">${i.cur} ${fmt(i.total)}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${i.paid>0.005?i.cur+' '+fmt(i.paid):'—'}</td>
-        <td class="num mono" style="font-size:12px;font-weight:700;">${isOpen(i)?i.cur+' '+fmt(i.remaining):'—'}</td>
+        <td class="num mono" style="font-size:12px;">${tlCell(i, i.total)}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${i.paid>0.005?tlCell(i, i.paid):'—'}</td>
+        <td class="num mono" style="font-size:12px;font-weight:700;">${isOpen(i)?tlCell(i, i.remaining):'—'}</td>
         <td style="font-size:11.5px;">${i.due?formatDate(i.due):'<span style="color:var(--gray-300);">tanımsız</span>'}<div>${i.due && i.obj.dueDateOverride ? '<span style="font-size:10px;color:var(--ink);">elle belirlendi</span>' : dueBadgeHtml(i.due, !isOpen(i))}</div></td>
         <td style="font-size:11.5px;color:${i.state==='overdue'?'var(--danger)':'var(--gray-500)'};font-weight:${i.state==='overdue'?'700':'400'};">${invoiceStateLabel(kind, i.state)}</td>
         <td style="white-space:nowrap;">${i.estimated?`<span data-recv-invoice="${escapeAttr(i.obj.poId)}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Fatura gir</span></td></tr>`:`<span data-inv-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">${word.pay}</span>
@@ -7596,6 +7639,7 @@ if(activeTab==='edocuments'){ attachEDocumentHandlers(); }
   if(activeTab==='shipments') attachShipmentsHandlers();
   if(activeTab==='invoices'){ autoSyncFxRates(); attachInvoicesHandlers(); }
   if(activeTab==='finance') attachFinanceHandlers();
+  if(activeTab==='bank') attachBankHandlers();
   if(activeTab==='accounting') attachAccountingHandlers();
 
   if(activeTab==='customers'){
