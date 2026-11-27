@@ -4034,6 +4034,47 @@ function allocatePayment(items, amount){
   });
   return { allocations:out, left };
 }
+function uninvoicedReceipts(){
+  const out=[];
+  purchaseOrders.forEach(po=>{
+    if(po.status==='İptal') return;
+    const inv={}; purchaseInvoices.filter(x=>x.poId===po.id).forEach(x=>(x.lines||[]).forEach(l=>{ inv[l.poItemId]=(inv[l.poItemId]||0)+(parseFloat(l.qty)||0); }));
+    let net=0, lastDate='';
+    (po.items||[]).forEach(it=>{
+      const rec=(po.receipts||[]).reduce((s,r)=>s+(r.lines||[]).filter(l=>l.poItemId===it.id).reduce((t,l)=>t+(parseFloat(l.qty)||0),0),0);
+      const open=Math.max(0,rec-(inv[it.id]||0)); net+=open*(parseFloat(it.unitCost)||0);
+    });
+    (po.receipts||[]).forEach(r=>{ if((r.date||'')>lastDate) lastDate=r.date||''; });
+    if(net>0.005) out.push({po, net:round2(net), cur:po.currency||'€', date:lastDate, supplier:supplierName(po.supplierId)||'Tedarikçi seçilmedi'});
+  });
+  return out.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+}
+function inboundInvoiceHintFor(supplierId){
+  const sup=suppliers.find(x=>x.id===supplierId); if(!sup) return [];
+  const vkn=String(sup.taxNo||'').replace(/\D/g,''), key=foldTR(String(sup.name||'').split(/\s+/)[0]||'');
+  return (eDocumentRows||[]).filter(d=>d.direction==='inbound'&&d.document_type!=='e_despatch'&&!purchaseInvoices.some(pi=>String(pi.invoiceNo||'').trim()===String(d.document_number||'').trim())).filter(d=>{
+    const m=d.provider_metadata||{}, sv=String(m.senderTaxNumber||'').replace(/\D/g,'');
+    return (vkn&&sv===vkn) || (!vkn&&key.length>=3&&foldTR(m.senderName||'').startsWith(key));
+  });
+}
+function renderPendingSupplierInvoices(){
+  const rows=uninvoicedReceipts(); if(!rows.length) return '';
+  const today=todayStr(); let tl=0, miss=0;
+  const body=rows.map(r=>{
+    const fx=rateFor(r.cur, today, 'sell')||rateFor(r.cur, addDaysStr(today,-1), 'sell'); const t=fx?round2(r.net*fx.rate*1.2):null; if(t===null) miss++; else tl+=t;
+    const hints=inboundInvoiceHintFor(r.po.supplierId);
+    return `<tr><td style="font-size:12px;"><b>${escapeHtml(r.supplier)}</b>${hints.length?`<div style="font-size:11px;color:var(--danger);margin-top:2px;">Nilvera’da gelen fatura var: ${hints.map(d=>escapeHtml(d.document_number||'')+' · ₺ '+fmt(Number(d.total_amount)||0)).join(', ')}</div>`:''}</td>
+      <td class="mono" style="font-size:12px;">${escapeHtml(r.po.poNo||'')}${r.po.salesOrderNo?`<div style="font-size:10.5px;color:var(--gray-500);">${escapeHtml(r.po.salesOrderNo)}</div>`:''}</td>
+      <td class="mono" style="font-size:12px;">${r.date?formatDate(r.date):'—'}</td>
+      <td class="num mono" style="font-size:12px;">${r.cur} ${fmt(r.net)}</td>
+      <td class="num mono" style="font-size:12px;">${t===null?'<span style="color:var(--danger);">kur yok</span>':fmtTL(t)}</td>
+      <td style="white-space:nowrap;"><span data-pend-inv="${escapeAttr(r.po.id)}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Fatura gir</span></td></tr>`;
+  }).join('');
+  return `<div class="subhead" style="margin-top:26px;">Faturası Beklenen Mal Kabuller · tahmini borç</div>
+    <p class="hint">Malı teslim aldın ama tedarikçi faturası Matrix’e girilmedi; bu yüzden yukarıdaki borçta görünmüyor. Tutar SAS birim fiyatı × gelen miktar + %20 KDV, bugünkü TCMB satış kuruyla tahmindir. Faturayı girince gerçek borç olarak yukarı taşınır ve vadesi hesaplanır.</p>
+    <table class="items-table"><thead><tr><th>Tedarikçi</th><th>SAS</th><th>Mal kabul</th><th class="num">Net (SAS fiyatı)</th><th class="num">Tahmini KDV dahil</th><th></th></tr></thead><tbody>${body}
+    <tr style="background:var(--paper-2);"><td colspan="4"><b>${rows.length} mal kabul faturasız</b>${miss?` <span style="color:var(--danger);font-size:11px;">(${miss} satırda kur yok)</span>`:''}</td><td class="num mono" style="font-size:12px;font-weight:700;">${fmtTL(tl)}</td><td></td></tr></tbody></table>`;
+}
 function renderFinancePage(){
   const kind = financeView==='payable' ? 'purchase' : 'sale';
   const items = kind==='sale' ? saleItems() : purchaseItems();
@@ -4051,6 +4092,7 @@ function renderFinancePage(){
     <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Alacak / Borç</h2>
       <div style="display:flex;gap:8px;"><span class="version-pill ${financeView==='receivable'?'active':''}" data-fin-view="receivable">Alacaklar</span><span class="version-pill ${financeView==='payable'?'active':''}" data-fin-view="payable">Borçlar</span></div></div>
     <p class="hint">${kind==='sale' ? 'Müşteri bazında fatura, tahsilat ve vade dağılımı.' : 'Tedarikçi bazında alış faturası, ödeme ve ödeme takvimi.'} Tutarlar TL gösterilir (belge tarihindeki TCMB kuruyla), döviz tutarı altında ayrıca yazar. Rakamlar yalnızca fatura ve ${kind==='sale'?'tahsilat':'ödeme'} kayıtlarından hesaplanır.</p>
+    ${kind==='purchase' && uninvoicedReceipts().length ? `<div class="ready-note" style="border-left-color:var(--danger);margin-top:12px;"><b>${uninvoicedReceipts().length} mal kabulün tedarikçi faturası girilmemiş.</b> Bu borçlar aşağıdaki toplamlara dahil değil — sayfanın altındaki “Faturası Beklenen Mal Kabuller” listesinden faturaları gir.</div>` : ''}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:16px 0 22px;">
       <div class="kpi-card"><div class="kpi-label">Toplam Kalan ${word.open}</div><div class="kpi-value" style="font-size:19px;">${fmtTL(tot.remaining)}</div></div>
       <div class="kpi-card"><div class="kpi-label">Vadesi Geçmiş</div><div class="kpi-value" style="font-size:19px;color:${tot.overdue>0.005?'var(--danger)':'var(--ink)'};">${fmtTL(tot.overdue)}</div></div>
@@ -4076,6 +4118,7 @@ function renderFinancePage(){
               <td colspan="5"></td><td style="white-space:nowrap;"><span data-fin-pay="${kind}|${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;">${kind==='sale'?'Tahsilat':'Ödeme'}</span>${kind==='purchase'?` <span data-fin-edit="${i.id}" style="font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase;cursor:pointer;margin-left:10px;">Fatura</span>`:''}</td></tr>`; }).join('')}`;
       }).join('')}
     </tbody></table>` : `<p class="hint">${kind==='sale'?'Henüz faturalanmış sevkiyat yok.':'Henüz tedarikçi faturası yok. Satın Alma sayfasındaki SAS satırından "Fatura" ile gir.'}</p>`}
+    ${kind==='purchase' ? renderPendingSupplierInvoices() : ''}
     ${kind==='purchase' && calendar.length ? `<div class="subhead" style="margin-top:28px;">Ödeme Takvimi (60 gün + gecikenler)</div>
       <table class="items-table"><thead><tr><th>Vade</th><th>Tedarikçi</th><th>Fatura</th><th class="num">Kalan</th></tr></thead><tbody>
       ${calendar.map(i=>{ const r = itemRate(i); return `<tr><td class="mono" style="font-size:12px;">${i.due?formatDate(i.due):'—'} ${dueBadgeHtml(i.due,false)}</td><td style="font-size:12px;">${escapeHtml(i.partyName)}</td><td class="mono" style="font-size:12px;">${escapeHtml(i.docNo)}</td>
@@ -4084,9 +4127,11 @@ function renderFinancePage(){
 }
 function attachFinanceHandlers(){
   autoSyncFxRates();
+  if(financeView==='payable' && !eDocumentRows.length && !attachFinanceHandlers.edocTried){ attachFinanceHandlers.edocTried=true; Promise.resolve(loadEDocumentCenter()).then(()=>{ if(activeTab==='finance') render(); }).catch(()=>{}); }
   document.querySelectorAll('[data-fin-view]').forEach(el=>{ el.onclick = ()=>{ financeView = el.dataset.finView; render(); }; });
   document.querySelectorAll('[data-bulk]').forEach(el=>{ el.onclick = ()=>{ const [k, key] = el.dataset.bulk.split('|'); openBulkPaymentModal(k, key); }; });
   document.querySelectorAll('[data-fin-pay]').forEach(el=>{ el.onclick = ()=>{ const [k, id] = el.dataset.finPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else openPurchasePaymentsModal(id); }; });
+  document.querySelectorAll('[data-pend-inv]').forEach(el=>{ el.onclick = ()=>openPurchaseInvoiceModal(el.dataset.pendInv); });
   document.querySelectorAll('[data-fin-edit]').forEach(el=>{ el.onclick = ()=>{ const pi = purchaseInvoices.find(x=>x.id===el.dataset.finEdit); if(pi) openPurchaseInvoiceModal(pi.poId, pi.id); }; });
 }
 function openBulkPaymentModal(kind, partyKey){
