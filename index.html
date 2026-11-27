@@ -7783,7 +7783,11 @@ if(activeTab==='edocuments'){ attachEDocumentHandlers(); }
       quote = copy; persistQuote(); render();
     };
     const del = document.getElementById('btnDelete');
-    if(del) del.onclick = ()=>{ if(confirm('Bu teklifi silmek istediğine emin misin?')) deleteQuote(quote.id); };
+    if(del) del.onclick = ()=>{
+      const linked = purchaseOrders.filter(po=>po.salesOrderId===quote.id && po.status!=='İptal');
+      if(linked.length){ alert('Bu teklife bağlı '+linked.length+' satın alma siparişi var ('+linked.map(p=>p.poNo).join(', ')+'). Silmeden önce bu SAS\'ları başka siparişe bağla ya da iptal et; yoksa mal kabulleri sahipsiz kalır ve borçta mükerrer görünür.'); return; }
+      if(confirm('Bu teklifi silmek istediğine emin misin?')) deleteQuote(quote.id);
+    };
   }
 
   if(activeTab==='items'){
