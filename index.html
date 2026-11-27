@@ -1781,7 +1781,8 @@ function renderDashboard(){
 
   return `
   <div class="panel" style="max-width:1040px;">
-    <h2>Pano</h2>
+    <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Pano</h2>
+      <div style="display:flex;gap:8px;"><button class="btn btn-primary" data-cash-new="in" style="padding:8px 14px;font-size:12px;">+ Gelen para</button><button class="btn btn-ghost" data-cash-new="out" style="padding:8px 14px;font-size:12px;">+ Giden para</button></div></div>
     <p class="hint">Tekliflerinin genel görünümü.</p>
 
     <div class="kpi-grid">
@@ -4237,7 +4238,7 @@ function cashAdvanceFor(kind, partyKey){ return cashMoves.filter(m=>m.kind===kin
 // Ödeme para birimindeki tutarı, firmanın açık faturalarına en eski vadeden başlayarak dağıtır (gerekirse TCMB satış kuruyla çevirir)
 function planCashAllocation(kind, partyKey, amount, cur, date){
   const items = (kind==='in' ? saleItems() : purchaseItems()).filter(i=>i.partyKey===partyKey && i.remaining>0.005 && !i.estimated)
-    .sort((a,b)=>(a.due||'9999-99-99').localeCompare(b.due||'9999-99-99') || (a.date||'').localeCompare(b.date||''));
+    .sort((a,b)=>(a.date||'9999-99-99').localeCompare(b.date||'9999-99-99') || String(a.docNo||'').localeCompare(String(b.docNo||''),'tr',{numeric:true}));
   let left = round2(amount); const rows = [], missingFx = [];
   for(const i of items){
     let rate = 1;
@@ -4248,9 +4249,9 @@ function planCashAllocation(kind, partyKey, amount, cur, date){
       rate = rDoc.rate / rPay.rate;              // 1 belge birimi = rate ödeme birimi
     }
     const remPay = round2(i.remaining * rate);
-    if(left <= 0.004){ rows.push({ item:i, rate, remPay, pay:0, doc:0 }); continue; }
+    if(left <= 0.004){ rows.push({ item:i, rate, remPay, pay:0, doc:0, leftAfter:0 }); continue; }
     const pay = Math.min(remPay, left), doc = pay >= remPay - 0.004 ? i.remaining : round2(pay / rate);
-    rows.push({ item:i, rate, remPay, pay:round2(pay), doc }); left = round2(left - pay);
+    left = round2(left - pay); rows.push({ item:i, rate, remPay, pay:round2(pay), doc, leftAfter:Math.max(0,left) });
   }
   return { rows, left:Math.max(0, left), missingFx };
 }
@@ -4271,7 +4272,7 @@ function openCashMoveModal(kind, presetParty){
   const opt = p=>`<option value="${escapeAttr(p.key)}" ${p.key===presetParty?'selected':''}>${escapeHtml(p.name)}${p.n?' — '+p.n+' açık fatura · '+Object.entries(p.rem).map(([c,v])=>c+' '+fmt(v)).join(' + '):''}</option>`;
   const ov = openSimpleModal(`
     <h2>${isIn?'Gelen Para (Tahsilat)':'Giden Para (Ödeme)'}</h2>
-    <p class="hint">Bankadaki hareketi gir. Tutar ${isIn?'müşterinin':'tedarikçinin'} açık faturalarına en eski vadeden başlayarak otomatik dağıtılır; faturalardan artan kısım avans olarak kalır ve sonraki faturalara mahsup edilebilir.</p>
+    <p class="hint">Bankadaki hareketi gir. Tutar ${isIn?'müşterinin':'tedarikçinin'} açık faturalarına <b>ilk kesilen faturadan başlayarak</b> sırayla kapatılır; faturalardan artan kısım avans olarak kalır ve sonraki faturalara mahsup edilebilir.</p>
     <div class="field"><label>${isIn?'Gönderen firma':'Ödeme yapılan firma'}</label><select id="cm-party"><option value="">— Seçiniz —</option>${parties.map(opt).join('')}</select></div>
     <div class="grid3">
       <div class="field"><label>Tarih</label><input id="cm-date" type="date" value="${todayStr()}"></div>
@@ -4291,10 +4292,10 @@ function openCashMoveModal(kind, presetParty){
     const v = read(); $('#cm-save').disabled = !(v.party && v.amt > 0);
     if(!v.party){ $('#cm-preview').innerHTML = ''; return; }
     const plan = planCashAllocation(kind, v.party, v.amt, v.cur, v.date), adv = cashAdvanceFor(kind, v.party);
-    $('#cm-preview').innerHTML = `${plan.rows.length ? `<table class="items-table"><thead><tr><th>Fatura</th><th>Vade</th><th class="num">Kalan</th><th class="num">Bu ${isIn?'tahsilattan':'ödemeden'}</th></tr></thead><tbody>
-      ${plan.rows.map(r=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(r.item.docNo||'')}</td><td class="mono" style="font-size:12px;">${r.item.due?formatDate(r.item.due):'—'}</td>
+    $('#cm-preview').innerHTML = `${plan.rows.length ? `<table class="items-table"><thead><tr><th>Fatura</th><th>Fatura tarihi</th><th class="num">Kalan</th><th class="num">Bu ${isIn?'tahsilattan':'ödemeden'}</th><th class="num">Kalan bakiye</th></tr></thead><tbody>
+      ${plan.rows.map(r=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(r.item.docNo||'')}</td><td class="mono" style="font-size:12px;">${r.item.date?formatDate(r.item.date):'—'}</td>
         <td class="num mono" style="font-size:12px;">${r.item.cur} ${fmt(r.item.remaining)}${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">≈ ${v.cur} ${fmt(r.remPay)} · kur ${fmt4(r.rate)}</div>`:''}</td>
-        <td class="num mono" style="font-size:12px;">${r.pay>0.004?`<b>${v.cur} ${fmt(r.pay)}</b>${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">= ${r.item.cur} ${fmt(r.doc)}</div>`:''}${r.pay>=r.remPay-0.004?' <span style="font-size:10px;color:var(--ink);">kapanır</span>':''}`:'—'}</td></tr>`).join('')}
+        <td class="num mono" style="font-size:12px;">${r.pay>0.004?`<b>${v.cur} ${fmt(r.pay)}</b>${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">= ${r.item.cur} ${fmt(r.doc)}</div>`:''}${r.pay>=r.remPay-0.004?' <span style="font-size:10px;color:var(--ink);">kapanır</span>':''}`:'—'}</td><td class="num mono" style="font-size:12px;color:var(--gray-500);">${r.pay>0.004?v.cur+' '+fmt(r.leftAfter):''}</td></tr>`).join('')}
       </tbody></table>` : `<p class="hint">Bu firmanın açık faturası yok${v.amt>0?'; tutarın tamamı avans olarak kaydedilir':''}.</p>`}
       ${plan.missingFx.length ? `<p class="hint" style="color:var(--danger);">${plan.missingFx.length} faturada ${formatDate(v.date)} için TCMB kuru yok; bu faturalara dağıtılmadı.</p>` : ''}
       ${v.amt>0 && plan.left>0.004 ? `<p class="hint" style="color:var(--ink);"><b>${v.cur} ${fmt(plan.left)}</b> faturalardan artıyor → <b>avans</b> olarak kaydedilir (sonraki faturalara “Mahsup et” ile düşülür).</p>` : ''}
@@ -7820,6 +7821,7 @@ if(activeTab==='edocuments'){ attachEDocumentHandlers(); }
   }
 
   if(activeTab==='dashboard'){
+    document.querySelectorAll('[data-cash-new]').forEach(el=>{ el.onclick = ()=>openCashMoveModal(el.dataset.cashNew); });
     const newBtn = document.getElementById('dashNewQuote');
     if(newBtn) newBtn.onclick = ()=>{ quote = emptyQuote(); quote.quoteNo = nextQuoteNo(); activeTab='info'; render(); };
     const custBtn = document.getElementById('dashManageCustomers');
