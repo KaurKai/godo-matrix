@@ -1746,7 +1746,7 @@ function render(){
 }
 
 function renderDashProfitKPIs(data){
-  const curr = (quotesIndex[0]&&quotesIndex[0].currency) || '€';
+  const curr = '€';
   const salesTotal = data.monthlyArr.reduce((s,m)=>s+m[1],0);
   const marginPct = salesTotal ? (data.totalProfitAll/salesTotal)*100 : 0;
   return `
@@ -6641,13 +6641,29 @@ function renderCustomerDetail(){
 const MONTH_NAMES = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
 function monthLabel(ym){ const [y,m]=ym.split('-'); return MONTH_NAMES[parseInt(m,10)-1]+" '"+y.slice(2); }
 
+// Raporlar € bazlı: ₺/$ teklifler, teklif tarihindeki TCMB satış kuruyla €'ya çevrilir (karışık para birimi toplanmasın)
+function reportEurFactor(cur, date){
+  const code = currencyCode(cur||'€');
+  if(code==='EUR') return 1;
+  const d = date || new Date().toISOString().slice(0,10);
+  const eur = rateFor('€', d, 'sell') || latestRateOf('EUR');
+  if(!eur || !eur.rate) return 0;
+  if(code==='TRY') return 1/eur.rate;
+  const oth = rateFor(cur, d, 'sell') || latestRateOf(code);
+  return (oth && oth.rate) ? oth.rate/eur.rate : 0;
+}
+function latestRateOf(code){
+  const days = Object.keys(fxRates||{}).sort().reverse();
+  for(const d of days){ const r = fxRates[d] && fxRates[d][code]; if(r && r.sell>0) return { rate:r.sell, date:d }; }
+  return null;
+}
 async function ensureReportsData(){
   const monthly = {};
   const monthlyProfit = {};
   quotesIndex.forEach(q=>{
     if(isOrderStatus(q.status)){
       const ym=(q.date||'').slice(0,7);
-      if(ym) monthly[ym]=(monthly[ym]||0)+(q.total||0);
+      if(ym) monthly[ym]=(monthly[ym]||0)+(q.total||0)*reportEurFactor(q.currency, q.date);
     }
   });
   const productAgg = {};
@@ -6659,6 +6675,7 @@ async function ensureReportsData(){
     let full; try{ full = JSON.parse(r.value); }catch(e){ continue; }
     const isOrder = isOrderStatus(full.status);
     const ym = (full.date||'').slice(0,7);
+    const fx = reportEurFactor(full.currency, full.date);
     let quoteRevenue = 0, quoteProfit = 0, quoteHasCost = false;
     (full.items||[]).forEach(it=>{
       if(!it.code && !it.desc) return;
@@ -6666,15 +6683,15 @@ async function ensureReportsData(){
       if(!productAgg[key]) productAgg[key] = { code:it.code, desc:it.desc, qty:0, revenue:0, cost:0, hasCost:false, discSum:0, discCount:0 };
       const p = productAgg[key];
       p.qty += parseFloat(it.qty)||0;
-      p.revenue += lineTotal(it);
+      p.revenue += lineTotal(it)*fx;
       if(it.useCalc){ p.discSum += parseFloat(it.discount)||0; p.discCount++; }
       const actual = isOrder ? actualCostForQuoteItem(full.id, it.id, full.currency) : null;
       const buy = actual!==null ? actual : lineBuyPrice(it);
-      if(buy!==null){ p.cost += buy*(parseFloat(it.qty)||0); p.hasCost = true; }
+      if(buy!==null){ p.cost += buy*(parseFloat(it.qty)||0)*fx; p.hasCost = true; }
       if(isOrder){
-        quoteRevenue += lineTotal(it);
+        quoteRevenue += lineTotal(it)*fx;
         if(buy!==null){
-          const profit = (lineUnitPrice(it)-buy)*(parseFloat(it.qty)||0);
+          const profit = (lineUnitPrice(it)-buy)*(parseFloat(it.qty)||0)*fx;
           quoteProfit += profit; quoteHasCost = true;
           totalProfitAll += profit;
           if(ym) monthlyProfit[ym] = (monthlyProfit[ym]||0) + profit;
