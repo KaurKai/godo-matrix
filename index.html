@@ -341,57 +341,6 @@
   .view-toggle-btn:first-child{border-radius:3px 0 0 3px;}
   .view-toggle-btn:last-child{border-radius:0 3px 3px 0;border-left:none;}
   .view-toggle-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
-  .qb{max-width:1400px;}
-  .qb-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap;margin-bottom:18px;}
-  .qb-head h2{margin:0;}
-  .qb-stats{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));border:1px solid var(--hairline-strong);background:var(--white);}
-  .qb-stats>div{padding:10px 16px;border-left:1px solid var(--hairline);display:flex;flex-direction:column;gap:2px;}
-  .qb-stats>div:first-child{border-left:none;}
-  .qb-stats span{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-500);}
-  .qb-stats b{font-size:20px;line-height:1.1;}
-  .qb-stats em{font-style:normal;font-size:10.5px;color:var(--gray-500);}
-  .qb-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;}
-  .qb-tabs{display:flex;border:1px solid var(--hairline-strong);background:var(--white);}
-  .qb-tab{border:none;background:none;padding:8px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);cursor:pointer;display:flex;gap:7px;align-items:center;border-left:1px solid var(--hairline);}
-  .qb-tab:first-child{border-left:none;}
-  .qb-tab span{font-weight:400;color:var(--gray-300);}
-  .qb-tab.on{background:var(--ink);color:#fff;}
-  .qb-tab.on span{color:rgba(255,255,255,.6);}
-  .qb-search{flex:1 1 220px;min-width:180px;}
-  .qb-date{width:150px;}
-  .qb-note{font-size:12px;padding:9px 12px;border-left:3px solid var(--warn,#b7791f);background:var(--paper-2);margin-bottom:12px;}
-  .qb-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 190px;gap:10px;align-items:start;}
-  .qb-col{background:var(--paper-2);border-radius:6px;padding:10px;min-height:160px;}
-  .qb-col-head{display:flex;justify-content:space-between;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-700);}
-  .qb-col-sum{font-size:10.5px;color:var(--gray-500);margin:2px 0 10px;min-height:13px;}
-  .qb-col-body{min-height:80px;border-radius:4px;}
-  .qb-col.empty .qb-col-body{border:1px dashed var(--hairline-strong);}
-  .qb-empty{font-size:11px;color:var(--gray-300);text-align:center;padding:28px 6px;}
-  .qb-card{background:var(--white);border:1px solid var(--hairline-strong);border-radius:4px;padding:9px 11px;margin-bottom:7px;cursor:grab;transition:box-shadow .12s;}
-  .qb-card:hover{box-shadow:0 3px 10px rgba(0,0,0,.08);}
-  .qb-card.dragging{opacity:.4;}
-  .qb-card-name{font-weight:700;font-size:12px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-  .qb-card-meta{font-size:10.5px;color:var(--gray-500);margin-top:3px;}
-  .qb-card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:7px;font-size:12.5px;}
-  .qb-age{font-size:10px;font-family:var(--font-mono);color:var(--gray-500);padding:1px 6px;border:1px solid var(--hairline-strong);border-radius:10px;}
-  .qb-age.warn{color:#8a5a00;border-color:#e0b860;background:#fff7e0;}
-  .qb-age.late{color:#fff;background:var(--danger);border-color:var(--danger);}
-  .qb-outcomes{display:flex;flex-direction:column;gap:10px;position:sticky;top:12px;}
-  .qb-drop{border:1.5px dashed var(--hairline-strong);border-radius:6px;padding:22px 12px;display:flex;flex-direction:column;gap:4px;text-align:center;min-height:110px;justify-content:center;}
-  .qb-drop b{font-size:11px;text-transform:uppercase;letter-spacing:.05em;}
-  .qb-drop span{font-size:10.5px;color:var(--gray-500);}
-  .qb-drop.won b{color:var(--ink);} .qb-drop.lost b{color:var(--danger);}
-  [data-drop].drag-over{background:rgba(14,14,14,.06);border-color:var(--ink);}
-  .qb-drop.lost.drag-over{background:rgba(190,30,30,.07);border-color:var(--danger);}
-  .qb-table{border:1px solid var(--hairline-strong);background:var(--white);}
-  .qb-row{display:grid;grid-template-columns:minmax(0,1fr) 210px 130px 230px;gap:14px;align-items:center;padding:10px 14px;border-top:1px solid var(--hairline);cursor:pointer;}
-  .qb-row:first-child{border-top:none;}
-  .qb-row:hover{background:var(--paper-2);}
-  .qb-row-amt{text-align:right;font-size:12.5px;font-weight:600;}
-  .qb-row-act{display:flex;gap:10px;align-items:center;justify-content:flex-end;white-space:nowrap;}
-  .qb-chip{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 8px;border-radius:10px;border:1px solid var(--hairline-strong);color:var(--gray-700);white-space:nowrap;}
-  .qb-chip.won{background:var(--ink);color:#fff;border-color:var(--ink);}
-  .qb-chip.lost{color:var(--danger);border-color:currentColor;}
   .qb-reason{font-size:11.5px;padding:5px 6px;max-width:150px;}
   .qb-reason.missing{border-color:#e0b860;background:#fff7e0;}
   .qb-modal-back{position:fixed;inset:0;background:rgba(14,14,14,.45);display:flex;align-items:center;justify-content:center;z-index:900;}
@@ -401,8 +350,8 @@
   .qb-reason-btn{border:1px solid var(--hairline-strong);background:var(--white);padding:9px 8px;font-size:12px;cursor:pointer;text-align:left;}
   .qb-reason-btn.on{background:var(--ink);color:#fff;border-color:var(--ink);}
   .qb-modal-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:6px;}
-  @media (max-width:1100px){ .qb-board{grid-template-columns:repeat(3,minmax(0,1fr))!important;} .qb-outcomes{grid-column:1/-1;flex-direction:row;position:static;} .qb-drop{flex:1;min-height:70px;} .qb-row{grid-template-columns:minmax(0,1fr) 120px;} .qb-row-status{display:none;} .qb-row-act{grid-column:1/-1;justify-content:flex-start;} }
-  @media (max-width:700px){ .qb-stats{grid-template-columns:repeat(2,1fr);} .qb-board{grid-template-columns:1fr!important;} }
+  .qt-tab.qt-lost.drop-over{background:var(--danger);color:#fff;border-color:var(--danger);}
+  .qt-tab{border-radius:3px!important;border-left:1px solid var(--hairline-strong)!important;margin-left:4px;}
   .kanban-board{display:flex;gap:10px;padding-bottom:12px;}
   .kanban-col{flex:1 1 0;min-width:0;background:var(--paper-2);border-radius:6px;padding:10px;min-height:120px;}
   @media (max-width:1000px){ .kanban-board{flex-wrap:wrap;} .kanban-col{flex:1 1 30%;} }
@@ -902,7 +851,7 @@ let activeTab = "dashboard";
 let selectedCustomerId = null;
 let selectedSupplierId = null;
 let quotesViewMode = "kanban";
-let listFilters = { search:"", status:"", from:"", to:"", tab:"open" };
+let listFilters = { search:"", status:"", from:"", to:"", tab:"pipe" };
 let customerSearch = "";
 let supplierSearch = "";
 let customerTagFilter = "";
@@ -2030,87 +1979,96 @@ async function createQuoteFromIntake(index,opts){
   }else{ await openQuote(draft.id); activeTab='info'; render(); }
 }
 
-const QSTAGE_OPEN=['Taslak','Gönderildi','Onaylandı'];
-function quoteBucket(s){ if(s==='Reddedildi') return 'lost'; if(isOrderStatus(s)) return 'won'; return 'open'; }
-function quoteStatusLabel(s){ return s==='Reddedildi' ? 'Kaybedildi' : (s||'Taslak'); }
+const PIPE_COLS=[{key:'Taslak',label:'Taslak',has:['Taslak']},{key:'Gönderildi',label:'Gönderildi',has:['Gönderildi','Onaylandı']},{key:'Siparişe Dönüştü',label:'Sipariş',has:['Siparişe Dönüştü']},{key:'Fatura Kesildi',label:'Faturalandı',has:['Fatura Kesildi']}];
+function quoteStatusLabel(s){ return s==='Reddedildi'?'Kaybedildi':s==='Siparişe Dönüştü'?'Sipariş':s==='Fatura Kesildi'?'Faturalandı':(s||'Taslak'); }
 function latestQuoteVersions(){
   const best=new Map();
   for(const q of quotesIndex){ const k=q.rootId||q.id, cur=best.get(k); if(!cur || (q.version||1)>(cur.version||1)) best.set(k,q); }
   return [...best.values()];
 }
-function quoteAgeDays(q){ return q.date ? Math.max(0, diffDaysStr(todayStr(), q.date)) : 0; }
-function quoteSum(rows){ const by={}; rows.forEach(q=>{ const c=q.currency||'€'; by[c]=(by[c]||0)+(Number(q.total)||0); }); const parts=Object.entries(by).filter(([,v])=>v>0).map(([c,v])=>c+' '+fmt(v)); return parts.length?parts.join(' + '):'—'; }
 function renderQuotesList(){
-  let all = latestQuoteVersions();
-  if(listFilters.search){ const s=foldTR(listFilters.search.trim()); all=all.filter(q=>foldTR(q.customerName||'').includes(s)||foldTR(q.quoteNo||'').includes(s)); }
-  if(listFilters.from) all=all.filter(q=>(q.date||'')>=listFilters.from);
-  if(listFilters.to) all=all.filter(q=>(q.date||'')<=listFilters.to);
-  const open=all.filter(q=>quoteBucket(q.status)==='open'), won=all.filter(q=>quoteBucket(q.status)==='won'), lost=all.filter(q=>quoteBucket(q.status)==='lost');
-  const tab=listFilters.tab||'open';
-  const rate=(won.length+lost.length)?Math.round(won.length/(won.length+lost.length)*100):null;
-  const noReason=lost.filter(q=>!q.lossReason).length;
-  const tabBtn=(k,label,n)=>`<button class="qb-tab ${tab===k?'on':''}" data-qtab="${k}">${label}<span class="mono">${n}</span></button>`;
-  let body='';
-  if(tab==='open') body=renderQuotesBoard(open);
-  else{
-    const rows=(tab==='won'?won:tab==='lost'?lost:all).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.quoteNo||'').localeCompare(a.quoteNo||''));
-    body=rows.length?`<div class="qb-table">${rows.map(q=>renderQuoteRow(q,tab)).join('')}</div>`:'<p class="hint">Bu sekmede teklif yok.</p>';
+  let rows = latestQuoteVersions();
+  if(listFilters.search){
+    const s = foldTR(listFilters.search.trim());
+    rows = rows.filter(q => foldTR(q.customerName||'').includes(s) || foldTR(q.quoteNo||'').includes(s));
   }
+  if(listFilters.from) rows = rows.filter(q=>(q.date||'') >= listFilters.from);
+  if(listFilters.to) rows = rows.filter(q=>(q.date||'') <= listFilters.to);
+  const lost = rows.filter(q=>q.status==='Reddedildi');
+  let pipe = rows.filter(q=>q.status!=='Reddedildi');
+  const tab = listFilters.tab==='lost' ? 'lost' : 'pipe';
+  if(tab==='pipe' && listFilters.status) pipe = pipe.filter(q=>q.status===listFilters.status);
+  const shown = (tab==='lost'?lost:pipe).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const totalSum = shown.reduce((s,q)=>s+(q.total||0),0);
+  const curr = (shown[0]&&shown[0].currency) || (quotesIndex[0]&&quotesIndex[0].currency) || '€';
+  const kanban = tab==='pipe' && quotesViewMode==='kanban';
+  const noReason = lost.filter(q=>!q.lossReason).length;
+
   return `
-  <div class="qb">
-    <div class="qb-head">
-      <div><h2>Teklifler</h2><p class="hint" style="margin:2px 0 0;">Son sürümler · eski revizyonlar gizli</p></div>
-      <div class="qb-stats">
-        <div><span>Açık</span><b class="mono">${open.length}</b><em class="mono">${quoteSum(open)}</em></div>
-        <div><span>Kazanılan</span><b class="mono">${won.length}</b><em class="mono">${quoteSum(won)}</em></div>
-        <div><span>Kaybedilen</span><b class="mono">${lost.length}</b><em class="mono">${quoteSum(lost)}</em></div>
-        <div><span>Kazanma oranı</span><b class="mono">${rate===null?'—':'%'+rate}</b><em>adet bazında</em></div>
+  <div class="panel" style="max-width:${kanban?'none':'1040px'};">
+    <div class="subhead-row" style="margin-bottom:4px;">
+      <div style="display:flex;gap:2px;align-items:center;">
+        <h2 style="margin:0 16px 0 0;">Teklifler</h2>
+        <button class="view-toggle-btn qt-tab ${tab==='pipe'?'active':''}" data-qtab="pipe">Süreç · ${rows.length-lost.length}</button>
+        <button class="view-toggle-btn qt-tab qt-lost ${tab==='lost'?'active':''}" data-qtab="lost" title="Kartı buraya sürükleyerek kaybedildi olarak işaretleyebilirsin">Kaybedildi · ${lost.length}</button>
       </div>
+      ${tab==='pipe'?`<div style="display:flex;gap:2px;">
+        <button class="view-toggle-btn qt-view ${quotesViewMode==='list'?'active':''}" data-view="list">Liste</button>
+        <button class="view-toggle-btn qt-view ${quotesViewMode==='kanban'?'active':''}" data-view="kanban">Kanban</button>
+      </div>`:''}
     </div>
-    <div class="qb-bar">
-      <div class="qb-tabs">${tabBtn('open','Açık',open.length)}${tabBtn('won','Kazanılan',won.length)}${tabBtn('lost','Kaybedilen',lost.length)}${tabBtn('all','Tümü',all.length)}</div>
-      <input id="lf-search" class="qb-search" placeholder="Müşteri veya teklif no" value="${escapeAttr(listFilters.search)}">
-      <input type="date" id="lf-from" class="qb-date" value="${listFilters.from}" title="Başlangıç">
-      <input type="date" id="lf-to" class="qb-date" value="${listFilters.to}" title="Bitiş">
+    <p class="hint">${shown.length} teklif · Toplam ${curr} ${fmt(totalSum)}${tab==='pipe'&&kanban?' · Kaybedilen teklifi “Kaybedildi” sekmesinin üstüne sürükle':''}</p>
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+      <div class="field" style="margin:0;"><label>Ara</label><input id="lf-search" placeholder="Müşteri veya teklif no" value="${escapeAttr(listFilters.search)}"></div>
+      <div class="field" style="margin:0;"><label>Durum</label><select id="lf-status" ${tab!=='pipe'||kanban?'disabled':''}><option value="">Tümü</option>${STATUS_OPTIONS.filter(s=>s!=='Reddedildi').map(s=>`<option value="${s}" ${listFilters.status===s?'selected':''}>${quoteStatusLabel(s)}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0;"><label>Başlangıç</label><input type="date" id="lf-from" value="${listFilters.from}"></div>
+      <div class="field" style="margin:0;"><label>Bitiş</label><input type="date" id="lf-to" value="${listFilters.to}"></div>
     </div>
-    ${tab==='lost'&&noReason?`<div class="qb-note">${noReason} kayıp teklifte sebep girilmemiş. Satırdaki “Sebep” kutusundan seçebilirsin; Raporlar’daki kayıp analizi buradan beslenir.</div>`:''}
-    ${body}
+    ${tab==='lost'
+      ? (noReason?`<p class="hint" style="margin-top:-8px;">${noReason} teklifte kayıp sebebi girilmemiş — satırdan seçebilirsin.</p>`:'') + (shown.length ? shown.map(q=>`
+      <div class="dash-quote-row" data-id="${q.id}">
+        <div><div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="dqr-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(q.date||'')}</div></div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <select class="qb-reason ${q.lossReason?'':'missing'}" data-reason="${q.id}"><option value="">Sebep seç…</option>${LOSS_REASON_OPTIONS.map(s=>`<option ${q.lossReason===s?'selected':''}>${s}</option>`).join('')}</select>
+          <button class="link-btn" data-reopen="${q.id}">Yeniden aç</button>
+          <div style="text-align:right;min-width:110px;"><div class="mono dqr-total">${q.currency||'€'} ${fmt(q.total)}</div><div class="dqr-status status-Reddedildi">Kaybedildi</div></div>
+        </div>
+      </div>`).join('') : '<p class="hint">Kaybedilen teklif yok.</p>')
+      : kanban ? renderQuotesKanban(pipe) : (shown.length ? shown.map(q=>`
+      <div class="dash-quote-row" data-id="${q.id}">
+        <div><div class="dqr-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="dqr-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(q.date||'')}</div></div>
+        <div style="text-align:right;"><div class="mono dqr-total">${q.currency||'€'} ${fmt(q.total)}</div><div class="dqr-status status-${(q.status||'').replace(/\s/g,'')}">${quoteStatusLabel(q.status)}</div></div>
+      </div>`).join('') : '<p class="hint">Filtreyle eşleşen teklif yok.</p>')}
   </div>`;
 }
-function renderQuoteCard(q){
-  const age=quoteAgeDays(q), stale=q.status==='Gönderildi'&&age>=14, warn=q.status==='Gönderildi'&&age>=7;
-  return `<div class="qb-card" draggable="true" data-id="${q.id}">
-    <div class="qb-card-name">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
-    <div class="qb-card-meta mono">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(formatDate(q.date||''))}</div>
-    <div class="qb-card-foot"><b class="mono">${q.currency||'€'} ${fmt(q.total)}</b>${q.status==='Gönderildi'?`<span class="qb-age ${stale?'late':warn?'warn':''}" title="Gönderileli">${age} gün</span>`:''}</div>
-  </div>`;
-}
-function renderQuotesBoard(rows){
-  const col=st=>{ const c=rows.filter(q=>(q.status||'Taslak')===st).sort((a,b)=>(a.date||'').localeCompare(b.date||'')); return `
-    <div class="qb-col ${c.length?'':'empty'}" data-status="${st}">
-      <div class="qb-col-head"><span>${st}</span><span class="mono">${c.length}</span></div>
-      <div class="qb-col-sum mono">${c.length?quoteSum(c):''}</div>
-      <div class="qb-col-body" data-drop="${st}">${c.map(renderQuoteCard).join('')||'<div class="qb-empty">Kartı buraya sürükle</div>'}</div>
-    </div>`; };
-  const widths=QSTAGE_OPEN.map(st=>rows.some(q=>(q.status||'Taslak')===st)?'minmax(0,1fr)':'minmax(150px,.45fr)').join(' ');
-  return `<div class="qb-board" style="grid-template-columns:${widths} 190px;">
-    ${QSTAGE_OPEN.map(col).join('')}
-    <div class="qb-outcomes">
-      <div class="qb-drop won" data-drop="Siparişe Dönüştü"><b>Kazanıldı</b><span>Bırak → siparişe çevir</span></div>
-      <div class="qb-drop lost" data-drop="Reddedildi"><b>Kaybedildi</b><span>Bırak → sebebini seç</span></div>
-    </div>
-  </div>`;
-}
-function renderQuoteRow(q,tab){
-  const lost=q.status==='Reddedildi';
-  const right=lost
-    ? `<select class="qb-reason ${q.lossReason?'':'missing'}" data-reason="${q.id}"><option value="">Sebep seç…</option>${LOSS_REASON_OPTIONS.map(s=>`<option ${q.lossReason===s?'selected':''}>${s}</option>`).join('')}</select><button class="link-btn" data-reopen="${q.id}">Yeniden aç</button>`
-    : '';
-  return `<div class="qb-row" data-id="${q.id}">
-    <div class="qb-row-main"><div class="qb-card-name">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div><div class="qb-card-meta mono">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''} · ${escapeHtml(formatDate(q.date||''))}</div></div>
-    <div class="qb-row-status"><span class="qb-chip ${quoteBucket(q.status)}">${escapeHtml(quoteStatusLabel(q.status))}${lost&&q.lossReason?' · '+escapeHtml(q.lossReason):''}</span></div>
-    <div class="qb-row-amt mono">${q.currency||'€'} ${fmt(q.total)}</div>
-    <div class="qb-row-act">${right}</div>
+
+function renderQuotesKanban(rows){
+  return `
+  <div class="kanban-board">
+    ${PIPE_COLS.map(c=>{
+      const col = rows.filter(q=>c.has.includes(q.status||'Taslak')).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      const colSum = col.reduce((s,q)=>s+(q.total||0),0);
+      const curr = (col[0]&&col[0].currency) || '€';
+      return `
+      <div class="kanban-col" data-status="${c.key}">
+        <div class="kanban-col-head">
+          <span>${c.label}</span>
+          <span class="mono" style="color:var(--gray-300);">${col.length}</span>
+        </div>
+        <div class="kanban-col-sum">${curr} ${fmt(colSum)}</div>
+        <div class="kanban-col-body" data-status="${c.key}">
+          ${col.map(q=>`
+            <div class="kanban-card" draggable="true" data-id="${q.id}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div class="kc-cust">${escapeHtml(upperCompanyName(q.customerName||'İsimsiz Müşteri'))}</div>
+                <span class="kc-drag-handle" title="Sürükle">⠿</span>
+              </div>
+              <div class="kc-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''}</div>
+              <div class="kc-total mono">${q.currency||'€'} ${fmt(q.total)}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
   </div>`;
 }
 async function updateQuoteFields(id, fields){
@@ -2119,6 +2077,7 @@ async function updateQuoteFields(id, fields){
   const idx=quotesIndex.findIndex(q=>q.id===id); if(idx>=0) Object.assign(quotesIndex[idx], fields);
   await saveIndex(); if(quote&&quote.id===id) Object.assign(quote, fields); return true;
 }
+
 function askLossReason(q){
   return new Promise(resolve=>{
     const ov=document.createElement('div'); ov.className='qb-modal-back';
@@ -7205,43 +7164,68 @@ if(activeTab==='edocuments'){ attachEDocumentHandlers(); }
   if(activeTab==='list'){
     const s=document.getElementById('lf-search');
     s.oninput = e=>{ listFilters.search=e.target.value; render(); const el=document.getElementById('lf-search'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } };
+    document.getElementById('lf-status').onchange = e=>{ listFilters.status=e.target.value; render(); };
     document.getElementById('lf-from').onchange = e=>{ listFilters.from=e.target.value; render(); };
     document.getElementById('lf-to').onchange = e=>{ listFilters.to=e.target.value; render(); };
-    document.querySelectorAll('[data-qtab]').forEach(btn=>{ btn.onclick=()=>{ listFilters.tab=btn.dataset.qtab; render(); }; });
-    const openIt=async id=>{ await openQuote(id); activeTab='info'; render(); };
-    document.querySelectorAll('.qb-row').forEach(row=>{ row.onclick=e=>{ if(e.target.closest('select,button')) return; openIt(row.dataset.id); }; });
-    document.querySelectorAll('[data-reason]').forEach(sel=>{ sel.onchange=async()=>{ await updateQuoteFields(sel.dataset.reason,{lossReason:sel.value}); render(); }; });
-    document.querySelectorAll('[data-reopen]').forEach(btn=>{ btn.onclick=async()=>{ await updateQuoteFields(btn.dataset.reopen,{status:'Gönderildi',lossReason:'',lossNote:''}); listFilters.tab='open'; render(); }; });
-    let draggedId=null, justDragged=false;
-    document.querySelectorAll('.qb-card').forEach(card=>{
-      card.addEventListener('dragstart', e=>{ draggedId=card.dataset.id; card.classList.add('dragging'); try{e.dataTransfer.setData('text/plain',draggedId);}catch{} });
-      card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); justDragged=true; setTimeout(()=>{justDragged=false;},150); });
-      card.onclick=()=>{ if(!justDragged) openIt(card.dataset.id); };
+    document.querySelectorAll('.qt-view').forEach(btn=>{
+      btn.onclick = ()=>{ quotesViewMode = btn.dataset.view; render(); };
     });
-    document.querySelectorAll('[data-drop]').forEach(zone=>{
-      zone.addEventListener('dragover', e=>{ e.preventDefault(); zone.classList.add('drag-over'); });
-      zone.addEventListener('dragleave', ()=>zone.classList.remove('drag-over'));
-      zone.addEventListener('drop', async e=>{
-        e.preventDefault(); zone.classList.remove('drag-over');
-        const id=draggedId; draggedId=null; if(!id) return;
-        const q=quotesIndex.find(x=>x.id===id); if(!q) return;
-        const target=zone.dataset.drop; if(target===(q.status||'Taslak')) return;
-        if(target==='Reddedildi'){
+    document.querySelectorAll('.qt-tab').forEach(btn=>{ btn.onclick = ()=>{ listFilters.tab = btn.dataset.qtab; render(); }; });
+    document.querySelectorAll('.dash-quote-row').forEach(row=>{ row.onclick = async e=>{ if(e.target.closest('select,button')) return; await openQuote(row.dataset.id); activeTab='info'; render(); }; });
+    document.querySelectorAll('[data-reason]').forEach(sel=>{ sel.onchange = async ()=>{ await updateQuoteFields(sel.dataset.reason,{lossReason:sel.value}); render(); }; });
+    document.querySelectorAll('[data-reopen]').forEach(btn=>{ btn.onclick = async ()=>{ await updateQuoteFields(btn.dataset.reopen,{status:'Gönderildi',lossReason:'',lossNote:''}); render(); }; });
+
+    if(quotesViewMode==='kanban'){
+      let draggedId = null;
+      let justDragged = false;
+      document.querySelectorAll('.kanban-card').forEach(card=>{
+        card.addEventListener('dragstart', ()=>{ draggedId = card.dataset.id; card.classList.add('dragging'); });
+        card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); justDragged = true; setTimeout(()=>{ justDragged=false; }, 150); });
+        card.onclick = async ()=>{ if(justDragged) return; await openQuote(card.dataset.id); activeTab='info'; render(); };
+      });
+      const lostTab=document.querySelector('.qt-lost');
+      if(lostTab){
+        lostTab.addEventListener('dragover', e=>{ e.preventDefault(); lostTab.classList.add('drop-over'); });
+        lostTab.addEventListener('dragleave', ()=>lostTab.classList.remove('drop-over'));
+        lostTab.addEventListener('drop', async e=>{
+          e.preventDefault(); lostTab.classList.remove('drop-over');
+          const id=draggedId; draggedId=null; const q=quotesIndex.find(x=>x.id===id); if(!q) return;
+          if(isOrderStatus(q.status)){ alert('Siparişe dönüşmüş teklif kaybedildi yapılamaz.'); return; }
           const r=await askLossReason(q); if(!r){ render(); return; }
           await updateQuoteFields(id,{status:'Reddedildi',lossReason:r.lossReason,lossNote:r.lossNote,lostAt:todayStr()});
-        } else if(target==='Siparişe Dönüştü'){
-          const r=await stGet('godo:quote:'+id); const full=r&&r.value?JSON.parse(r.value):{};
-          const sas=String(full.customerSasNo||prompt('Müşterinin SAS / satın alma sipariş numarası:')||'').trim();
-          if(!sas){ alert('Siparişe çevirmek için müşteri SAS numarası gerekli.'); render(); return; }
-          await updateQuoteFields(id,{status:'Siparişe Dönüştü',customerSasNo:sas});
-          const idx=quotesIndex.findIndex(x=>x.id===id); if(idx>=0){ quotesIndex[idx].vatEnabled=!!full.vatEnabled; quotesIndex[idx].vatRate=Number(full.vatRate)||0; await saveIndex(); }
-          await backfillOrderQty();
-        } else {
-          await updateQuoteFields(id,{status:target});
-        }
-        render();
+          render();
+        });
+      }
+      document.querySelectorAll('.kanban-col-body').forEach(col=>{
+        col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('drag-over'); });
+        col.addEventListener('dragleave', ()=>col.classList.remove('drag-over'));
+        col.addEventListener('drop', async e=>{
+          e.preventDefault();
+          col.classList.remove('drag-over');
+          if(!draggedId) return;
+          const newStatus = col.dataset.status;
+          if(newStatus==='Fatura Kesildi'){ const g = canSetFaturaKesildi(draggedId); if(!g.ok){ alert(g.msg); draggedId = null; render(); return; } }
+          const r = await stGet('godo:quote:'+draggedId);
+          if(r && r.value){
+            const full = JSON.parse(r.value);
+            if(newStatus==='Siparişe Dönüştü'){
+              const customerSasNo=String(full.customerSasNo||prompt('Müşterinin SAS / satın alma sipariş numarası:')||'').trim();
+              if(!customerSasNo){alert('Siparişe çevirmek için müşteri SAS numarası gerekli.');draggedId=null;render();return;}
+              full.customerSasNo=customerSasNo;
+            }
+            full.status = newStatus;
+            await stSet('godo:quote:'+draggedId, JSON.stringify(full));
+            const idx = quotesIndex.findIndex(q=>q.id===draggedId);
+            if(idx>=0){ quotesIndex[idx].status = newStatus; quotesIndex[idx].customerSasNo=String(full.customerSasNo||'').trim(); quotesIndex[idx].vatEnabled=!!full.vatEnabled; quotesIndex[idx].vatRate=Number(full.vatRate)||0; }
+            await saveIndex();
+            if(quote.id===draggedId){ quote.status = newStatus; }
+            await backfillOrderQty();
+          }
+          draggedId = null;
+          render();
+        });
       });
-    });
+    }
   }
 
   if(activeTab==='proposalsList'){
