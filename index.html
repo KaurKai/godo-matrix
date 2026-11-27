@@ -4269,11 +4269,12 @@ async function applyCashAllocation(move, rows){
 function fmt4(n){ return (Number(n)||0).toLocaleString('tr-TR',{ minimumFractionDigits:4, maximumFractionDigits:4 }); }
 function openCashMoveModal(kind, presetParty){
   const isIn = kind==='in', parties = cashPartyOptions(kind);
-  const opt = p=>`<option value="${escapeAttr(p.key)}" ${p.key===presetParty?'selected':''}>${escapeHtml(p.name)}${p.n?' — '+p.n+' açık fatura · '+Object.entries(p.rem).map(([c,v])=>c+' '+fmt(v)).join(' + '):''}</option>`;
   const ov = openSimpleModal(`
     <h2>${isIn?'Gelen Para (Tahsilat)':'Giden Para (Ödeme)'}</h2>
     <p class="hint">Bankadaki hareketi gir. Tutar ${isIn?'müşterinin':'tedarikçinin'} açık faturalarına <b>ilk kesilen faturadan başlayarak</b> sırayla kapatılır; faturalardan artan kısım avans olarak kalır ve sonraki faturalara mahsup edilebilir.</p>
-    <div class="field"><label>${isIn?'Gönderen firma':'Ödeme yapılan firma'}</label><select id="cm-party"><option value="">— Seçiniz —</option>${parties.map(opt).join('')}</select></div>
+    <div class="field" style="position:relative;"><label>${isIn?'Gönderen firma':'Ödeme yapılan firma'}</label>
+      <input id="cm-party-q" autocomplete="off" placeholder="Firma adını yaz…" value="${escapeAttr((parties.find(p=>p.key===presetParty)||{}).name||'')}"><input type="hidden" id="cm-party" value="${escapeAttr(presetParty||'')}">
+      <div id="cm-party-list" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:5;background:var(--white);border:1px solid var(--hairline-strong);border-top:none;max-height:260px;overflow:auto;box-shadow:0 8px 20px rgba(0,0,0,.08);"></div></div>
     <div class="grid3">
       <div class="field"><label>Tarih</label><input id="cm-date" type="date" value="${todayStr()}"></div>
       <div class="field mono"><label>Tutar</label><input id="cm-amt" type="number" step="0.01" min="0" placeholder="0,00"></div>
@@ -4301,7 +4302,25 @@ function openCashMoveModal(kind, presetParty){
       ${v.amt>0 && plan.left>0.004 ? `<p class="hint" style="color:var(--ink);"><b>${v.cur} ${fmt(plan.left)}</b> faturalardan artıyor → <b>avans</b> olarak kaydedilir (sonraki faturalara “Mahsup et” ile düşülür).</p>` : ''}
       ${adv.length ? `<p class="hint">Bu firmanın önceden kalan avansı: ${adv.map(m=>m.currency+' '+fmt(m.unallocated)+' ('+formatDate(m.date)+')').join(', ')}.</p>` : ''}`;
   };
-  ['cm-party','cm-date','cm-amt','cm-cur'].forEach(id=>{ $('#'+id).addEventListener('input', upd); $('#'+id).addEventListener('change', upd); }); upd();
+  ['cm-date','cm-amt','cm-cur'].forEach(id=>{ $('#'+id).addEventListener('input', upd); $('#'+id).addEventListener('change', upd); }); upd();
+  const q = $('#cm-party-q'), box = $('#cm-party-list'); let hits = [], hi = 0;
+  const pick = p=>{ $('#cm-party').value = p.key; q.value = p.name; box.style.display = 'none'; upd(); $('#cm-amt').focus(); };
+  const draw = ()=>{
+    const t = foldTR(q.value.trim()); hits = (t ? parties.filter(p=>foldTR(p.name).includes(t)) : parties.filter(p=>p.n)).slice(0,12); hi = Math.min(hi, Math.max(0,hits.length-1));
+    box.innerHTML = hits.length ? hits.map((p,k)=>`<div data-k="${k}" style="padding:8px 10px;cursor:pointer;font-size:12.5px;border-top:1px solid var(--hairline);${k===hi?'background:var(--paper-2);':''}"><b>${escapeHtml(p.name)}</b>${p.n?`<div class="mono" style="font-size:10.5px;color:var(--gray-500);">${p.n} açık fatura · ${Object.entries(p.rem).map(([c,v])=>c+' '+fmt(v)).join(' + ')}</div>`:''}</div>`).join('') : '<div style="padding:8px 10px;font-size:12px;color:var(--gray-500);">Eşleşen firma yok</div>';
+    box.style.display = 'block';
+    box.querySelectorAll('[data-k]').forEach(el=>{ el.onmousedown = e=>{ e.preventDefault(); pick(hits[+el.dataset.k]); }; });
+  };
+  q.addEventListener('input', ()=>{ $('#cm-party').value = ''; hi = 0; draw(); upd(); });
+  q.addEventListener('focus', draw);
+  q.addEventListener('blur', ()=>setTimeout(()=>{ box.style.display = 'none'; }, 120));
+  q.addEventListener('keydown', e=>{
+    if(e.key==='ArrowDown'){ e.preventDefault(); hi = Math.min(hi+1, hits.length-1); draw(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); hi = Math.max(hi-1, 0); draw(); }
+    else if(e.key==='Enter'){ e.preventDefault(); if(hits[hi]) pick(hits[hi]); }
+    else if(e.key==='Escape'){ box.style.display = 'none'; }
+  });
+  if(!presetParty) setTimeout(()=>q.focus(), 30);
   $('#cm-cancel').onclick = ()=>ov.remove();
   $('#cm-save').onclick = async ()=>{
     const v = read(); if(!v.party || !(v.amt > 0)) return;
