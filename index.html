@@ -2042,6 +2042,12 @@ function renderQuotesList(){
   </div>`;
 }
 
+function orderProgressHtml(q){
+  let a; try{ a = orderAgg(q); }catch(e){ return ''; }
+  const N = a.N; if(!(N > 0) || a.invoicedQty >= N - 1e-9) return '';
+  const part = (lbl, v)=>`<span style="color:${v>=N-1e-9?'var(--ink)':v>0?'#8a5a00':'var(--gray-300)'};">${lbl} ${fmtQty(Math.min(v,N))}/${fmtQty(N)}</span>`;
+  return `<div class="mono" style="font-size:10px;margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">${a.purchased>0?part('Gelen',a.received):''}${part('Sevk',a.shippedQty)}${part('Fatura',a.invoicedQty)}</div>`;
+}
 function renderQuotesKanban(rows){
   return `
   <div class="kanban-board">
@@ -2064,7 +2070,7 @@ function renderQuotesKanban(rows){
                 <span class="kc-drag-handle" title="Sürükle">⠿</span>
               </div>
               <div class="kc-meta">${escapeHtml(q.quoteNo||'')}${q.version>1?' · v'+q.version:''}</div>
-              <div class="kc-total mono">${q.currency||'€'} ${fmt(q.total)}</div>
+              <div class="kc-total mono">${q.currency||'€'} ${fmt(q.total)}</div>${isOrderStatus(q.status)?orderProgressHtml(q):''}
             </div>`).join('')}
         </div>
       </div>`;
@@ -3623,17 +3629,29 @@ function openGoodsReceiptModal(poId){
       <div class="field"><label>Tedarikçi İrsaliye No</label><input id="gr-no" placeholder="gelen irsaliye numarası"></div>
       <div class="field"><label>Teslim Alma Tarihi</label><input id="gr-date" type="date" value="${todayStr()}"></div>
     </div>
-    <table class="items-table"><thead><tr><th>Ürün</th><th class="num">Sipariş</th><th class="num">Daha önce gelen</th><th class="num">Kalan</th><th class="num" style="width:110px;">Bu sefer gelen</th></tr></thead><tbody>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px;font-size:12px;"><span>Sadece <b>gelen kalemleri</b> işaretle; işaretlenmeyenler açık bekler ve sonra ayrı mal kabulle gelir.</span>
+      <span><span class="link-btn" id="gr-all" style="cursor:pointer;">Tümü geldi</span> · <span class="link-btn" id="gr-none" style="cursor:pointer;">Temizle</span></span></div>
+    <table class="items-table"><thead><tr><th style="width:28px;"></th><th>Ürün</th><th class="num">Sipariş</th><th class="num">Daha önce gelen</th><th class="num">Kalan</th><th class="num" style="width:110px;">Bu sefer gelen</th></tr></thead><tbody>
       ${lines.map((l,i)=>`<tr data-i="${i}">
+        <td><input type="checkbox" class="gr-on"></td>
         <td><div class="mono" style="font-size:12px;">${escapeHtml(l.it.code||'')}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.it.desc||'')}</div></td>
         <td class="num mono">${fmtQty(l.ordered)}</td><td class="num mono">${fmtQty(l.got)}</td><td class="num mono">${fmtQty(l.ordered-l.got)}</td>
-        <td class="num"><input class="gr-qty mono" type="number" min="0" step="1" value="${l.ordered-l.got}" style="width:90px;text-align:right;font-size:12px;"></td></tr>`).join('')}
+        <td class="num"><input class="gr-qty mono" type="number" min="0" step="1" value="0" style="width:90px;text-align:right;font-size:12px;"></td></tr>`).join('')}
     </tbody></table>
+    <div id="gr-sum" class="hint" style="margin-top:8px;"></div>
     <div class="actions-row" style="margin-top:14px;">
       <button class="btn btn-primary" id="gr-save">Mal Kabulü Kaydet</button>
       <button class="btn btn-ghost" id="gr-cancel">Vazgeç</button>
     </div>`, 760);
   ov.querySelector('#gr-cancel').onclick = ()=>ov.remove();
+  const grSum = ()=>{ let n=0; ov.querySelectorAll('tbody tr').forEach(tr=>{ if((parseFloat(tr.querySelector('.gr-qty').value)||0)>0) n++; }); ov.querySelector('#gr-sum').textContent = n ? (n+' / '+lines.length+' kalem bu mal kabulde'+(n<lines.length?' · '+(lines.length-n)+' kalem açık kalacak':'')) : 'Henüz kalem seçilmedi.'; };
+  ov.querySelectorAll('tbody tr').forEach(tr=>{
+    const l = lines[+tr.dataset.i], cb = tr.querySelector('.gr-on'), q = tr.querySelector('.gr-qty');
+    cb.onchange = ()=>{ q.value = cb.checked ? (l.ordered - l.got) : 0; grSum(); };
+    q.oninput = ()=>{ cb.checked = (parseFloat(q.value)||0) > 0; grSum(); };
+  });
+  const setAll = on=>{ ov.querySelectorAll('tbody tr').forEach(tr=>{ const l = lines[+tr.dataset.i]; tr.querySelector('.gr-on').checked = on; tr.querySelector('.gr-qty').value = on ? (l.ordered - l.got) : 0; }); grSum(); };
+  ov.querySelector('#gr-all').onclick = ()=>setAll(true); ov.querySelector('#gr-none').onclick = ()=>setAll(false); grSum();
   ov.querySelector('#gr-save').onclick = async ()=>{
     const recLines = [];
     for(const tr of ov.querySelectorAll('tbody tr')){
@@ -3642,7 +3660,7 @@ function openGoodsReceiptModal(poId){
       if(qty > l.ordered - l.got + 1e-9){ alert((l.it.code||'Kalem')+' için kalan miktardan ('+fmtQty(l.ordered-l.got)+') fazla girdin.'); return; }
       recLines.push({ poItemId:l.it.id, qty });
     }
-    if(!recLines.length){ alert('Gelen miktar girilmedi.'); return; }
+    if(!recLines.length){ alert('Gelen kalem seçilmedi. Gelen kalemleri işaretle ya da “Tümü geldi”ye bas.'); return; }
     const receipt = { id:crypto.randomUUID(), date:ov.querySelector('#gr-date').value||todayStr(), irsaliyeNo:ov.querySelector('#gr-no').value.trim(), lines:recLines, createdAt:new Date().toISOString() };
     po.receipts = (po.receipts||[]).concat([receipt]);
     recLines.forEach(rl=>{
