@@ -1162,6 +1162,7 @@ async function loadAll(){
   try{ const po = await stGet('godo:purchase-orders'); if(po && po.value) purchaseOrders = JSON.parse(po.value); }catch(e){}
   try{ const sh = await stGet('godo:shipments'); if(sh && sh.value) shipments = JSON.parse(sh.value); }catch(e){}
   try{ const pv = await stGet('godo:purchase-invoices'); if(pv && pv.value) purchaseInvoices = JSON.parse(pv.value); }catch(e){}
+  try{ const cm = await stGet('godo:cash-moves'); if(cm && cm.value) cashMoves = JSON.parse(cm.value); }catch(e){}
   try{ const fx = await stGet('godo:fx-rates'); if(fx && fx.value) fxRates = JSON.parse(fx.value); }catch(e){}
   try{ const as = await stGet('godo:acct-settings'); if(as && as.value) acctSettings = JSON.parse(as.value); }catch(e){}
   if(!acctSettings) acctSettings = defaultAcctSettings();
@@ -1376,7 +1377,7 @@ function scheduleProposalSave(){ clearTimeout(saveTimer); saveTimer = setTimeout
 
 /* ---------------- BACKUP: EXPORT / IMPORT ---------------- */
 async function exportBackup(){
-  const data = { exportedAt: new Date().toISOString(), company, customers, products, stockMoves, purchaseOrders, shipments, purchaseInvoices, fxRates, acctSettings, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
+  const data = { exportedAt: new Date().toISOString(), company, customers, products, stockMoves, purchaseOrders, shipments, purchaseInvoices, cashMoves, fxRates, acctSettings, suppliers, quotesIndex, proposalsIndex, tasks, trash, termTemplates, docTemplates, defaultTemplate, quotes: {}, proposals: {} };
   for(const q of quotesIndex){
     const r = await stGet('godo:quote:'+q.id);
     if(r && r.value){ try{ data.quotes[q.id] = JSON.parse(r.value); }catch(e){} }
@@ -1406,6 +1407,7 @@ function importBackupFile(file){
     if(data.purchaseOrders) purchaseOrders = data.purchaseOrders;
     if(data.shipments) shipments = data.shipments;
     if(data.purchaseInvoices) purchaseInvoices = data.purchaseInvoices;
+    if(data.cashMoves) cashMoves = data.cashMoves;
     if(data.fxRates) fxRates = data.fxRates;
     if(data.acctSettings) acctSettings = data.acctSettings;
     if(data.suppliers) suppliers = data.suppliers;
@@ -1416,7 +1418,7 @@ function importBackupFile(file){
     if(data.termTemplates) termTemplates = data.termTemplates;
     if(data.docTemplates) docTemplates = data.docTemplates;
     if(data.defaultTemplate) defaultTemplate = data.defaultTemplate;
-    await saveCompany(); await saveCustomers(); await saveProducts(); await saveStockMoves(); await savePurchaseOrders(); await saveShipments(); await savePurchaseInvoices(); await saveFxRates(); await saveAcctSettings(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
+    await saveCompany(); await saveCustomers(); await saveProducts(); await saveStockMoves(); await savePurchaseOrders(); await saveShipments(); await savePurchaseInvoices(); if(data.cashMoves) await saveCashMoves(); await saveFxRates(); await saveAcctSettings(); await saveSuppliers(); await saveIndex(); await saveProposalsIndex(); await saveTasks(); await saveTrash(); await saveTermTemplates(); await saveDocTemplates();
     if(data.quotes){ for(const id in data.quotes){ await stSet('godo:quote:'+id, JSON.stringify(data.quotes[id])); } }
     if(data.proposals){ for(const id in data.proposals){ await stSet('godo:proposal:'+id, JSON.stringify(data.proposals[id])); } }
     alert('Yedek başarıyla yüklendi.');
@@ -4133,7 +4135,7 @@ function renderFinancePage(){
   return `
   <div class="panel" style="max-width:1160px;">
     <div class="subhead-row" style="margin-bottom:4px;"><h2 style="margin:0;">Alacak / Borç</h2>
-      <div style="display:flex;gap:8px;"><span class="version-pill ${financeView==='receivable'?'active':''}" data-fin-view="receivable">Alacaklar</span><span class="version-pill ${financeView==='payable'?'active':''}" data-fin-view="payable">Borçlar</span></div></div>
+      <div style="display:flex;gap:8px;align-items:center;"><button class="btn btn-primary" data-cash-new="in" style="padding:7px 12px;font-size:11.5px;">+ Gelen para</button><button class="btn btn-ghost" data-cash-new="out" style="padding:7px 12px;font-size:11.5px;">+ Giden para</button><span style="width:10px;"></span><span class="version-pill ${financeView==='receivable'?'active':''}" data-fin-view="receivable">Alacaklar</span><span class="version-pill ${financeView==='payable'?'active':''}" data-fin-view="payable">Borçlar</span></div></div>
     <p class="hint">${kind==='sale' ? 'Müşteri bazında fatura, tahsilat ve vade dağılımı.' : 'Tedarikçi bazında alış faturası, ödeme ve ödeme takvimi.'} Tutarlar TL gösterilir (belge tarihindeki TCMB kuruyla), döviz tutarı altında ayrıca yazar. Rakamlar yalnızca fatura ve ${kind==='sale'?'tahsilat':'ödeme'} kayıtlarından hesaplanır.</p>
     ${kind==='purchase' && items.some(i=>i.estimated) ? `<div class="ready-note" style="margin-top:12px;"><b>${items.filter(i=>i.estimated).length} mal kabulün faturası bekleniyor.</b> Bu borçlar SAS fiyatı × gelen miktar + %20 KDV ile, mal kabul tarihindeki TCMB satış kuruyla tahmini olarak toplamlara dahil. Faturayı girince/yükleyince gerçek TL tutar geçerli olur.</div>` : ''}
     <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:16px 0 22px;">
@@ -4149,7 +4151,8 @@ function renderFinancePage(){
     ${groups.length ? `<table class="items-table"><thead><tr><th>${word.party}</th><th class="num">Fatura</th><th class="num">Toplam</th><th class="num">${word.paid}</th><th class="num">Kalan</th><th class="num">Vadesi geçmiş</th><th class="num">Bugün–7 gün</th><th class="num">8–15 gün</th><th class="num">15 gün sonrası</th><th class="num">Vade tanımsız</th><th></th></tr></thead><tbody>
       ${groups.map(g=>{
         const openItems = g.items.filter(i=>i.remaining>0.005).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
-        return `<tr style="background:var(--paper-2);"><td><b>${escapeHtml(g.name)}</b></td><td class="num mono">${g.count}</td>
+        const advs = cashAdvanceFor(kind==='sale'?'in':'out', g.partyKey);
+        return `<tr style="background:var(--paper-2);"><td><b>${escapeHtml(g.name)}</b>${advs.length?`<div style="font-size:10.5px;color:var(--ink);">Avans: ${advs.map(m=>m.currency+' '+fmt(m.unallocated)).join(', ')}</div>`:''}</td><td class="num mono">${g.count}</td>
           <td class="num mono" style="font-size:12px;">${fmtTL(g.totalTL)}${curSub(g,'total')}</td><td class="num mono" style="font-size:12px;">${fmtTL(g.paidTL)}${curSub(g,'paid')}</td>
           <td class="num mono" style="font-size:12px;font-weight:700;">${fmtTL(g.remainingTL)}${curSub(g,'remaining')}</td>
           <td class="num mono" style="font-size:12px;color:var(--danger);">${cell(g.buckets.overdue)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.week)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.days8to15)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.later)}</td><td class="num mono" style="font-size:12px;">${cell(g.buckets.none)}</td>
@@ -4165,12 +4168,16 @@ function renderFinancePage(){
       <table class="items-table"><thead><tr><th>Vade</th><th>Tedarikçi</th><th>Fatura</th><th class="num">Kalan</th></tr></thead><tbody>
       ${calendar.map(i=>{ const r = itemRate(i); return `<tr><td class="mono" style="font-size:12px;">${i.due?formatDate(i.due):'—'} ${dueBadgeHtml(i.due,false)}</td><td style="font-size:12px;">${escapeHtml(i.partyName)}</td><td class="mono" style="font-size:12px;">${escapeHtml(i.docNo)}</td>
         <td class="num mono" style="font-size:12px;">${r===null?'<span style="color:var(--danger);">kur eksik</span>':fmtTL(i.remaining*r)}${i.cur!=='₺'?`<div style="font-size:10.5px;color:var(--gray-500);">${i.cur} ${fmt(i.remaining)}</div>`:''}</td></tr>`; }).join('')}</tbody></table>` : ''}
+    ${renderCashMovesSection(kind==='sale'?'in':'out')}
   </div>`;
 }
 function attachFinanceHandlers(){
   autoSyncFxRates();
   if(financeView==='payable' && !eDocumentRows.length && !attachFinanceHandlers.edocTried){ attachFinanceHandlers.edocTried=true; Promise.resolve(loadEDocumentCenter()).then(()=>{ if(activeTab==='finance') render(); }).catch(()=>{}); }
   document.querySelectorAll('[data-fin-view]').forEach(el=>{ el.onclick = ()=>{ financeView = el.dataset.finView; render(); }; });
+  document.querySelectorAll('[data-cash-new]').forEach(el=>{ el.onclick = ()=>openCashMoveModal(el.dataset.cashNew); });
+  document.querySelectorAll('[data-cm-settle]').forEach(el=>{ el.onclick = ()=>settleCashAdvance(el.dataset.cmSettle); });
+  document.querySelectorAll('[data-cm-del]').forEach(el=>{ el.onclick = ()=>deleteCashMove(el.dataset.cmDel); });
   document.querySelectorAll('[data-bulk]').forEach(el=>{ el.onclick = ()=>{ const [k, key] = el.dataset.bulk.split('|'); openBulkPaymentModal(k, key); }; });
   document.querySelectorAll('[data-fin-pay]').forEach(el=>{ el.onclick = ()=>{ const [k, id] = el.dataset.finPay.split('|'); if(k==='sale') openShipmentPaymentsModal(id); else if(id.startsWith('est:')) openPurchaseInvoiceModal(id.slice(4)); else openPurchasePaymentsModal(id); }; });
   document.querySelectorAll('[data-fin-edit]').forEach(el=>{ el.onclick = ()=>{ const id=el.dataset.finEdit; if(id.startsWith('est:')) return openPurchaseInvoiceModal(id.slice(4)); const pi = purchaseInvoices.find(x=>x.id===id); if(pi) openPurchaseInvoiceModal(pi.poId, pi.id); }; });
@@ -4213,6 +4220,128 @@ function openBulkPaymentModal(kind, partyKey){
     else await savePurchaseInvoices();
     ov.remove(); render();
   };
+}
+/* ---------------- BANKA HAREKETLERİ (elle: gelen / giden para → faturalara otomatik dağıtım, artan avans) ---------------- */
+let cashMoves = [];
+async function saveCashMoves(){ await stSet('godo:cash-moves', JSON.stringify(cashMoves)); }
+function cashPartyOptions(kind){
+  const items = kind==='in' ? saleItems() : purchaseItems();
+  const open = {}; items.filter(i=>i.remaining>0.005 && !i.estimated).forEach(i=>{ const o = open[i.partyKey] = open[i.partyKey] || { key:i.partyKey, name:i.partyName, n:0, rem:{} }; o.n++; o.rem[i.cur] = (o.rem[i.cur]||0) + i.remaining; });
+  const base = kind==='in' ? customers.filter(c=>c && c.id).map(c=>({ key:c.id, name:upperCompanyName(c.name||'') })) : suppliers.map(s=>({ key:s.id, name:s.name||'' }));
+  const seen = new Set(), out = [];
+  Object.values(open).sort((a,b)=>a.name.localeCompare(b.name,'tr')).forEach(o=>{ seen.add(o.key); out.push(o); });
+  base.filter(b=>!seen.has(b.key)).sort((a,b)=>a.name.localeCompare(b.name,'tr')).forEach(b=>out.push({ key:b.key, name:b.name, n:0, rem:{} }));
+  return out;
+}
+function cashAdvanceFor(kind, partyKey){ return cashMoves.filter(m=>m.kind===kind && m.partyKey===partyKey && (parseFloat(m.unallocated)||0) > 0.005); }
+// Ödeme para birimindeki tutarı, firmanın açık faturalarına en eski vadeden başlayarak dağıtır (gerekirse TCMB satış kuruyla çevirir)
+function planCashAllocation(kind, partyKey, amount, cur, date){
+  const items = (kind==='in' ? saleItems() : purchaseItems()).filter(i=>i.partyKey===partyKey && i.remaining>0.005 && !i.estimated)
+    .sort((a,b)=>(a.due||'9999-99-99').localeCompare(b.due||'9999-99-99') || (a.date||'').localeCompare(b.date||''));
+  let left = round2(amount); const rows = [], missingFx = [];
+  for(const i of items){
+    let rate = 1;
+    if(i.cur !== cur){
+      const rDoc = i.cur==='₺' ? { rate:1 } : rateFor(i.cur, date, fxKind(kind==='in'?'sale':'purchase'));
+      const rPay = cur==='₺' ? { rate:1 } : rateFor(cur, date, fxKind(kind==='in'?'sale':'purchase'));
+      if(!rDoc || !rPay){ missingFx.push(i); continue; }
+      rate = rDoc.rate / rPay.rate;              // 1 belge birimi = rate ödeme birimi
+    }
+    const remPay = round2(i.remaining * rate);
+    if(left <= 0.004){ rows.push({ item:i, rate, remPay, pay:0, doc:0 }); continue; }
+    const pay = Math.min(remPay, left), doc = pay >= remPay - 0.004 ? i.remaining : round2(pay / rate);
+    rows.push({ item:i, rate, remPay, pay:round2(pay), doc }); left = round2(left - pay);
+  }
+  return { rows, left:Math.max(0, left), missingFx };
+}
+async function applyCashAllocation(move, rows){
+  const touchedOrders = new Set();
+  rows.filter(r=>r.doc > 0.004).forEach(r=>{
+    const note = [move.note, move.currency!==r.item.cur ? move.currency+' '+fmt(r.pay)+' · kur '+fmt4(r.rate) : ''].filter(Boolean).join(' · ');
+    r.item.obj.payments = (r.item.obj.payments||[]).concat([{ id:crypto.randomUUID(), date:move.date, amount:round2(r.doc), method:move.method, reference:move.reference, note, cashMoveId:move.id }]);
+    move.allocations.push({ docKind:r.item.kind, docId:r.item.obj.id, docNo:r.item.docNo, docCur:r.item.cur, docAmount:round2(r.doc), payAmount:r.pay, rate:r.rate });
+    if(r.item.kind==='sale' && r.item.obj.orderId) touchedOrders.add(r.item.obj.orderId);
+  });
+  if(move.kind==='in') await saveShipments(); else await savePurchaseInvoices();
+  for(const oid of touchedOrders) await syncOrderPipelineStatus(oid);
+}
+function fmt4(n){ return (Number(n)||0).toLocaleString('tr-TR',{ minimumFractionDigits:4, maximumFractionDigits:4 }); }
+function openCashMoveModal(kind, presetParty){
+  const isIn = kind==='in', parties = cashPartyOptions(kind);
+  const opt = p=>`<option value="${escapeAttr(p.key)}" ${p.key===presetParty?'selected':''}>${escapeHtml(p.name)}${p.n?' — '+p.n+' açık fatura · '+Object.entries(p.rem).map(([c,v])=>c+' '+fmt(v)).join(' + '):''}</option>`;
+  const ov = openSimpleModal(`
+    <h2>${isIn?'Gelen Para (Tahsilat)':'Giden Para (Ödeme)'}</h2>
+    <p class="hint">Bankadaki hareketi gir. Tutar ${isIn?'müşterinin':'tedarikçinin'} açık faturalarına en eski vadeden başlayarak otomatik dağıtılır; faturalardan artan kısım avans olarak kalır ve sonraki faturalara mahsup edilebilir.</p>
+    <div class="field"><label>${isIn?'Gönderen firma':'Ödeme yapılan firma'}</label><select id="cm-party"><option value="">— Seçiniz —</option>${parties.map(opt).join('')}</select></div>
+    <div class="grid3">
+      <div class="field"><label>Tarih</label><input id="cm-date" type="date" value="${todayStr()}"></div>
+      <div class="field mono"><label>Tutar</label><input id="cm-amt" type="number" step="0.01" min="0" placeholder="0,00"></div>
+      <div class="field"><label>Para birimi</label><select id="cm-cur"><option>₺</option><option>€</option><option>$</option></select></div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label>Yöntem</label><select id="cm-method"><option>Havale / EFT</option><option>Kredi kartı</option><option>Çek</option><option>Senet</option><option>Nakit</option><option>Diğer</option></select></div>
+      <div class="field"><label>Banka / dekont no</label><input id="cm-ref" placeholder="ör. Garanti · 123456"></div>
+      <div class="field"><label>Not</label><input id="cm-note"></div>
+    </div>
+    <div id="cm-preview"></div>
+    <div class="actions-row" style="margin-top:12px;"><button class="btn btn-primary" id="cm-save" disabled>Kaydet</button><button class="btn btn-ghost" id="cm-cancel">Vazgeç</button></div>`, 820);
+  const $ = s=>ov.querySelector(s);
+  const read = ()=>({ party:$('#cm-party').value, date:$('#cm-date').value||todayStr(), amt:round2(parseFloat($('#cm-amt').value)||0), cur:$('#cm-cur').value });
+  const upd = ()=>{
+    const v = read(); $('#cm-save').disabled = !(v.party && v.amt > 0);
+    if(!v.party){ $('#cm-preview').innerHTML = ''; return; }
+    const plan = planCashAllocation(kind, v.party, v.amt, v.cur, v.date), adv = cashAdvanceFor(kind, v.party);
+    $('#cm-preview').innerHTML = `${plan.rows.length ? `<table class="items-table"><thead><tr><th>Fatura</th><th>Vade</th><th class="num">Kalan</th><th class="num">Bu ${isIn?'tahsilattan':'ödemeden'}</th></tr></thead><tbody>
+      ${plan.rows.map(r=>`<tr><td class="mono" style="font-size:12px;">${escapeHtml(r.item.docNo||'')}</td><td class="mono" style="font-size:12px;">${r.item.due?formatDate(r.item.due):'—'}</td>
+        <td class="num mono" style="font-size:12px;">${r.item.cur} ${fmt(r.item.remaining)}${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">≈ ${v.cur} ${fmt(r.remPay)} · kur ${fmt4(r.rate)}</div>`:''}</td>
+        <td class="num mono" style="font-size:12px;">${r.pay>0.004?`<b>${v.cur} ${fmt(r.pay)}</b>${r.item.cur!==v.cur?`<div style="font-size:10.5px;color:var(--gray-500);">= ${r.item.cur} ${fmt(r.doc)}</div>`:''}${r.pay>=r.remPay-0.004?' <span style="font-size:10px;color:var(--ink);">kapanır</span>':''}`:'—'}</td></tr>`).join('')}
+      </tbody></table>` : `<p class="hint">Bu firmanın açık faturası yok${v.amt>0?'; tutarın tamamı avans olarak kaydedilir':''}.</p>`}
+      ${plan.missingFx.length ? `<p class="hint" style="color:var(--danger);">${plan.missingFx.length} faturada ${formatDate(v.date)} için TCMB kuru yok; bu faturalara dağıtılmadı.</p>` : ''}
+      ${v.amt>0 && plan.left>0.004 ? `<p class="hint" style="color:var(--ink);"><b>${v.cur} ${fmt(plan.left)}</b> faturalardan artıyor → <b>avans</b> olarak kaydedilir (sonraki faturalara “Mahsup et” ile düşülür).</p>` : ''}
+      ${adv.length ? `<p class="hint">Bu firmanın önceden kalan avansı: ${adv.map(m=>m.currency+' '+fmt(m.unallocated)+' ('+formatDate(m.date)+')').join(', ')}.</p>` : ''}`;
+  };
+  ['cm-party','cm-date','cm-amt','cm-cur'].forEach(id=>{ $('#'+id).addEventListener('input', upd); $('#'+id).addEventListener('change', upd); }); upd();
+  $('#cm-cancel').onclick = ()=>ov.remove();
+  $('#cm-save').onclick = async ()=>{
+    const v = read(); if(!v.party || !(v.amt > 0)) return;
+    const p = parties.find(x=>x.key===v.party), plan = planCashAllocation(kind, v.party, v.amt, v.cur, v.date);
+    if(plan.left > 0.004 && !confirm((v.cur+' '+fmt(plan.left))+' faturalardan artıyor ve avans olarak kaydedilecek. Devam edilsin mi?')) return;
+    $('#cm-save').disabled = true;
+    const move = { id:crypto.randomUUID(), kind, partyKey:v.party, partyName:p?p.name:'', date:v.date, amount:v.amt, currency:v.cur, method:$('#cm-method').value, reference:$('#cm-ref').value.trim(), note:$('#cm-note').value.trim(), allocations:[], unallocated:round2(plan.left), createdAt:new Date().toISOString() };
+    await applyCashAllocation(move, plan.rows);
+    cashMoves.unshift(move); await saveCashMoves();
+    ov.remove(); render();
+  };
+}
+async function settleCashAdvance(id){
+  const m = cashMoves.find(x=>x.id===id); if(!m || !(m.unallocated > 0.004)) return;
+  const plan = planCashAllocation(m.kind, m.partyKey, m.unallocated, m.currency, m.date);
+  const used = round2(plan.rows.reduce((t,r)=>t+r.pay,0));
+  if(!(used > 0.004)){ alert('Bu firmanın avansı düşülecek açık faturası yok.'); return; }
+  if(!confirm(m.currency+' '+fmt(used)+' avans, '+plan.rows.filter(r=>r.pay>0.004).map(r=>r.item.docNo).join(', ')+' faturalarına mahsup edilecek. Onaylıyor musun?')) return;
+  await applyCashAllocation(m, plan.rows); m.unallocated = round2(m.unallocated - used); await saveCashMoves(); render();
+}
+async function deleteCashMove(id){
+  const m = cashMoves.find(x=>x.id===id); if(!m) return;
+  if(!confirm('Bu banka hareketi ve faturalara işlenen '+(m.allocations.length)+' ödeme kaydı silinsin mi?')) return;
+  const strip = arr=>arr.forEach(d=>{ if((d.payments||[]).some(p=>p.cashMoveId===m.id)) d.payments = d.payments.filter(p=>p.cashMoveId!==m.id); });
+  if(m.kind==='in'){ strip(shipments); await saveShipments(); for(const oid of new Set(shipments.filter(s=>m.allocations.some(a=>a.docId===s.id)).map(s=>s.orderId))) await syncOrderPipelineStatus(oid); }
+  else { strip(purchaseInvoices); await savePurchaseInvoices(); }
+  cashMoves = cashMoves.filter(x=>x.id!==m.id); await saveCashMoves(); render();
+}
+function renderCashMovesSection(kind){
+  const list = cashMoves.filter(m=>m.kind===kind).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
+  const adv = list.filter(m=>(parseFloat(m.unallocated)||0) > 0.004);
+  if(!list.length) return '';
+  return `<div class="subhead" style="margin-top:28px;">Banka Hareketleri · ${kind==='in'?'gelen':'giden'}</div>
+    ${adv.length?`<p class="hint">${adv.length} harekette mahsup bekleyen avans var: ${adv.map(m=>escapeHtml(m.partyName)+' '+m.currency+' '+fmt(m.unallocated)).join(', ')}.</p>`:''}
+    <table class="items-table"><thead><tr><th>Tarih</th><th>Firma</th><th class="num">Tutar</th><th>Dağıtılan faturalar</th><th class="num">Avans</th><th></th></tr></thead><tbody>
+    ${list.slice(0,40).map(m=>`<tr><td class="mono" style="font-size:12px;">${formatDate(m.date)}</td><td style="font-size:12px;">${escapeHtml(m.partyName)}<div style="font-size:10.5px;color:var(--gray-500);">${escapeHtml([m.method,m.reference,m.note].filter(Boolean).join(' · '))}</div></td>
+      <td class="num mono" style="font-size:12px;font-weight:700;">${m.currency} ${fmt(m.amount)}</td>
+      <td style="font-size:11.5px;">${m.allocations.length?m.allocations.map(a=>escapeHtml(a.docNo||'')+' <span class="mono" style="color:var(--gray-500);">'+a.docCur+' '+fmt(a.docAmount)+'</span>').join('<br>'):'<span style="color:var(--gray-300);">—</span>'}</td>
+      <td class="num mono" style="font-size:12px;">${m.unallocated>0.004?m.currency+' '+fmt(m.unallocated):'—'}</td>
+      <td style="white-space:nowrap;">${m.unallocated>0.004?`<span data-cm-settle="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--ink);text-transform:uppercase;cursor:pointer;">Mahsup et</span> `:''}<span data-cm-del="${m.id}" style="font-size:10.5px;font-weight:700;color:var(--danger);text-transform:uppercase;cursor:pointer;margin-left:8px;">Sil</span></td></tr>`).join('')}
+    </tbody></table>`;
 }
 function duePurchaseInvoices(cutoff){
   return purchaseInvoices.filter(pi=>piPayState(pi)!=='paid' && piDueDate(pi) && piDueDate(pi) <= cutoff).sort((a,b)=>piDueDate(a).localeCompare(piDueDate(b)));
